@@ -138,4 +138,16 @@ def load_config(path: str | None = None) -> AppConfig:
     cfg = AppConfig.model_validate(data)
     if os.environ.get("HOMELAB_DEMO") == "1":
         cfg.demo = True
+    for ssh in _ssh_configs(cfg):
+        if not ssh.known_hosts:
+            log.warning("SSH host key checking is off for %s; set known_hosts to enable it.", ssh.host)
     return cfg
+
+
+def _ssh_configs(cfg: AppConfig) -> list[SSHConfig]:
+    out: list[SSHConfig] = list(cfg.hosts)
+    for p in cfg.proxmox:
+        out += [p.ssh] if p.ssh else []
+        out += p.node_ssh.values()
+    out += [i.ssh for i in cfg.incus if i.ssh]
+    return out

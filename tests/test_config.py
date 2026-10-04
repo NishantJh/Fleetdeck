@@ -36,3 +36,16 @@ def test_validation():
         IncusConfig(name="i")
     with pytest.raises(ValidationError, match="unique"):
         AppConfig(incus=[IncusConfig(name="lab", socket="/s"), IncusConfig(name="lab", socket="/t")])
+
+
+def test_warns_when_ssh_host_keys_are_not_checked(tmp_path, caplog):
+    f = tmp_path / "c.yaml"
+    f.write_text(
+        "auth: {password: x}\n"
+        "hosts:\n"
+        "  - {name: pi, host: pi.lan}\n"
+        "  - {name: nas, host: nas.lan, known_hosts: /config/known_hosts}\n"
+    )
+    with caplog.at_level("WARNING", logger="homelab.config"):
+        load_config(str(f))
+    assert "pi.lan" in caplog.text and "nas.lan" not in caplog.text

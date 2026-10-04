@@ -62,7 +62,7 @@ function rowHtml(v) {
   const pending = c && !c.error && c.packages.length > 0;
   let html = `<tr class="${t.kind === "host" ? "host" : "guest"}">
     <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${canUpgrade(t) ? "" : "disabled"}></td>
-    <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span></td>
+    <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
     <td class="muted">${esc(c?.os || "")}</td>
     <td>${esc(t.status)}</td>
     <td>${updatesCell(v)} ${reboot}${notes}</td>
