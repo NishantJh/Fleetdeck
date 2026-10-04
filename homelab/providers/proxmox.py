@@ -9,6 +9,7 @@ import httpx
 from ..config import ProxmoxConfig, SSHConfig
 from ..executors import DEFAULT_TIMEOUT, LineCallback, PctExecutor, PveAgentExecutor, SSHExecutor
 from ..models import CheckResult, ExecResult, Package, Target
+from ..tls import PinnedTransport
 from ..updates import REBOOT_SCRIPT, parse_reboot
 from . import Discovered
 
@@ -123,6 +124,7 @@ class ProxmoxProvider:
             base_url=cfg.api_url.rstrip("/") + "/api2/json",
             headers={"Authorization": f"PVEAPIToken={cfg.token_id}={cfg.token_secret}"},
             verify=cfg.verify_ssl,
+            transport=PinnedTransport(cfg.api_url, cfg.tls_fingerprint) if cfg.tls_fingerprint else None,
             timeout=30,
         )
 

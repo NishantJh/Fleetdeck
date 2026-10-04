@@ -5,6 +5,7 @@ import httpx
 from ..config import IncusConfig
 from ..executors import IncusExecutor, SSHExecutor
 from ..models import Target
+from ..tls import PinnedTransport
 from . import Discovered
 
 
@@ -20,7 +21,10 @@ class IncusProvider:
             )
         else:
             cert = (cfg.client_cert, cfg.client_key) if cfg.client_cert and cfg.client_key else None
-            self.client = httpx.AsyncClient(base_url=cfg.url.rstrip("/"), cert=cert, verify=cfg.verify_ssl, timeout=30)
+            pinned = PinnedTransport(cfg.url, cfg.tls_fingerprint, cert) if cfg.tls_fingerprint else None
+            self.client = httpx.AsyncClient(
+                base_url=cfg.url.rstrip("/"), cert=cert, verify=cfg.verify_ssl, transport=pinned, timeout=30
+            )
 
     async def discover(self) -> Discovered:
         found: Discovered = []

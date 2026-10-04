@@ -13,9 +13,19 @@ import re
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 log = logging.getLogger(__name__)
+
+
+def normalize_fingerprint(value: str | None) -> str | None:
+    """``AB:CD:...`` or ``abcd...`` (SHA-256, 64 hex digits) to lowercase hex without colons."""
+    if value is None:
+        return None
+    fp = value.replace(":", "").replace(" ", "").lower()
+    if len(fp) != 64 or any(c not in "0123456789abcdef" for c in fp):
+        raise ValueError("tls_fingerprint must be a SHA-256 fingerprint (64 hex digits, colons optional)")
+    return fp
 
 
 class SSHConfig(BaseModel):
@@ -24,8 +34,11 @@ class SSHConfig(BaseModel):
     user: str = "root"
     key_file: str | None = None
     password: str | None = None
-    # Path to a known_hosts file. When unset, host keys are NOT verified.
+    # Path to a known_hosts file. Falls back to the top-level `known_hosts:`. With neither,
+    # connections are refused unless insecure_skip_host_key_check is set.
     known_hosts: str | None = None
+    # Accept any host key. Anyone on the network path can then pose as this machine.
+    insecure_skip_host_key_check: bool = False
     # Wrap commands in `sudo -n` (for non-root users with passwordless sudo).
     sudo: bool = False
 
@@ -36,6 +49,10 @@ class ProxmoxConfig(BaseModel):
     token_id: str  # e.g. root@pam!homelab
     token_secret: str
     verify_ssl: bool | str = True  # bool or path to a CA bundle
+    # SHA-256 fingerprint of the node's certificate (Node > System > Certificates, or
+    # `openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256` on the node).
+    # Pins that exact certificate; works with self-signed certs and IPs. Overrides verify_ssl.
+    tls_fingerprint: str | None = None
     # SSH to the node: used to update the host itself and to run `pct exec` in LXCs.
     ssh: SSHConfig | None = None
     # Per-node SSH overrides for clusters, keyed by node name.
@@ -46,6 +63,11 @@ class ProxmoxConfig(BaseModel):
     # Upgrading it (Docker in particular) would restart the dashboard mid-upgrade.
     protect: list[int] = Field(default_factory=list)
 
+    @field_validator("tls_fingerprint")
+    @classmethod
+    def _fingerprint(cls, v: str | None) -> str | None:
+        return normalize_fingerprint(v)
+
 
 class IncusConfig(BaseModel):
     name: str
@@ -54,12 +76,20 @@ class IncusConfig(BaseModel):
     client_cert: str | None = None
     client_key: str | None = None
     verify_ssl: bool | str = True
+    # SHA-256 fingerprint of the server certificate (`incus info | grep certificate_fingerprint`).
+    # Pins that exact certificate. Overrides verify_ssl.
+    tls_fingerprint: str | None = None
     # ...or the local unix socket when the dashboard runs on the Incus host.
     socket: str | None = None  # e.g. /var/lib/incus/unix.socket
     # SSH to the Incus host, used to update the host itself.
     ssh: SSHConfig | None = None
     # Instance names ("project/name" or "name") to hide.
     exclude: list[str] = Field(default_factory=list)
+
+    @field_validator("tls_fingerprint")
+    @classmethod
+    def _fingerprint(cls, v: str | None) -> str | None:
+        return normalize_fingerprint(v)
 
     @model_validator(mode="after")
     def _url_or_socket(self) -> IncusConfig:
@@ -89,6 +119,8 @@ class AppConfig(BaseModel):
     max_parallel: int = Field(4, ge=1)
     # Adds fake targets so the UI can be tried without real infrastructure.
     demo: bool = False
+    # known_hosts file for every SSH connection that doesn't name its own.
+    known_hosts: str | None = None
 
     @model_validator(mode="after")
     def _unique_names(self) -> AppConfig:
@@ -101,6 +133,14 @@ class AppConfig(BaseModel):
         dupes = sorted({n for n in hosts if hosts.count(n) > 1})
         if dupes:
             raise ValueError(f"host names must be unique: {', '.join(dupes)}")
+        return self
+
+    @model_validator(mode="after")
+    def _inherit_known_hosts(self) -> AppConfig:
+        if self.known_hosts:
+            for ssh in _ssh_configs(self):
+                if not ssh.known_hosts and not ssh.insecure_skip_host_key_check:
+                    ssh.known_hosts = self.known_hosts
         return self
 
 
@@ -139,8 +179,21 @@ def load_config(path: str | None = None) -> AppConfig:
     if os.environ.get("HOMELAB_DEMO") == "1":
         cfg.demo = True
     for ssh in _ssh_configs(cfg):
-        if not ssh.known_hosts:
-            log.warning("SSH host key checking is off for %s; set known_hosts to enable it.", ssh.host)
+        if ssh.insecure_skip_host_key_check:
+            log.warning("SSH host key checking is off for %s (insecure_skip_host_key_check).", ssh.host)
+        elif not ssh.known_hosts:
+            log.warning(
+                "No known_hosts for %s: connections to it will be refused. Set known_hosts (top-level or "
+                "per host), or insecure_skip_host_key_check: true.",
+                ssh.host,
+            )
+    for api in [*cfg.proxmox, *(i for i in cfg.incus if i.url)]:
+        if api.verify_ssl is False and not api.tls_fingerprint:
+            log.warning(
+                "TLS certificate checking is off for %s: anyone on the network path can read its API "
+                "credentials. Set tls_fingerprint (or verify_ssl to a CA file).",
+                api.name,
+            )
     return cfg
 
 

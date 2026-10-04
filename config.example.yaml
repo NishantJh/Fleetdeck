@@ -8,6 +8,11 @@ auth:
 # How many machines may be checked/updated at once.
 max_parallel: 4
 
+# SSH host keys of every machine (`ssh-keyscan host1 host2 ... > config/known_hosts`). Every SSH entry
+# uses this unless it names its own; a machine with neither is refused. A Proxmox cluster already
+# keeps all its nodes' keys in /etc/pve/priv/known_hosts.
+known_hosts: /config/known_hosts
+
 proxmox:
   - name: pve
     api_url: https://192.168.1.10:8006
@@ -16,13 +21,16 @@ proxmox:
     # and VM.GuestAgent.Unrestricted (PVE 9) / VM.Monitor (PVE 8) to update VMs via the guest agent.
     token_id: root@pam!homelab
     token_secret: ${PVE_TOKEN_SECRET}
-    verify_ssl: false # or a path to your CA bundle
+    # Pins the node's TLS certificate. On the node, run
+    #   openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256
+    # (use pveproxy-ssl.pem instead if you uploaded your own certificate), or copy it from
+    # Node > System > Certificates. Replace this placeholder with yours.
+    tls_fingerprint: "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF"
     # SSH to the node: upgrades the host itself and runs `pct exec` inside LXCs.
     ssh:
       host: 192.168.1.10
       user: root
       key_file: /config/id_ed25519
-      known_hosts: /config/known_hosts # omit to skip host key checks
     # Cluster? Other nodes are reached at their cluster IP (from /cluster/status) with the same
     # SSH settings. If that network isn't reachable from here, give each node its own settings:
     # node_ssh:
@@ -39,7 +47,9 @@ incus:
     url: https://192.168.1.20:8443
     client_cert: /config/incus-client.crt
     client_key: /config/incus-client.key
-    verify_ssl: false
+    # Pins the server certificate: `incus info | grep certificate_fingerprint` on the Incus host.
+    # Replace this placeholder with yours.
+    tls_fingerprint: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
     # Or, if the dashboard runs on the Incus host itself:
     # socket: /var/lib/incus/unix.socket
     ssh:
@@ -60,5 +70,7 @@ hosts:
     port: 22
     user: ubuntu
     key_file: /config/id_ed25519
-    known_hosts: /config/known_hosts # strongly recommended for anything on the internet
     sudo: true
+  # - name: old-box
+  #   host: 192.168.1.40
+  #   insecure_skip_host_key_check: true # accept any host key; anyone on the path can pose as it

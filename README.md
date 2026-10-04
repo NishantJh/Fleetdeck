@@ -106,7 +106,14 @@ For a VPS:
 ### Security
 
 This app can run commands as root on everything it manages. Keep it on your LAN or behind a VPN,
-set `auth:` in the config, and set `known_hosts` so SSH host keys are verified.
+and set `auth:` in the config.
+
+* **SSH host keys are always checked.** Put every machine's key in `config/known_hosts`
+  (`ssh-keyscan`, see below) and set the top-level `known_hosts:`. A machine without one is refused
+  with a message saying so; `insecure_skip_host_key_check: true` on that entry opts out.
+* **Proxmox and Incus certificates:** set `tls_fingerprint` (shown in the example config) rather than
+  `verify_ssl: false`. It pins the exact certificate, works with the self-signed ones both ship and
+  with IP addresses, and the dashboard warns at start-up about any API with checking off.
 
 ## Development
 

@@ -42,12 +42,17 @@ class SSHExecutor:
         self.cfg = cfg
 
     def _connect_kwargs(self) -> dict:
+        if not self.cfg.known_hosts and not self.cfg.insecure_skip_host_key_check:
+            raise RuntimeError(
+                f"no known_hosts for {self.cfg.host}, so its SSH host key can't be checked. Add it to a "
+                "known_hosts file (ssh-keyscan) and set known_hosts, or set insecure_skip_host_key_check: true"
+            )
         kw: dict = {
             "host": self.cfg.host,
             "port": self.cfg.port,
             "username": self.cfg.user,
-            # None disables host key checking; set known_hosts in config to enforce it.
-            "known_hosts": self.cfg.known_hosts,
+            # None disables host key checking (only reachable with insecure_skip_host_key_check).
+            "known_hosts": self.cfg.known_hosts or None,
             "connect_timeout": CONNECT_TIMEOUT,
         }
         if self.cfg.key_file:
