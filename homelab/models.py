@@ -29,6 +29,8 @@ class Package(BaseModel):
     name: str
     available: str
     current: str | None = None
+    # Comes from a security repository (apt only: e.g. bookworm-security, jammy-security).
+    security: bool = False
 
 
 class CheckResult(BaseModel):

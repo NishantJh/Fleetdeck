@@ -15,7 +15,8 @@ editing config. Each machine detects its own package manager: **apt** (Debian, U
 Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
 
 * **Check** refreshes package lists and shows each pending package with old → new version, plus
-  whether a reboot is needed.
+  whether a reboot is needed. On apt machines, updates from a security repository
+  (`bookworm-security`, `noble-security`, …) get a red *security* tag and are listed first.
 * **Update** runs a full upgrade (`apt-get dist-upgrade`, `dnf upgrade`, `apk upgrade`,
   `pacman -Syu`), streams the output to the Activity panel, then re-checks. Nothing is rebooted.
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,

@@ -49,7 +49,9 @@ function updatesCell(v) {
   const n = c.packages.length;
   if (n === 0) return `<span class="ok">up to date</span>`;
   const open = state.expanded.has(t.id);
-  return `<button class="small" data-toggle="${esc(t.id)}">${n} update${n > 1 ? "s" : ""} ${open ? "▴" : "▾"}</button>`;
+  const sec = c.packages.filter((p) => p.security).length;
+  const secChip = sec ? ` <span class="chip sec" title="From a security repository">${sec} security</span>` : "";
+  return `<button class="small" data-toggle="${esc(t.id)}">${n} update${n > 1 ? "s" : ""} ${open ? "▴" : "▾"}</button>${secChip}`;
 }
 
 function rowHtml(v) {
@@ -72,7 +74,9 @@ function rowHtml(v) {
       <button class="small ${pending && !t.check_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy ? "" : "disabled"} title="${t.check_only ? esc(t.note) : ""}">Update</button>
     </td></tr>`;
   if (pending && state.expanded.has(t.id)) {
-    const rows = c.packages.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.current || "")}</td><td>→ ${esc(p.available)}</td></tr>`).join("");
+    // Security updates first, so they stand out in a long list.
+    const pkgs = [...c.packages].sort((a, b) => b.security - a.security);
+    const rows = pkgs.map((p) => `<tr><td>${esc(p.name)}${p.security ? ` <span class="chip sec">security</span>` : ""}</td><td>${esc(p.current || "")}</td><td>→ ${esc(p.available)}</td></tr>`).join("");
     html += `<tr class="pkgs"><td></td><td colspan="6"><table>${rows}</table></td></tr>`;
   }
   return html;
@@ -85,11 +89,13 @@ function render() {
   const updatable = state.targets.filter((v) => v.target.updatable);
   const pending = updatable.filter((v) => v.check && !v.check.error && v.check.packages.length);
   const pkgCount = pending.reduce((n, v) => n + v.check.packages.length, 0);
+  const secMachines = pending.filter((v) => v.check.packages.some((p) => p.security)).length;
   const reboot = updatable.filter((v) => v.check?.reboot_required).length;
   const unchecked = updatable.filter((v) => !v.check).length;
   $("#summary").innerHTML = `
     <div class="stat"><b>${updatable.length}</b><span class="muted">machines</span></div>
     <div class="stat"><b class="${pending.length ? "warn" : "ok"}">${pending.length}</b><span class="muted">need updates (${pkgCount} pkgs)</span></div>
+    <div class="stat"><b class="${secMachines ? "bad" : ""}">${secMachines}</b><span class="muted">have security updates</span></div>
     <div class="stat"><b class="${reboot ? "warn" : ""}">${reboot}</b><span class="muted">need a reboot</span></div>
     <div class="stat"><b>${unchecked}</b><span class="muted">not checked yet</span></div>`;
 
