@@ -55,3 +55,10 @@ hosts:
     user: pi
     key_file: /config/id_ed25519
     sudo: true # non-root user with passwordless sudo
+  - name: vps
+    host: my-vps.example.com # public IP/hostname, or its Tailscale/WireGuard address
+    port: 22
+    user: ubuntu
+    key_file: /config/id_ed25519
+    known_hosts: /config/known_hosts # strongly recommended for anything on the internet
+    sudo: true

@@ -35,7 +35,7 @@ Every push to `main` publishes `ghcr.io/nishantjh/homelab-manager:latest` (amd64
 ```bash
 mkdir config
 cp config.example.yaml config/config.yaml   # fill in your hosts
-cp ~/.ssh/id_ed25519 config/                # key authorised on the hosts
+ssh-keygen -t ed25519 -f config/id_ed25519 -N "" -C homelab-manager   # see "Giving the dashboard its own SSH key"
 ssh-keyscan 192.168.1.10 192.168.1.20 192.168.1.30 > config/known_hosts
 HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d
 ```
@@ -66,7 +66,42 @@ HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d
 * **Incus:** expose the API (`incus config set core.https_address :8443`) and trust a client
   certificate (`incus config trust add-certificate client.crt`), or run the dashboard on the Incus
   host and point `socket:` at `/var/lib/incus/unix.socket`. SSH is used for the host itself.
-* **Raspberry Pi / other hosts:** SSH. Non-root users need passwordless sudo and `sudo: true`.
+* **Raspberry Pi, VPS and other hosts:** SSH. Non-root users need passwordless sudo and `sudo: true`.
+
+### Giving the dashboard its own SSH key
+
+The dashboard runs in Docker, so it can't use the key on your own PC. Give it a key of its own;
+that way you can revoke it without touching yours. Inside the `config/` folder on the Docker host:
+
+```bash
+ssh-keygen -t ed25519 -f id_ed25519 -N "" -C homelab-manager
+ssh-copy-id -i id_ed25519.pub user@my-vps.example.com   # repeat for each machine
+```
+
+`ssh-copy-id` asks you to log in once (password, or a key this host already has). If only your
+Windows PC can log in, copy `id_ed25519.pub` to the PC first, then run this in PowerShell:
+
+```powershell
+type id_ed25519.pub | ssh user@my-vps.example.com "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+```
+
+Then record each machine's host key, so the dashboard refuses to connect if it ever changes. Use
+`-p <port>` if SSH isn't on port 22:
+
+```bash
+ssh-keyscan my-vps.example.com 192.168.1.10 >> known_hosts
+ssh-keygen -lf known_hosts   # shows the fingerprints you just trusted
+```
+
+`ssh-keyscan` trusts whatever answers the first time it runs. For a machine on the internet, check
+that the fingerprint matches the one shown by `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`
+on the VPS itself, using your provider's web console.
+
+For a VPS:
+- Use a non-root user with passwordless sudo (`sudo: true`) and always set `known_hosts`.
+- This key plus passwordless sudo is root on the VPS, so restrict where it can be used. Either
+  reach the VPS only over Tailscale/WireGuard, or prefix its line in `~/.ssh/authorized_keys`
+  with your home IP: `from="203.0.113.7" ssh-ed25519 AAAA... homelab-manager`.
 
 ### Security
 

@@ -49,3 +49,12 @@ def test_warns_when_ssh_host_keys_are_not_checked(tmp_path, caplog):
     with caplog.at_level("WARNING", logger="homelab.config"):
         load_config(str(f))
     assert "pi.lan" in caplog.text and "nas.lan" not in caplog.text
+
+
+def test_example_config_is_valid(monkeypatch):
+    from pathlib import Path
+
+    monkeypatch.setenv("HOMELAB_PASSWORD", "x")
+    monkeypatch.setenv("PVE_TOKEN_SECRET", "y")
+    cfg = load_config(str(Path(__file__).parent.parent / "config.example.yaml"))
+    assert [h.name for h in cfg.hosts] == ["pi4", "vps"]
