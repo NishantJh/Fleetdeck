@@ -180,3 +180,21 @@ async def test_proxmox_cluster_uses_each_nodes_address():
     assert isinstance(ct, PctExecutor)
     assert ct.node_ssh.cfg.host == "10.0.0.2" and ct.node_ssh.cfg.key_file == "/k"
     assert found["pve3"].ssh.cfg.host == "pve3"
+
+
+async def test_incus_restricted_certificate_lists_per_project():
+    p = IncusProvider(IncusConfig(name="incus01", socket="/nonexistent"))
+
+    def handler(req):
+        if req.url.path == "/1.0/projects":
+            return httpx.Response(200, json={"metadata": ["/1.0/projects/default", "/1.0/projects/lab"]})
+        if req.url.params.get("all-projects") == "true":
+            return httpx.Response(403, json={"error": "Forbidden"})
+        project = req.url.params["project"]
+        return httpx.Response(
+            200, json={"metadata": [{"name": f"{project}-ct", "type": "container", "status": "Running"}]}
+        )
+
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://incus")
+    names = {t.name for t, _ in await p.discover()}
+    assert names == {"incus01", "default-ct", "lab/lab-ct"}

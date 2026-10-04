@@ -1,16 +1,27 @@
 # Works as-is as an Arcane project (or plain `docker compose up -d`).
 services:
   homelab-manager:
+    # Pin a release (e.g. :0.2.0) rather than :latest so an update is something you choose.
     image: ghcr.io/nishantjh/homelab-manager:latest
     # To build from source instead of pulling the image:
     # build: .
     container_name: homelab-manager
     restart: unless-stopped
     ports:
+      # To listen on one interface only, prefix its IP: "192.168.1.50:8080:8080"
       - "8080:8080"
     volumes:
-      # config.yaml, SSH key, known_hosts, Incus client cert
+      # config.yaml, SSH key, known_hosts, Incus client cert (readable by uid 10001, see README)
       - ./config:/config:ro
     environment:
       HOMELAB_PASSWORD: ${HOMELAB_PASSWORD}
       PVE_TOKEN_SECRET: ${PVE_TOKEN_SECRET}
+    # Hardening: the app needs no privileges and writes nothing outside its volumes.
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true

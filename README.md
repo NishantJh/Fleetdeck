@@ -37,8 +37,14 @@ mkdir config
 cp config.example.yaml config/config.yaml   # fill in your hosts
 ssh-keygen -t ed25519 -f config/id_ed25519 -N "" -C homelab-manager   # see "Giving the dashboard its own SSH key"
 ssh-keyscan 192.168.1.10 192.168.1.20 192.168.1.30 > config/known_hosts
+sudo chown -R 10001:10001 config && chmod 600 config/id_ed25519   # the container runs as uid 10001
 HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d
 ```
+
+The container runs as an unprivileged user (uid 10001) with a read-only filesystem and no Linux
+capabilities, so the files in `config/` must be readable by that uid. If it can't read the SSH key,
+SSH fails with a permission error in the Activity log. To pin a version instead of `latest`, use a
+release tag such as `ghcr.io/nishantjh/homelab-manager:0.2.0`.
 
 ### With Arcane
 
@@ -64,8 +70,10 @@ HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d
   PVE's API has no non-interactive upgrade call (its Upgrade button opens a shell), so the upgrade
   runs `apt-get dist-upgrade` over SSH, against those same repositories. SSH is also used for LXCs.
 * **Incus:** expose the API (`incus config set core.https_address :8443`) and trust a client
-  certificate (`incus config trust add-certificate client.crt`), or run the dashboard on the Incus
-  host and point `socket:` at `/var/lib/incus/unix.socket`. SSH is used for the host itself.
+  certificate restricted to the projects you use
+  (`incus config trust add-certificate client.crt --restricted --projects default`), or run the
+  dashboard on the Incus host and point `socket:` at `/var/lib/incus/unix.socket`. An unrestricted
+  certificate is a full Incus admin, which is root on the Incus host. SSH is used for the host itself.
 * **Raspberry Pi, VPS and other hosts:** SSH. Non-root users need passwordless sudo and `sudo: true`.
 
 ### Giving the dashboard its own SSH key
@@ -104,6 +112,27 @@ For a VPS:
   with your home IP: `from="203.0.113.7" ssh-ed25519 AAAA... homelab-manager`.
 
 ### Security
+
+**Least privilege for the Proxmox token.** Instead of a token under `root@pam`, create a user that
+has only what the dashboard needs:
+
+```bash
+pveum user add homelab@pve
+pveum role add HomelabManager -privs "VM.Audit Sys.Audit Sys.Modify VM.GuestAgent.Unrestricted"  # PVE 8: VM.Monitor
+pveum aclmod / -user homelab@pve -role HomelabManager
+pveum user token add homelab@pve dashboard --privsep 0
+```
+
+The dashboard also has root SSH to the node, so this mainly limits the damage if the token alone
+leaks. `Sys.Modify` is only needed for refreshing package lists through the API.
+
+**Restrict the SSH key** on every machine, not just the VPS: in `~/.ssh/authorized_keys`, prefix the
+dashboard's key with `from="<dashboard IP>",restrict` (`restrict` turns off port, agent and X11
+forwarding and the PTY, none of which the dashboard uses). A stolen key then only works from the
+dashboard's address.
+
+**The Docker host:** keep the LXC that runs Docker unprivileged (`unprivileged: 1`, `nesting=1`), and
+if it has several network interfaces, bind the port to the LAN one in the compose file.
 
 This app can run commands as root on everything it manages. Keep it on your LAN or behind a VPN,
 set `auth:` in the config, and set `known_hosts` so SSH host keys are verified.
