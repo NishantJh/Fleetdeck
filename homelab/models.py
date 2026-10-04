@@ -23,6 +23,8 @@ class Target(BaseModel):
     # Can be checked but not upgraded from here (e.g. a Proxmox node without SSH settings).
     check_only: bool = False
     note: str | None = None
+    # A Proxmox/Incus guest that can be snapshotted and rolled back.
+    can_snapshot: bool = False
 
 
 class Package(BaseModel):
@@ -48,7 +50,7 @@ class ExecResult(BaseModel):
     stderr: str = ""
 
 
-JobAction = Literal["check", "upgrade"]
+JobAction = Literal["check", "upgrade", "rollback"]
 JobStatus = Literal["queued", "running", "succeeded", "failed"]
 
 
@@ -57,6 +59,9 @@ class Job(BaseModel):
     target_id: str
     target_name: str
     action: JobAction
+    # Upgrade: take a snapshot first (guests only). Upgrade/rollback: the snapshot taken / restored.
+    snapshot_first: bool = False
+    snapshot: str | None = None
     status: JobStatus = "queued"
     created_at: datetime
     started_at: datetime | None = None

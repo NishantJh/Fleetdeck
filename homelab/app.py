@@ -30,12 +30,14 @@ class TargetView(BaseModel):
 class ActionRequest(BaseModel):
     action: JobAction
     target_ids: list[str]
+    # Upgrade only: snapshot guests first.
+    snapshot_first: bool = False
 
 
 def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None) -> FastAPI:
     cfg = cfg or load_config()
     inventory = inventory or Inventory(build_providers(cfg))
-    jobs = JobManager(inventory, cfg.max_parallel)
+    jobs = JobManager(inventory, cfg.max_parallel, cfg.snapshot_keep)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -67,15 +69,21 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
             TargetView(target=t, check=jobs.checks.get(t.id), active_job=_light(jobs.active_job(t.id)))
             for t, _ in inventory.targets.values()
         ]
-        return {"targets": views, "errors": inventory.errors}
+        return {
+            "targets": views,
+            "errors": inventory.errors,
+            "settings": {"snapshot_before_upgrade": cfg.snapshot_before_upgrade},
+        }
 
     @app.post("/api/actions")
     async def run_action(req: ActionRequest):
+        if req.action == "rollback":
+            raise HTTPException(400, "roll back from the upgrade job: POST /api/jobs/{id}/rollback")
         await inventory.refresh()
         submitted, rejected = [], {}
         for tid in req.target_ids:
             try:
-                submitted.append(_light(jobs.submit(tid, req.action)))
+                submitted.append(_light(jobs.submit(tid, req.action, snapshot_first=req.snapshot_first)))
             except KeyError:
                 rejected[tid] = "unknown target"
             except ValueError as e:
@@ -95,6 +103,22 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
         data["log"] = job.log[since:]
         data["log_offset"] = since
         return data
+
+    @app.post("/api/jobs/{job_id}/rollback")
+    async def rollback(job_id: str):
+        """Restore the snapshot an upgrade job took before it ran."""
+        job = jobs.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, "job not found")
+        if job.action != "upgrade" or not job.snapshot:
+            raise HTTPException(400, "this job took no snapshot")
+        await inventory.refresh()
+        try:
+            return _light(jobs.submit(job.target_id, "rollback", snapshot=job.snapshot))
+        except KeyError:
+            raise HTTPException(404, "target no longer exists") from None
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
 
     @app.get("/")
     async def index():

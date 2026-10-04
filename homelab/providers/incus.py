@@ -5,6 +5,7 @@ import httpx
 from ..config import IncusConfig
 from ..executors import IncusExecutor, SSHExecutor
 from ..models import Target
+from ..snapshots import IncusSnapshots
 from . import Discovered
 
 
@@ -61,6 +62,9 @@ class IncusProvider:
                 status=inst.get("status", "unknown").lower(),
                 updatable=running,
                 note=None if running else "not running",
+                can_snapshot=True,
             )
-            found.append((t, IncusExecutor(self.client, name, project)))
+            ex = IncusExecutor(self.client, name, project)
+            ex.snapshots = IncusSnapshots(self.client, name, project)
+            found.append((t, ex))
         return found

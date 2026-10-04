@@ -8,12 +8,19 @@ auth:
 # How many machines may be checked/updated at once.
 max_parallel: 4
 
+# Snapshot Proxmox/Incus guests before upgrading them (the Update dialog's default), and how many
+# of the dashboard's own snapshots to keep per guest. Proxmox needs storage that supports snapshots
+# (ZFS, LVM-thin, Ceph, qcow2) and VM.Snapshot + VM.Snapshot.Rollback on the token.
+snapshot_before_upgrade: true
+snapshot_keep: 3
+
 proxmox:
   - name: pve
     api_url: https://192.168.1.10:8006
     # Datacenter > Permissions > API Tokens. Needs VM.Audit + Sys.Audit to list guests,
     # Sys.Modify on /nodes to refresh the host's package lists through PVE,
-    # and VM.GuestAgent.Unrestricted (PVE 9) / VM.Monitor (PVE 8) to update VMs via the guest agent.
+    # VM.GuestAgent.Unrestricted (PVE 9) / VM.Monitor (PVE 8) to update VMs via the guest agent,
+    # and VM.Snapshot + VM.Snapshot.Rollback for snapshots before upgrades.
     token_id: root@pam!homelab
     token_secret: ${PVE_TOKEN_SECRET}
     verify_ssl: false # or a path to your CA bundle

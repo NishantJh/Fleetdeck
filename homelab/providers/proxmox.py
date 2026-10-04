@@ -9,6 +9,7 @@ import httpx
 from ..config import ProxmoxConfig, SSHConfig
 from ..executors import DEFAULT_TIMEOUT, LineCallback, PctExecutor, PveAgentExecutor, SSHExecutor
 from ..models import CheckResult, ExecResult, Package, Target
+from ..snapshots import PveSnapshots
 from ..updates import REBOOT_SCRIPT, parse_reboot
 from . import Discovered
 
@@ -206,8 +207,12 @@ class ProxmoxProvider:
                     status=ct.get("status", "unknown"),
                     updatable=updatable,
                     note=note,
+                    can_snapshot=ssh is not None,
                 )
-                found.append((t, PctExecutor(ssh, vmid) if ssh else None))  # type: ignore[arg-type]
+                ex = PctExecutor(ssh, vmid) if ssh else None
+                if ex is not None:
+                    ex.snapshots = PveSnapshots(self.client, nname, "lxc", vmid)
+                found.append((t, ex))  # type: ignore[arg-type]
 
             for vm in await self._get(f"/nodes/{nname}/qemu"):
                 vmid = int(vm["vmid"])
@@ -231,6 +236,9 @@ class ProxmoxProvider:
                     status=vm.get("status", "unknown"),
                     updatable=updatable,
                     note=note,
+                    can_snapshot=True,
                 )
-                found.append((t, PveAgentExecutor(self.client, nname, vmid)))
+                ex = PveAgentExecutor(self.client, nname, vmid)
+                ex.snapshots = PveSnapshots(self.client, nname, "qemu", vmid)
+                found.append((t, ex))
         return found

@@ -18,6 +18,11 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   whether a reboot is needed.
 * **Update** runs a full upgrade (`apt-get dist-upgrade`, `dnf upgrade`, `apk upgrade`,
   `pacman -Syu`), streams the output to the Activity panel, then re-checks. Nothing is rebooted.
+* **Snapshot first:** the Update dialog can snapshot Proxmox LXCs/VMs and Incus instances before
+  upgrading (on by default, `snapshot_before_upgrade`). If the snapshot fails, for example because
+  the guest's storage can't snapshot, the upgrade isn't started. The job's log then has a
+  **Roll back to snapshot** button. The dashboard keeps its last `snapshot_keep` (3) snapshots per
+  guest, named `homelab_<date>_<time>`, and never touches snapshots it didn't make.
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,
   never two jobs on the same machine at once).
 
@@ -55,7 +60,7 @@ HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d
 ### What each platform needs
 
 * **Proxmox:** an API token (Datacenter → Permissions → API Tokens) with `VM.Audit`/`Sys.Audit` to
-  list guests, `Sys.Modify` on `/nodes` so the host check can refresh package lists, and
+  list guests, `VM.Snapshot` and `VM.Snapshot.Rollback` for snapshots, `Sys.Modify` on `/nodes` so the host check can refresh package lists, and
   guest-agent exec rights to update VMs (`VM.GuestAgent.Unrestricted` on PVE 9, `VM.Monitor` on
   PVE 8). VMs need the *QEMU Guest Agent* option on and `qemu-guest-agent` installed inside.
 * **Proxmox host updates** are checked through PVE itself, the same as *Updates → Refresh* in the

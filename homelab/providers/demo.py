@@ -19,6 +19,26 @@ _APT = [
 _APK = ["busybox-1.36.1-r31 x86_64 {busybox} (GPL-2.0-only) [upgradable from: busybox-1.36.1-r29]"]
 
 
+class DemoSnapshots:
+    def __init__(self, executor: DemoExecutor):
+        self.executor = executor
+        self.saved: dict[str, list[str]] = {}
+
+    async def create(self, name: str, description: str) -> None:
+        await asyncio.sleep(0.5)
+        self.saved[name] = list(self.executor.lines)
+
+    async def rollback(self, name: str) -> None:
+        await asyncio.sleep(1)
+        self.executor.lines = list(self.saved[name])
+
+    async def list_ours(self) -> list[str]:
+        return list(self.saved)
+
+    async def delete(self, name: str) -> None:
+        del self.saved[name]
+
+
 class DemoExecutor:
     def __init__(self, pm: str, os_name: str, lines: list[str]):
         self.pm, self.os_name, self.lines = pm, os_name, lines
@@ -70,7 +90,11 @@ class DemoProvider:
                 source="demo",
                 kind=kind,  # type: ignore[arg-type]
                 parent=parent,
+                can_snapshot=kind != "host" and platform != "ssh",
             )
-            found.append((t, DemoExecutor(pm, os_name, list(lines))))
+            ex = DemoExecutor(pm, os_name, list(lines))
+            if t.can_snapshot:
+                ex.snapshots = DemoSnapshots(ex)
+            found.append((t, ex))
         self._found = found
         return found

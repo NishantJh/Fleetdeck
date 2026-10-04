@@ -18,6 +18,7 @@ import httpx
 
 from .config import SSHConfig
 from .models import ExecResult
+from .snapshots import Snapshots
 
 LineCallback = Callable[[str, str], None]
 DEFAULT_TIMEOUT = 3600.0
@@ -92,6 +93,8 @@ class SSHExecutor:
 class PctExecutor:
     """Runs inside a Proxmox LXC via `pct exec` on the node (the PVE API has no LXC exec)."""
 
+    snapshots: Snapshots | None = None
+
     def __init__(self, node_ssh: SSHExecutor, vmid: int):
         self.node_ssh = node_ssh
         self.vmid = vmid
@@ -103,6 +106,8 @@ class PctExecutor:
 
 class PveAgentExecutor:
     """Runs inside a Proxmox VM through the QEMU guest agent."""
+
+    snapshots: Snapshots | None = None
 
     def __init__(self, client: httpx.AsyncClient, node: str, vmid: int):
         self.client = client
@@ -131,6 +136,8 @@ class PveAgentExecutor:
 
 class IncusExecutor:
     """Runs inside an Incus container or VM via the REST exec API (VMs need incus-agent)."""
+
+    snapshots: Snapshots | None = None
 
     def __init__(self, client: httpx.AsyncClient, name: str, project: str):
         self.client = client

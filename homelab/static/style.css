@@ -50,7 +50,10 @@ tr.guest td.name { padding-left: 28px; }
 #jobs { list-style: none; margin: 0; padding: 0; max-height: 320px; overflow: auto; }
 #jobs li { padding: 6px 8px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
 #jobs li:hover, #jobs li.sel { background: var(--chip); }
-.log-title { font-weight: 600; margin-bottom: 6px; }
+.log-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
+.log-title { font-weight: 600; }
+.check-row { display: flex; gap: 6px; align-items: center; margin: 8px 0; }
+.check-row[hidden] { display: none; }
 pre#log { margin: 0; background: #0d1117; color: #d1d7e0; padding: 10px; border-radius: 6px; height: 320px; overflow: auto; font: 12px/1.4 var(--mono); white-space: pre-wrap; }
 dialog { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--text); max-width: 480px; width: calc(100% - 32px); }
 dialog::backdrop { background: rgba(0,0,0,.4); }

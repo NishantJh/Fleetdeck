@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 
 from .inventory import Inventory
 from .models import CheckResult, Job, JobAction, Target
+from .snapshots import prune, snapshot_name
 from .updates import CHECK_SCRIPT, UPGRADE_SCRIPT, parse_check, parse_reboot
 
 log = logging.getLogger(__name__)
@@ -24,8 +25,9 @@ class JobManager:
     Only one job per target runs at once; later ones wait their turn.
     """
 
-    def __init__(self, inventory: Inventory, max_parallel: int = 4):
+    def __init__(self, inventory: Inventory, max_parallel: int = 4, snapshot_keep: int = 3):
         self.inventory = inventory
+        self.snapshot_keep = snapshot_keep
         self.sem = asyncio.Semaphore(max_parallel)
         self.jobs: OrderedDict[str, Job] = OrderedDict()
         self.checks: dict[str, CheckResult] = {}
@@ -38,14 +40,24 @@ class JobManager:
                 return job
         return None
 
-    def submit(self, target_id: str, action: JobAction) -> Job:
+    def submit(
+        self, target_id: str, action: JobAction, snapshot_first: bool = False, snapshot: str | None = None
+    ) -> Job:
         target, executor = self.inventory.get(target_id)
         _ensure_runnable(target, executor, action)
+        if action == "rollback" and not snapshot:
+            raise ValueError(f"{target.name}: no snapshot to roll back to")
         existing = self.active_job(target_id)
         if existing and existing.action == action:
             return existing
         job = Job(
-            id=uuid.uuid4().hex[:12], target_id=target_id, target_name=target.name, action=action, created_at=_now()
+            id=uuid.uuid4().hex[:12],
+            target_id=target_id,
+            target_name=target.name,
+            action=action,
+            snapshot_first=snapshot_first and action == "upgrade",
+            snapshot=snapshot if action == "rollback" else None,
+            created_at=_now(),
         )
         self.jobs[job.id] = job
         self._evict()
@@ -85,7 +97,17 @@ class JobManager:
                     if check.error:
                         raise RuntimeError(check.error)
                     job.log.append(f"== {len(check.packages)} update(s) available")
+                elif job.action == "rollback":
+                    job.log.append(f"== Rolling back to snapshot {job.snapshot}")
+                    await executor.snapshots.rollback(job.snapshot)
+                    job.log.append("== Rolled back; re-checking")
+                    try:
+                        self.checks[job.target_id] = await _check(executor)
+                    except Exception as e:  # noqa: BLE001 - the rollback itself worked
+                        job.log.append(f"! re-check failed: {e}")
                 else:
+                    if job.snapshot_first:
+                        await self._snapshot(job, executor)
                     job.log.append("== Running OS upgrade")
                     res = await executor.run(UPGRADE_SCRIPT, on_line)
                     if res.rc != 0:
@@ -113,6 +135,25 @@ class JobManager:
             finally:
                 job.finished_at = _now()
 
+    async def _snapshot(self, job: Job, executor) -> None:
+        snaps = getattr(executor, "snapshots", None)
+        if snaps is None:
+            job.log.append("== No snapshot: only Proxmox and Incus guests can be snapshotted")
+            return
+        name = snapshot_name()
+        job.log.append(f"== Taking snapshot {name}")
+        try:
+            await snaps.create(name, f"Before OS upgrade by Homelab Manager (job {job.id})")
+        except Exception as e:
+            # The user asked for a safety net; don't upgrade without one.
+            raise RuntimeError(f"snapshot failed, so the upgrade was not started: {e}") from e
+        job.snapshot = name
+        try:
+            for old in await prune(snaps, self.snapshot_keep):
+                job.log.append(f"== Deleted old snapshot {old}")
+        except Exception as e:  # noqa: BLE001 - housekeeping only
+            job.log.append(f"! could not delete old snapshots: {e}")
+
     def _record_check_error(self, target_id: str, error: str) -> None:
         """Show a failed check as an error, keeping the OS name from the last good check."""
         prev = self.checks.get(target_id)
@@ -129,8 +170,10 @@ class JobManager:
 def _ensure_runnable(target: Target, executor, action: JobAction) -> None:
     if not target.updatable or executor is None:
         raise ValueError(f"{target.name}: {target.note or 'not updatable'}")
-    if action == "upgrade" and target.check_only:
+    if action in ("upgrade", "rollback") and target.check_only:
         raise ValueError(f"{target.name}: {target.note or 'can only be checked'}")
+    if action == "rollback" and getattr(executor, "snapshots", None) is None:
+        raise ValueError(f"{target.name}: snapshots are only supported for Proxmox and Incus guests")
 
 
 async def _check(executor, on_line=None) -> CheckResult:

@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { targets: [], errors: {}, jobs: [], selected: new Set(), expanded: new Set(), logJob: null, logLines: [] };
+const state = { targets: [], errors: {}, settings: {}, jobs: [], selected: new Set(), expanded: new Set(), logJob: null, logLines: [] };
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const PLATFORM = { proxmox: "Proxmox", incus: "Incus", ssh: "Standalone", demo: "Demo" };
@@ -119,6 +119,7 @@ async function load(refresh = false) {
     const data = await api(`/api/targets${refresh ? "?refresh=true" : ""}`);
     state.targets = data.targets;
     state.errors = data.errors;
+    state.settings = data.settings || {};
     state.jobs = await api("/api/jobs");
     // Drop selections for targets that disappeared or can no longer be upgraded.
     const selectable = new Set(state.targets.filter((v) => canUpgrade(v.target)).map((v) => v.target.id));
@@ -129,11 +130,12 @@ async function load(refresh = false) {
   render();
 }
 
-async function act(action, ids) {
+async function act(action, ids, snapshotFirst = false) {
   if (!ids.length) return;
   let res;
   try {
-    res = await api("/api/actions", { method: "POST", body: JSON.stringify({ action, target_ids: ids }) });
+    const body = { action, target_ids: ids, snapshot_first: snapshotFirst };
+    res = await api("/api/actions", { method: "POST", body: JSON.stringify(body) });
   } catch (e) {
     alert(`Could not start ${action}: ${e.message}`);
     return;
@@ -155,13 +157,16 @@ function confirmUpgrade(ids) {
     const n = v?.check?.packages?.length;
     return `<li>${esc(v?.target.name || id)} <span class="muted">${n != null ? `${n} package(s)` : "not checked"}</span></li>`;
   }).join("");
+  const snapshottable = ids.some((id) => byId.get(id)?.target.can_snapshot);
+  $("#confirm-snapshot-row").hidden = !snapshottable;
+  $("#confirm-snapshot").checked = snapshottable && !!state.settings.snapshot_before_upgrade;
   const dlg = $("#confirm");
   dlg.returnValue = "";
   dlg.showModal();
   dlg.addEventListener("close", () => {
     if (dlg.returnValue !== "ok") return;
     state.selected.clear();
-    act("upgrade", ids);
+    act("upgrade", ids, $("#confirm-snapshot").checked);
   }, { once: true });
 }
 
@@ -179,6 +184,11 @@ async function showLog(jobId) {
   if (state.logJob !== jobId) return;
   state.logLines.splice(job.log_offset, Infinity, ...job.log);
   $("#log-title").textContent = `${job.target_name} · ${job.action} · ${job.status}`;
+  const rb = $("#rollback");
+  rb.hidden = !(job.action === "upgrade" && job.snapshot && (job.status === "succeeded" || job.status === "failed"));
+  rb.dataset.rollbackJob = job.id;
+  rb.dataset.snapshot = job.snapshot || "";
+  rb.dataset.name = job.target_name;
   const pre = $("#log");
   const stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
   pre.textContent = state.logLines.join("\n");
@@ -210,6 +220,18 @@ document.addEventListener("change", (e) => {
 });
 
 $("#refresh").onclick = () => load(true);
+$("#rollback").onclick = async (e) => {
+  const { rollbackJob: job, snapshot, name } = e.currentTarget.dataset;
+  if (!confirm(`Roll ${name} back to snapshot ${snapshot}? Everything changed on it since the snapshot is lost.`)) return;
+  try {
+    const j = await api(`/api/jobs/${job}/rollback`, { method: "POST" });
+    state.logJob = j.id;
+    state.logLines = [];
+    schedule(200);
+  } catch (err) {
+    alert(`Could not roll back: ${err.message}`);
+  }
+};
 $("#check-all").onclick = () => act("check", state.targets.filter((v) => v.target.updatable).map((v) => v.target.id));
 $("#update-selected").onclick = () => confirmUpgrade([...state.selected]);
 
