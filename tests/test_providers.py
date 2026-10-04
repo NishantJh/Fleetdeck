@@ -308,3 +308,29 @@ async def test_proxmox_backups_on_two_nodes():
     # Two node-local backups with the same volid, plus one on the shared PBS read only once.
     assert found["ct"].backup.count == 3
     assert sum(c.endswith("/pbs/content") for c in calls) == 1
+
+
+async def test_shared_storage_inactive_on_one_node_is_read_from_another():
+    import time
+
+    now = int(time.time())
+    data = {
+        "/api2/json/cluster/status": [],
+        "/api2/json/cluster/backup-info/not-backed-up": [],
+        "/api2/json/nodes": [{"node": "a", "status": "online"}, {"node": "b", "status": "online"}],
+        "/api2/json/nodes/a/lxc": [{"vmid": "101", "name": "ct", "status": "running"}],
+        "/api2/json/nodes/a/qemu": [],
+        "/api2/json/nodes/b/lxc": [],
+        "/api2/json/nodes/b/qemu": [],
+        "/api2/json/nodes/a/storage": [{"storage": "nfs", "shared": 1, "active": 0}],
+        "/api2/json/nodes/b/storage": [{"storage": "nfs", "shared": 1, "active": 1}],
+        "/api2/json/nodes/b/storage/nfs/content": [{"volid": "nfs:backup/x", "vmid": 101, "ctime": now}],
+    }
+
+    def handler(req):
+        return httpx.Response(200, json={"data": data[req.url.path]})
+
+    p = ProxmoxProvider(ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x"))
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
+    found = {t.name: t for t, _ in await p.discover()}
+    assert found["ct"].backup.count == 1 and found["ct"].backup.note is None

@@ -189,7 +189,8 @@ class ProxmoxProvider:
         # (node, storage, shared) to read. Shared storages (PBS, NFS) list the same backups from
         # every node, so they're read once.
         to_read: list[tuple[str, str, bool]] = []
-        seen_storages: set[str] = set()
+        queued: set[str] = set()
+        inactive: set[str] = set()
         for node in nodes:
             try:
                 r = await self.client.get(f"/nodes/{node}/storage", params={"content": "backup", "enabled": 1})
@@ -200,13 +201,15 @@ class ProxmoxProvider:
                 continue
             for st in storages:
                 name, shared = st["storage"], bool(st.get("shared"))
-                if shared and name in seen_storages:
+                if shared and name in queued:
                     continue
-                seen_storages.add(name)
                 if not st.get("active", 1):
-                    errors.append(f"{name}: storage inactive")
+                    # A shared storage may be mounted on another node only; try that one.
+                    inactive.add(name)
                     continue
+                queued.add(name)
                 to_read.append((node, name, shared))
+        errors += [f"{name}: storage inactive" for name in sorted(inactive - queued)]
 
         async def content(node: str, name: str) -> list[dict]:
             r = await self.client.get(f"/nodes/{node}/storage/{name}/content", params={"content": "backup"})
