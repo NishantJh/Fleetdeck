@@ -30,13 +30,27 @@ HOMELAB_DEMO=1 python -m homelab   # http://localhost:8080
 
 ## Run it for real
 
+Every push to `main` publishes `ghcr.io/nishantjh/homelab-manager:latest` (amd64 and arm64).
+
 ```bash
 mkdir config
 cp config.example.yaml config/config.yaml   # fill in your hosts
 cp ~/.ssh/id_ed25519 config/                # key authorised on the hosts
 ssh-keyscan 192.168.1.10 192.168.1.20 192.168.1.30 > config/known_hosts
-HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d --build
+HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d
 ```
+
+### With Arcane
+
+1. Create a new project in Arcane and paste in `docker-compose.yml`.
+2. Put `config.yaml`, the SSH key and `known_hosts` in a `config/` folder inside that project's
+   directory on the Docker host, and set `HOMELAB_PASSWORD` and `PVE_TOKEN_SECRET` in the
+   project's `.env`.
+3. While the repo is private, the image is too: add `ghcr.io` as a registry in Arcane with your
+   GitHub username and a token that has `read:packages`.
+4. Add the VMID of the LXC that runs Docker/Arcane to `protect:` under your Proxmox entry. It still
+   shows on the dashboard, but can't be updated from it, because upgrading Docker in that LXC would
+   restart the dashboard halfway through. Update that one LXC from its own console.
 
 ### What each platform needs
 

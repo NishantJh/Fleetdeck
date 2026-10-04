@@ -7,6 +7,8 @@ from ..executors import PctExecutor, PveAgentExecutor, SSHExecutor
 from ..models import Target
 from . import Discovered
 
+PROTECTED_NOTE = "protected: runs this dashboard, update it from its own console"
+
 
 class ProxmoxProvider:
     """Discovers nodes, LXCs and VMs through the Proxmox VE API.
@@ -61,6 +63,10 @@ class ProxmoxProvider:
                 if vmid in self.cfg.exclude:
                     continue
                 running = ct.get("status") == "running"
+                updatable = running and ssh is not None
+                note = (None if ssh else "needs node ssh for pct exec") if running else "not running"
+                if vmid in self.cfg.protect:
+                    updatable, note = False, PROTECTED_NOTE
                 t = Target(
                     id=f"{prefix}:lxc:{vmid}",
                     name=ct.get("name") or f"ct{vmid}",
@@ -69,8 +75,8 @@ class ProxmoxProvider:
                     kind="lxc",
                     parent=nname,
                     status=ct.get("status", "unknown"),
-                    updatable=running and ssh is not None,
-                    note=(None if ssh else "needs node ssh for pct exec") if running else "not running",
+                    updatable=updatable,
+                    note=note,
                 )
                 found.append((t, PctExecutor(ssh, vmid) if ssh else None))  # type: ignore[arg-type]
 
@@ -81,7 +87,9 @@ class ProxmoxProvider:
                 running = vm.get("status") == "running"
                 note = None if running else "not running"
                 updatable = running
-                if running:
+                if vmid in self.cfg.protect:
+                    updatable, note = False, PROTECTED_NOTE
+                elif running:
                     conf = await self._get(f"/nodes/{nname}/qemu/{vmid}/config")
                     if str(conf.get("ostype", "")).startswith("w"):
                         updatable, note = False, "Windows guests are not supported yet"

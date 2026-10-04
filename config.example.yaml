@@ -26,6 +26,9 @@ proxmox:
     # node_ssh:
     #   pve2: { host: 192.168.1.11, user: root, key_file: /config/id_ed25519 }
     exclude: [] # VMIDs to hide
+    # VMIDs shown but never updated from here: put the LXC that runs this dashboard here,
+    # otherwise upgrading Docker inside it restarts the dashboard mid-upgrade.
+    protect: [] # e.g. [105]
 
 incus:
   - name: incus01

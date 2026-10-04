@@ -19,7 +19,7 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 - [x] Discover Proxmox, Incus and SSH targets
 - [x] Check pending updates (apt, dnf/yum, apk, pacman) and reboot-required
 - [x] Upgrade one or many targets, with live log
-- [x] Basic auth, Docker image, demo mode, CI
+- [x] Basic auth, Docker image on GHCR (amd64/arm64), Arcane-ready compose, demo mode, CI
 
 ### 2. Make updates safe and hands-off
 - [ ] Persist check results and job history (SQLite) so restarts don't lose state
@@ -28,6 +28,7 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 - [ ] Scheduled checks plus notifications (ntfy, Discord, email) when updates are pending
 - [ ] Per-target holds (skip kernel / Proxmox major upgrades)
 - [ ] Optional SSH for VMs that don't run the guest agent
+- [ ] Run upgrades detached on the target (e.g. `systemd-run`) so they survive a dashboard restart; then `protect:` is no longer needed for the dashboard's own LXC
 
 ### 3. Toward the "ultimate" dashboard
 - [ ] Live resource view (CPU/RAM/disk) for nodes and guests

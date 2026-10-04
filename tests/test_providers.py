@@ -10,6 +10,7 @@ PVE = {
         {"vmid": "101", "name": "pihole", "status": "running"},
         {"vmid": "102", "name": "old", "status": "stopped"},
         {"vmid": "199", "name": "hidden", "status": "running"},
+        {"vmid": "103", "name": "arcane", "status": "running"},
     ],
     "/api2/json/nodes/pve/qemu": [
         {"vmid": 200, "name": "docker", "status": "running"},
@@ -26,7 +27,7 @@ PVE = {
 async def test_proxmox_discovery():
     cfg = ProxmoxConfig(
         name="lab", api_url="https://pve:8006", token_id="root@pam!t", token_secret="x",
-        ssh=SSHConfig(host="pve"), exclude=[199],
+        ssh=SSHConfig(host="pve"), exclude=[199], protect=[103],
     )  # fmt: skip
     p = ProxmoxProvider(cfg)
 
@@ -38,9 +39,10 @@ async def test_proxmox_discovery():
         transport=httpx.MockTransport(handler), base_url=p.client.base_url, headers=p.client.headers
     )
     found = {t.name: t for t, _ in await p.discover()}
-    assert set(found) == {"pve", "pihole", "old", "docker", "win11", "noagent"}
+    assert set(found) == {"pve", "pihole", "old", "arcane", "docker", "win11", "noagent"}
     assert found["pve"].kind == "host" and found["pve"].updatable
     assert found["pihole"].updatable and not found["old"].updatable
+    assert not found["arcane"].updatable and "protected" in found["arcane"].note
     assert found["docker"].updatable
     assert not found["win11"].updatable and "Windows" in found["win11"].note
     assert not found["noagent"].updatable and "agent" in found["noagent"].note

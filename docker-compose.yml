@@ -1,6 +1,9 @@
+# Works as-is as an Arcane project (or plain `docker compose up -d`).
 services:
   homelab-manager:
-    build: .
+    image: ghcr.io/nishantjh/homelab-manager:latest
+    # To build from source instead of pulling the image:
+    # build: .
     container_name: homelab-manager
     restart: unless-stopped
     ports:

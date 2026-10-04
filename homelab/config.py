@@ -38,6 +38,9 @@ class ProxmoxConfig(BaseModel):
     node_ssh: dict[str, SSHConfig] = Field(default_factory=dict)
     # VMIDs to hide from the dashboard.
     exclude: list[int] = Field(default_factory=list)
+    # VMIDs shown but never updated from the dashboard, e.g. the LXC/VM the dashboard runs in.
+    # Upgrading it (Docker in particular) would restart the dashboard mid-upgrade.
+    protect: list[int] = Field(default_factory=list)
 
 
 class IncusConfig(BaseModel):
