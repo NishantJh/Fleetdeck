@@ -1,8 +1,8 @@
 FROM python:3.12-slim
 WORKDIR /app
-# Exact, hash-checked dependencies (regenerate with the command at the top of requirements.lock).
-COPY requirements.lock ./
-RUN pip install --no-cache-dir --require-hashes -r requirements.lock
+# Exact, hash-checked dependencies (regenerate with the command at the top of requirements.txt).
+COPY requirements.txt ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt
 COPY pyproject.toml ./
 COPY homelab ./homelab
 RUN pip install --no-cache-dir --no-deps . \

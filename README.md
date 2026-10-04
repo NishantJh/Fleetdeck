@@ -42,8 +42,13 @@ HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d
 ```
 
 The container runs as an unprivileged user (uid 10001) with a read-only filesystem and no Linux
-capabilities, so the files in `config/` must be readable by that uid. If it can't read the SSH key,
-SSH fails with a permission error in the Activity log. To pin a version instead of `latest`, use a
+capabilities, so the files in `config/` (and `data/`, if you keep state there) must be readable by
+that uid. Anything it can't read is logged at start-up with the `chown` to fix it, and shows on the
+affected machine's check.
+
+**Upgrading from an image that ran as root:** before pulling the new image, run
+`sudo chown -R 10001:10001 config` (and `data` if it exists) in the project folder, or the dashboard
+can't read its config and won't start. To pin a version instead of `latest`, use a
 release tag such as `ghcr.io/nishantjh/homelab-manager:0.2.0`.
 
 ### With Arcane

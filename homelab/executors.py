@@ -16,7 +16,7 @@ from typing import Protocol
 import asyncssh
 import httpx
 
-from .config import SSHConfig
+from .config import SSHConfig, unreadable
 from .models import ExecResult
 
 LineCallback = Callable[[str, str], None]
@@ -42,6 +42,9 @@ class SSHExecutor:
         self.cfg = cfg
 
     def _connect_kwargs(self) -> dict:
+        for path in (self.cfg.key_file, self.cfg.known_hosts):
+            if problem := unreadable(path):
+                raise RuntimeError(problem)
         kw: dict = {
             "host": self.cfg.host,
             "port": self.cfg.port,
