@@ -1,0 +1,57 @@
+# Copy to config.yaml and fill in. ${VARS} are read from the environment.
+
+# Basic auth for the dashboard. Leave it on: this app can run commands as root on your lab.
+auth:
+  username: admin
+  password: ${HOMELAB_PASSWORD}
+
+# How many machines may be checked/updated at once.
+max_parallel: 4
+
+proxmox:
+  - name: pve
+    api_url: https://192.168.1.10:8006
+    # Datacenter > Permissions > API Tokens. Needs VM.Audit + Sys.Audit to list guests,
+    # Sys.Modify on /nodes to refresh the host's package lists through PVE,
+    # and VM.GuestAgent.Unrestricted (PVE 9) / VM.Monitor (PVE 8) to update VMs via the guest agent.
+    token_id: root@pam!homelab
+    token_secret: ${PVE_TOKEN_SECRET}
+    verify_ssl: false # or a path to your CA bundle
+    # SSH to the node: upgrades the host itself and runs `pct exec` inside LXCs.
+    ssh:
+      host: 192.168.1.10
+      user: root
+      key_file: /config/id_ed25519
+      known_hosts: /config/known_hosts # omit to skip host key checks
+    # Cluster? Other nodes are reached at their cluster IP (from /cluster/status) with the same
+    # SSH settings. If that network isn't reachable from here, give each node its own settings:
+    # node_ssh:
+    #   pve2: { host: 192.168.1.11, user: root, key_file: /config/id_ed25519 }
+    exclude: [] # VMIDs to hide
+    # VMIDs shown but never updated from here: put the LXC that runs this dashboard here,
+    # otherwise upgrading Docker inside it restarts the dashboard mid-upgrade.
+    protect: [] # e.g. [105]
+
+incus:
+  - name: incus01
+    # Remote API: `incus config set core.https_address :8443`, then trust the client cert:
+    # `incus config trust add-certificate client.crt`
+    url: https://192.168.1.20:8443
+    client_cert: /config/incus-client.crt
+    client_key: /config/incus-client.key
+    verify_ssl: false
+    # Or, if the dashboard runs on the Incus host itself:
+    # socket: /var/lib/incus/unix.socket
+    ssh:
+      host: 192.168.1.20
+      user: root
+      key_file: /config/id_ed25519
+    exclude: [] # "name" or "project/name"
+
+# Standalone machines over SSH.
+hosts:
+  - name: pi4
+    host: 192.168.1.30
+    user: pi
+    key_file: /config/id_ed25519
+    sudo: true # non-root user with passwordless sudo

@@ -1,0 +1,16 @@
+# Works as-is as an Arcane project (or plain `docker compose up -d`).
+services:
+  homelab-manager:
+    image: ghcr.io/nishantjh/homelab-manager:latest
+    # To build from source instead of pulling the image:
+    # build: .
+    container_name: homelab-manager
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      # config.yaml, SSH key, known_hosts, Incus client cert
+      - ./config:/config:ro
+    environment:
+      HOMELAB_PASSWORD: ${HOMELAB_PASSWORD}
+      PVE_TOKEN_SECRET: ${PVE_TOKEN_SECRET}

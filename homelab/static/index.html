@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Homelab Manager</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Homelab Manager</h1>
+    <div class="toolbar">
+      <button id="refresh" title="Re-discover hosts and guests">Refresh inventory</button>
+      <button id="check-all">Check all</button>
+      <button id="update-selected" class="primary" disabled>Update selected</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="errors"></div>
+    <section id="summary" class="summary"></section>
+    <section id="groups"></section>
+
+    <section class="activity">
+      <h2>Activity</h2>
+      <div class="activity-body">
+        <ul id="jobs"></ul>
+        <div class="log-pane">
+          <div id="log-title" class="log-title">Select a job to see its output</div>
+          <pre id="log"></pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="confirm">
+    <form method="dialog">
+      <h3>Update these machines?</h3>
+      <p class="muted">Runs a full OS upgrade (apt dist-upgrade, dnf upgrade, apk upgrade or pacman -Syu). Nothing is rebooted.</p>
+      <ul id="confirm-list"></ul>
+      <menu>
+        <button value="cancel">Cancel</button>
+        <button value="ok" class="primary">Update</button>
+      </menu>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
