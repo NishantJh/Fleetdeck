@@ -9,9 +9,11 @@ import httpx
 from ..config import ProxmoxConfig, SSHConfig
 from ..executors import DEFAULT_TIMEOUT, LineCallback, PctExecutor, PveAgentExecutor, SSHExecutor
 from ..models import CheckResult, ExecResult, Package, Target
-from ..updates import REBOOT_SCRIPT, parse_reboot
+from ..updates import REBOOT_SCRIPT, parse_apt, parse_reboot
 from . import Discovered
 
+# The PVE API doesn't say which suite an update comes from; apt does, after the API's refresh.
+APT_LIST_SCRIPT = "LC_ALL=C apt list --upgradable 2>/dev/null"
 PROTECTED_NOTE = "protected: runs this dashboard, update it from its own console"
 
 
@@ -97,6 +99,12 @@ class PveNodeExecutor:
                 reboot = parse_reboot((await self.ssh.run(REBOOT_SCRIPT, timeout=60)).stdout)
             except Exception as e:  # informational only; don't fail the check
                 say(f"! could not check for a pending reboot: {e}")
+            try:
+                res = await self.ssh.run(APT_LIST_SCRIPT, timeout=60)
+                security = {p.name for p in parse_apt(res.stdout.splitlines()) if p.security}
+                packages = [p.model_copy(update={"security": p.name in security}) for p in packages]
+            except Exception as e:  # noqa: BLE001 - informational only
+                say(f"! could not tell which updates are security updates: {e}")
         return CheckResult(
             package_manager="apt (via PVE)",
             os=os_name,
