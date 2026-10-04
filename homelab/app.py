@@ -45,6 +45,8 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
     async def lifespan(_: FastAPI):
         if cfg.auth is None:
             log.warning("No auth configured: anyone who can reach this dashboard can update your machines.")
+        if notifier is not None and not scheduler.interval:
+            log.warning("Notifications are set up but schedule.check_every isn't, so nothing will be sent.")
         scheduler.start()
         yield
         await scheduler.stop()

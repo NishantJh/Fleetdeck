@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from datetime import UTC, datetime, timedelta
 
 from .inventory import Inventory
@@ -15,6 +16,8 @@ log = logging.getLogger(__name__)
 # Give the dashboard a moment after start-up before the first automatic check.
 FIRST_RUN_DELAY = 60.0
 POLL = 2.0
+# Stop waiting for a scheduled round after this long; checks still running are reported as stuck.
+RUN_TIMEOUT = 30 * 60.0
 
 Fingerprint = frozenset[tuple[str, ...]]
 
@@ -28,6 +31,8 @@ class Scheduler:
         self.next_run: datetime | None = None
         self.last_run: datetime | None = None
         self.last_notified: datetime | None = None
+        # What the last round found. Kept in memory only: after a restart the first round notifies
+        # about everything that is pending, which doubles as a "still needs attention" reminder.
         self._last_seen: Fingerprint = frozenset()
         self._task: asyncio.Task | None = None
 
@@ -66,14 +71,24 @@ class Scheduler:
                 submitted.append(self.jobs.submit(target.id, "check"))
             except (KeyError, ValueError):
                 continue
+        deadline = time.monotonic() + RUN_TIMEOUT
         while any(j.status in ("queued", "running") for j in submitted):
+            if time.monotonic() > deadline:
+                break
             await asyncio.sleep(POLL)
-        await self._report(sorted({j.target_id for j in submitted}))
+        # A hung check (an SSH session that never returns) must not hold back the whole report.
+        stuck = sorted({j.target_id for j in submitted if j.status in ("queued", "running")})
+        done = sorted({j.target_id for j in submitted} - set(stuck))
+        await self._report(done, stuck)
 
-    def summarize(self, target_ids: list[str]) -> tuple[str, str, Fingerprint]:
+    def summarize(self, target_ids: list[str], stuck: list[str] = ()) -> tuple[str, str, Fingerprint]:
         lines: list[str] = []
         seen: set[tuple[str, ...]] = set()
         machines = 0
+        for tid in stuck:
+            entry = self.inventory.targets.get(tid)
+            seen.add(("error", tid))
+            lines.append(f"{entry[0].name if entry else tid}: check still running after {RUN_TIMEOUT / 60:.0f} min")
         for tid in target_ids:
             check = self.jobs.checks.get(tid)
             entry = self.inventory.targets.get(tid)
@@ -104,8 +119,8 @@ class Scheduler:
         title = "Homelab: " + (", ".join(bits) or "all up to date")
         return title, "\n".join(sorted(lines, key=str.lower)), frozenset(seen)
 
-    async def _report(self, target_ids: list[str]) -> None:
-        title, body, seen = self.summarize(target_ids)
+    async def _report(self, target_ids: list[str], stuck: list[str] = ()) -> None:
+        title, body, seen = self.summarize(target_ids, stuck)
         # Only speak up when something new appeared: an update that wasn't pending at the last run,
         # a new pending reboot, or a machine whose check started failing. Things that were fixed
         # since drop out, so they notify again if they come back.

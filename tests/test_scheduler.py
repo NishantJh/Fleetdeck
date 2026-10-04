@@ -133,3 +133,37 @@ def test_schedule_api_and_test_notification(monkeypatch):
     with TestClient(create_app(cfg)) as client:
         assert client.get("/api/schedule").json()["next_run"] is None  # no schedule set
         assert client.post("/api/notify/test").json() == {"sent": 1, "errors": {}}
+
+
+async def test_hung_check_does_not_hold_back_the_report(monkeypatch):
+    import asyncio
+
+    import homelab.scheduler
+
+    monkeypatch.setattr(homelab.scheduler, "POLL", 0)
+    monkeypatch.setattr(homelab.scheduler, "RUN_TIMEOUT", 0)
+    hung = FakeExecutor(gate=asyncio.Event())
+    inv = _inventory((_target("pi4"), PkgExecutor(["curl"])), (_target("vps"), hung))
+    inv.refresh = _noop_refresh
+    notifier = RecordingNotifier()
+    jobs = JobManager(inv)
+    sched = Scheduler(3600, inv, jobs, notifier)
+    await asyncio.wait_for(sched.run_once(), 5)
+    ((title, body),) = notifier.messages
+    assert "vps: check still running after 0 min" in body
+    hung.gate.set()
+    while jobs._tasks:
+        await asyncio.gather(*jobs._tasks)
+
+
+async def test_notification_tokens_stay_out_of_the_log(caplog):
+    import logging
+
+    from homelab.__main__ import configure_logging
+
+    configure_logging()
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda req: httpx.Response(200)))
+    n = Notifier([NotifyConfig(type="telegram", token="123:secret", chat_id="42")], client=client)
+    with caplog.at_level(logging.INFO):
+        await n.send("t", "b")
+    assert "secret" not in caplog.text
