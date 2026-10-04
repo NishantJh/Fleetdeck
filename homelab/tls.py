@@ -63,26 +63,28 @@ class PinnedTransport(httpx.AsyncBaseTransport):
         self._lock = asyncio.Lock()
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        inner = await self._transport()
         try:
-            return await self._send(request)
+            return await inner.handle_async_request(request)
         except httpx.ConnectError as e:
             if not _verify_failed(e):
                 raise
             # The certificate changed (renewed, or expired) since it was pinned. Pin afresh once, which
-            # either works or fails with a message that says what changed.
-            inner, self._inner = self._inner, None
-            if inner is not None:
-                await inner.aclose()
-            return await self._send(request)
-
-    async def _send(self, request: httpx.Request) -> httpx.Response:
-        if self._inner is None:
+            # either works or fails with a message that says what changed. Only drop the transport
+            # that failed: a concurrent request may already have replaced it.
             async with self._lock:
-                if self._inner is None:
-                    # A failure (host down, mismatch) leaves _inner unset, so the next request retries.
-                    ctx = await asyncio.to_thread(pinned_context, self.host, self.port, self.fingerprint, self.cert)
-                    self._inner = httpx.AsyncHTTPTransport(verify=ctx)
-        return await self._inner.handle_async_request(request)
+                if self._inner is inner:
+                    self._inner = None
+                    await inner.aclose()
+            return await (await self._transport()).handle_async_request(request)
+
+    async def _transport(self) -> httpx.AsyncHTTPTransport:
+        async with self._lock:
+            if self._inner is None:
+                # A failure (host down, mismatch) leaves _inner unset, so the next request retries.
+                ctx = await asyncio.to_thread(pinned_context, self.host, self.port, self.fingerprint, self.cert)
+                self._inner = httpx.AsyncHTTPTransport(verify=ctx)
+            return self._inner
 
     async def aclose(self) -> None:
         if self._inner is not None:
