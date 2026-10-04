@@ -66,7 +66,25 @@ HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d
 * **Incus:** expose the API (`incus config set core.https_address :8443`) and trust a client
   certificate (`incus config trust add-certificate client.crt`), or run the dashboard on the Incus
   host and point `socket:` at `/var/lib/incus/unix.socket`. SSH is used for the host itself.
-* **Raspberry Pi / other hosts:** SSH. Non-root users need passwordless sudo and `sudo: true`.
+* **Raspberry Pi, VPS and other hosts:** SSH. Non-root users need passwordless sudo and `sudo: true`.
+
+### Giving the dashboard its own SSH key
+
+The dashboard runs in Docker, so it can't use the key on your own PC. Give it a key of its own;
+that way you can revoke it without touching yours. Inside the `config/` folder on the Docker host:
+
+```bash
+ssh-keygen -t ed25519 -f id_ed25519 -N "" -C homelab-manager
+cat id_ed25519.pub        # add this line to ~/.ssh/authorized_keys on each machine
+ssh-keyscan my-vps.example.com 192.168.1.10 >> known_hosts
+```
+
+You can add the public key from any machine that can already log in, for example from Windows:
+`type id_ed25519.pub | ssh user@my-vps.example.com "cat >> ~/.ssh/authorized_keys"`.
+
+For a machine on the internet such as a VPS, use a non-root user with passwordless sudo
+(`sudo: true`) and always set `known_hosts`, so the dashboard refuses to connect if the host key
+changes.
 
 ### Security
 
