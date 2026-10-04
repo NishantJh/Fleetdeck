@@ -52,7 +52,25 @@ function updatesCell(v) {
   return `<button class="small" data-toggle="${esc(t.id)}">${n} update${n > 1 ? "s" : ""} ${open ? "▴" : "▾"}</button>`;
 }
 
-function rowHtml(v) {
+function backupCell(t) {
+  const b = t.backup;
+  if (!b) return "";
+  let html;
+  if (b.last) {
+    const tip = `${new Date(b.last).toLocaleString()} on ${b.storage} · ${b.count} backup${b.count > 1 ? "s" : ""}`;
+    html = `<span class="${b.stale ? "warn" : ""}" title="${esc(tip)}">${ago(b.last)}</span>`;
+  } else if (b.note) {
+    html = `<span class="muted" title="${esc(b.note)}">?</span>`;
+  } else {
+    html = `<span class="bad">none</span>`;
+  }
+  if (b.verified === false) html += ` <span class="chip bad" title="The newest backup failed verification">verify failed</span>`;
+  if (b.in_job === false) html += ` <span class="chip warn" title="Not in any scheduled backup job">no job</span>`;
+  if (b.last && b.note) html += ` <span class="muted" title="${esc(b.note)}">ⓘ</span>`;
+  return html;
+}
+
+function rowHtml(v, withBackup) {
   const t = v.target, c = v.check;
   const busy = !!v.active_job;
   const reboot = c?.reboot_required ? `<span class="warn">reboot needed</span>` : "";
@@ -65,6 +83,7 @@ function rowHtml(v) {
     <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
     <td class="muted">${esc(c?.os || "")}</td>
     <td>${esc(t.status)}</td>
+    ${withBackup ? `<td>${backupCell(t)}</td>` : ""}
     <td>${updatesCell(v)} ${reboot}${notes}</td>
     <td class="muted">${c ? ago(c.checked_at) : ""}</td>
     <td>
@@ -73,7 +92,7 @@ function rowHtml(v) {
     </td></tr>`;
   if (pending && state.expanded.has(t.id)) {
     const rows = c.packages.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.current || "")}</td><td>→ ${esc(p.available)}</td></tr>`).join("");
-    html += `<tr class="pkgs"><td></td><td colspan="6"><table>${rows}</table></td></tr>`;
+    html += `<tr class="pkgs"><td></td><td colspan="${withBackup ? 7 : 6}"><table>${rows}</table></td></tr>`;
   }
   return html;
 }
@@ -87,20 +106,26 @@ function render() {
   const pkgCount = pending.reduce((n, v) => n + v.check.packages.length, 0);
   const reboot = updatable.filter((v) => v.check?.reboot_required).length;
   const unchecked = updatable.filter((v) => !v.check).length;
+  const withBackups = state.targets.filter((v) => v.target.backup);
+  const staleBackups = withBackups.filter((v) => v.target.backup.stale || v.target.backup.verified === false).length;
   $("#summary").innerHTML = `
     <div class="stat"><b>${updatable.length}</b><span class="muted">machines</span></div>
     <div class="stat"><b class="${pending.length ? "warn" : "ok"}">${pending.length}</b><span class="muted">need updates (${pkgCount} pkgs)</span></div>
     <div class="stat"><b class="${reboot ? "warn" : ""}">${reboot}</b><span class="muted">need a reboot</span></div>
-    <div class="stat"><b>${unchecked}</b><span class="muted">not checked yet</span></div>`;
+    <div class="stat"><b>${unchecked}</b><span class="muted">not checked yet</span></div>
+    ${withBackups.length ? `<div class="stat"><b class="${staleBackups ? "warn" : "ok"}">${staleBackups}</b><span class="muted">guests with old or no backups</span></div>` : ""}`;
 
-  $("#groups").innerHTML = groups().map((g) => `
+  $("#groups").innerHTML = groups().map((g) => {
+    const withBackup = g.rows.some((v) => v.target.backup);
+    return `
     <div class="group">
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
       <table>
-        <thead><tr><th></th><th>Name</th><th>OS</th><th>State</th><th>Updates</th><th>Checked</th><th></th></tr></thead>
-        <tbody>${g.rows.map(rowHtml).join("")}</tbody>
+        <thead><tr><th></th><th>Name</th><th>OS</th><th>State</th>${withBackup ? "<th>Last backup</th>" : ""}<th>Updates</th><th>Checked</th><th></th></tr></thead>
+        <tbody>${g.rows.map((v) => rowHtml(v, withBackup)).join("")}</tbody>
       </table>
-    </div>`).join("") || `<p class="muted">No targets yet. Add Proxmox, Incus or SSH hosts to config.yaml.</p>`;
+    </div>`;
+  }).join("") || `<p class="muted">No targets yet. Add Proxmox, Incus or SSH hosts to config.yaml.</p>`;
 
   const btn = $("#update-selected");
   btn.disabled = state.selected.size === 0;

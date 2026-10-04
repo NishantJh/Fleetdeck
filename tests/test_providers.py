@@ -180,3 +180,80 @@ async def test_proxmox_cluster_uses_each_nodes_address():
     assert isinstance(ct, PctExecutor)
     assert ct.node_ssh.cfg.host == "10.0.0.2" and ct.node_ssh.cfg.key_file == "/k"
     assert found["pve3"].ssh.cfg.host == "pve3"
+
+
+def _pve_with_backups(storages, contents, not_backed_up, calls):
+    import time
+
+    now = int(time.time())
+    base = {
+        "/api2/json/cluster/status": [],
+        "/api2/json/nodes": [{"node": "pve", "status": "online"}],
+        "/api2/json/nodes/pve/lxc": [
+            {"vmid": "101", "name": "pihole", "status": "running"},
+            {"vmid": "102", "name": "old", "status": "stopped"},
+        ],
+        "/api2/json/nodes/pve/qemu": [{"vmid": 200, "name": "docker", "status": "stopped"}],
+        "/api2/json/nodes/pve/storage": storages,
+        "/api2/json/cluster/backup-info/not-backed-up": not_backed_up,
+    }
+    for name, items in contents.items():
+        base[f"/api2/json/nodes/pve/storage/{name}/content"] = [
+            {**i, "ctime": now - i.pop("age_h", 0) * 3600} for i in items
+        ]
+
+    def handler(req):
+        calls.append(req.url.path)
+        if req.url.path not in base:
+            return httpx.Response(403, json={"data": None})
+        return httpx.Response(200, json={"data": base[req.url.path]})
+
+    return handler, now
+
+
+async def test_proxmox_backups():
+    calls: list[str] = []
+    handler, _ = _pve_with_backups(
+        storages=[{"storage": "local", "active": 1}, {"storage": "pbs", "active": 1, "shared": 1}],
+        contents={
+            "local": [{"volid": "local:backup/ct101-a", "vmid": 101, "age_h": 30}],
+            "pbs": [
+                {"volid": "pbs:ct/101/x", "vmid": 101, "age_h": 2, "verification": {"state": "ok"}},
+                {"volid": "pbs:vm/200/y", "vmid": 200, "age_h": 100, "verification": {"state": "failed"}},
+            ],
+        },
+        not_backed_up=[{"vmid": 102}],
+        calls=calls,
+    )
+    p = ProxmoxProvider(ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x"))
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
+    found = {t.name: t for t, _ in await p.discover()}
+    pihole, old, docker = found["pihole"].backup, found["old"].backup, found["docker"].backup
+    assert pihole.count == 2 and pihole.storage == "pbs" and pihole.verified and not pihole.stale and pihole.in_job
+    assert old.last is None and old.stale and old.in_job is False
+    assert docker.stale and docker.verified is False
+    assert found["pve"].backup is None  # hosts aren't backed up by vzdump
+
+    before = len(calls)
+    await p.discover()
+    assert not any("/storage" in c for c in calls[before:])  # cached between discoveries
+
+
+async def test_proxmox_backups_without_storage_permission():
+    calls: list[str] = []
+    handler, _ = _pve_with_backups(storages=[], contents={}, not_backed_up=[], calls=calls)
+    p = ProxmoxProvider(ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x"))
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
+    found = {t.name: t for t, _ in await p.discover()}
+    b = found["pihole"].backup
+    assert b.last is None and not b.stale and "Datastore.Audit" in b.note
+
+
+async def test_proxmox_backup_tracking_can_be_turned_off():
+    calls: list[str] = []
+    handler, _ = _pve_with_backups(storages=[], contents={}, not_backed_up=[], calls=calls)
+    cfg = ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x", backup_max_age_hours=0)
+    p = ProxmoxProvider(cfg)
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
+    found = {t.name: t for t, _ in await p.discover()}
+    assert found["pihole"].backup is None and not any("storage" in c for c in calls)

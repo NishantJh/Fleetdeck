@@ -45,6 +45,9 @@ class ProxmoxConfig(BaseModel):
     # VMIDs shown but never updated from the dashboard, e.g. the LXC/VM the dashboard runs in.
     # Upgrading it (Docker in particular) would restart the dashboard mid-upgrade.
     protect: list[int] = Field(default_factory=list)
+    # Flag a guest whose newest backup is older than this many hours. 0 turns backup tracking off.
+    # Reading backups needs Datastore.Audit on the backup storages.
+    backup_max_age_hours: int = Field(48, ge=0)
 
 
 class IncusConfig(BaseModel):

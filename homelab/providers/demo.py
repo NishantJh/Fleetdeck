@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import random
+from datetime import UTC, datetime, timedelta
 
-from ..models import ExecResult, Target
+from ..models import BackupInfo, ExecResult, Target
 from ..updates import CHECK_SCRIPT
 from . import Discovered
 
@@ -61,6 +62,12 @@ class DemoProvider:
             ("incus", "fedora-vm", "vm", "incus01", "dnf", "Fedora Linux 40", []),
             ("ssh", "pi4", "host", None, "apt", "Raspberry Pi OS (Debian 12)", _APT[:3]),
         ]
+        now = datetime.now(UTC)
+        backups = {
+            "pihole": BackupInfo(last=now - timedelta(hours=5), storage="pbs", count=14, in_job=True, verified=True),
+            "alpine-dns": BackupInfo(last=now - timedelta(days=4), storage="local", count=3, stale=True, in_job=True),
+            "docker-vm": BackupInfo(stale=True, in_job=False),
+        }
         found: Discovered = []
         for platform, name, kind, parent, pm, os_name, lines in items:
             t = Target(
@@ -70,6 +77,7 @@ class DemoProvider:
                 source="demo",
                 kind=kind,  # type: ignore[arg-type]
                 parent=parent,
+                backup=backups.get(name),
             )
             found.append((t, DemoExecutor(pm, os_name, list(lines))))
         self._found = found

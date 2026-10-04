@@ -35,5 +35,6 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 - [ ] Live resource view (CPU/RAM/disk) for nodes and guests
 - [ ] Start/stop/restart guests
 - [ ] Docker/Compose stacks inside guests: image update checks
-- [ ] Backup status (Proxmox Backup Server)
+- [x] Backup status: last backup per guest (vzdump/PBS), stale, not in a job, failed verification
+- [ ] Notify when a backup goes stale
 - [ ] Proper login (OIDC) instead of basic auth
