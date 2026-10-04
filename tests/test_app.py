@@ -100,6 +100,7 @@ def test_reboot_detection_compares_kernels(tmp_path):
     assert reboot(running) == "__REBOOT__=no"
     assert reboot(running, f"999.0.0-1-{flavour}") == "__REBOOT__=yes"
     assert reboot(running, "999.0.0-1-otherflavour") == "__REBOOT__=no"
+    assert reboot(f"1.0.0-1-{flavour}") == "__REBOOT__=no"  # running kernel is newer than any installed
 
 
 def test_check_script_uses_documented_apk_and_apt_lock_options():

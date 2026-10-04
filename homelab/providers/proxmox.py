@@ -132,8 +132,9 @@ class ProxmoxProvider:
         if self.cfg.ssh is None:
             return None
         # `pct exec` only works on the node that runs the container, so in a cluster reuse the
-        # shared ssh settings but point them at each node's own address.
-        if len(node_ips) > 1 and node in node_ips:
+        # shared ssh settings but point them at each node's own (cluster) address. The node the
+        # user's ssh.host already names keeps it; set node_ssh if cluster IPs aren't reachable.
+        if len(node_ips) > 1 and node in node_ips and self.cfg.ssh.host not in (node, node_ips[node]):
             return self.cfg.ssh.model_copy(update={"host": node_ips[node]})
         return self.cfg.ssh
 

@@ -164,6 +164,11 @@ async def test_proxmox_cluster_uses_each_nodes_address():
         ssh=SSHConfig(host="10.0.0.1", key_file="/k"),
         node_ssh={"pve1": SSHConfig(host="pve1.lan")},
     )  # fmt: skip
+    data["/api2/json/nodes"].append({"node": "pve3", "status": "online"})
+    data["/api2/json/cluster/status"].append({"type": "node", "name": "pve3", "ip": "10.0.0.3"})
+    data["/api2/json/nodes/pve3/lxc"] = []
+    data["/api2/json/nodes/pve3/qemu"] = []
+    cfg.ssh.host = "pve3"  # the node named by ssh.host keeps it
     p = ProxmoxProvider(cfg)
     p.client = httpx.AsyncClient(
         transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": data[req.url.path]})),
@@ -174,3 +179,4 @@ async def test_proxmox_cluster_uses_each_nodes_address():
     ct = found["ct"]
     assert isinstance(ct, PctExecutor)
     assert ct.node_ssh.cfg.host == "10.0.0.2" and ct.node_ssh.cfg.key_file == "/k"
+    assert found["pve3"].ssh.cfg.host == "pve3"

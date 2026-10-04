@@ -53,7 +53,11 @@ running=$(uname -r)
 if printf '1\n' | sort -V >/dev/null 2>&1; then SORT="sort -V"; else SORT=sort; fi
 latest=$(ls -1 "$MODULES_DIR" 2>/dev/null | grep -- "-${running##*-}\$" | $SORT | tail -n 1)
 if [ -f /var/run/reboot-required ]; then echo "__REBOOT__=yes"
-elif [ -n "$latest" ] && [ "$latest" != "$running" ]; then echo "__REBOOT__=yes"
+# Only when the newest installed kernel sorts after the running one (a custom or newer running
+# kernel is not a pending reboot).
+elif [ -n "$latest" ] && [ "$latest" != "$running" ] \
+  && [ "$(printf '%s\n%s\n' "$running" "$latest" | $SORT | tail -n 1)" = "$latest" ]; then
+  echo "__REBOOT__=yes"
 elif command -v needs-restarting >/dev/null 2>&1; then
   if needs-restarting -r >/dev/null 2>&1; then echo "__REBOOT__=no"; else echo "__REBOOT__=yes"; fi
 else echo "__REBOOT__=no"; fi
