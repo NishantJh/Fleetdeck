@@ -204,8 +204,10 @@ class ProxmoxProvider:
                 if shared and name in queued:
                     continue
                 if not st.get("active", 1):
-                    # A shared storage may be mounted on another node only; try that one.
-                    inactive.add(name)
+                    if shared:  # it may be mounted on another node only; try that one
+                        inactive.add(name)
+                    else:
+                        errors.append(f"{name} on {node}: storage inactive")
                     continue
                 queued.add(name)
                 to_read.append((node, name, shared))

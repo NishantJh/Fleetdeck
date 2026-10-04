@@ -271,7 +271,7 @@ async def test_proxmox_backups_inactive_storage_and_failures_are_not_cached():
     p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
     found = {t.name: t for t, _ in await p.discover()}
     note = found["pihole"].backup.note
-    assert "nas: storage inactive" in note and "pbs:" in note and not found["pihole"].backup.stale
+    assert "nas on pve: storage inactive" in note and "pbs:" in note and not found["pihole"].backup.stale
     before = len(calls)
     await p.discover()
     assert any(c.endswith("/storage") for c in calls[before:])  # tried again, not cached
