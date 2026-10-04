@@ -10,7 +10,8 @@ max_parallel: 4
 
 # SSH host keys of every machine (`ssh-keyscan host1 host2 ... > config/known_hosts`). Every SSH entry
 # uses this unless it names its own; a machine with neither is refused. A Proxmox cluster already
-# keeps all its nodes' keys in /etc/pve/priv/known_hosts.
+# keeps all its nodes' keys in /etc/pve/priv/known_hosts. Include each node's cluster IP (the address
+# in Datacenter > Cluster), since that is what other nodes are reached by.
 known_hosts: /config/known_hosts
 
 proxmox:
@@ -24,8 +25,8 @@ proxmox:
     # Pins the node's TLS certificate. On the node, run
     #   openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256
     # (use pveproxy-ssl.pem instead if you uploaded your own certificate), or copy it from
-    # Node > System > Certificates. Replace this placeholder with yours.
-    tls_fingerprint: "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF"
+    # Node > System > Certificates, and put yours here.
+    # tls_fingerprint: "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF"
     # SSH to the node: upgrades the host itself and runs `pct exec` inside LXCs.
     ssh:
       host: 192.168.1.10
@@ -48,8 +49,7 @@ incus:
     client_cert: /config/incus-client.crt
     client_key: /config/incus-client.key
     # Pins the server certificate: `incus info | grep certificate_fingerprint` on the Incus host.
-    # Replace this placeholder with yours.
-    tls_fingerprint: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+    # tls_fingerprint: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
     # Or, if the dashboard runs on the Incus host itself:
     # socket: /var/lib/incus/unix.socket
     ssh:

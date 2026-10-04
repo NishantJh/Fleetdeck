@@ -172,7 +172,9 @@ class ProxmoxProvider:
             nname = node["node"]
             online = node.get("status") == "online"
             ssh_cfg = self._node_ssh(nname, node_ips)
-            ssh = SSHExecutor(ssh_cfg) if ssh_cfg else None
+            # Without a verifiable host key the node is used as if it had no SSH settings, and says why.
+            ssh_problem = ssh_cfg.host_key_problem if ssh_cfg else None
+            ssh = SSHExecutor(ssh_cfg) if ssh_cfg and not ssh_problem else None
             prefix = f"proxmox:{self.name}:{nname}"
             host = Target(
                 id=prefix,
@@ -183,7 +185,9 @@ class ProxmoxProvider:
                 status=node.get("status", "unknown"),
                 updatable=online,
                 check_only=ssh is None,
-                note=(None if ssh else "check only: add ssh settings to upgrade this node") if online else "offline",
+                note=(None if ssh else ssh_problem or "check only: add ssh settings to upgrade this node")
+                if online
+                else "offline",
             )
             found.append((host, PveNodeExecutor(self.client, nname, ssh)))
             if not online:
@@ -195,7 +199,7 @@ class ProxmoxProvider:
                     continue
                 running = ct.get("status") == "running"
                 updatable = running and ssh is not None
-                note = (None if ssh else "needs node ssh for pct exec") if running else "not running"
+                note = (None if ssh else ssh_problem or "needs node ssh for pct exec") if running else "not running"
                 if vmid in self.cfg.protect:
                     updatable, note = False, PROTECTED_NOTE
                 t = Target(

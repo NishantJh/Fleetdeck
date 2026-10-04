@@ -42,6 +42,13 @@ class SSHConfig(BaseModel):
     # Wrap commands in `sudo -n` (for non-root users with passwordless sudo).
     sudo: bool = False
 
+    @property
+    def host_key_problem(self) -> str | None:
+        """Why connections to this machine would be refused, for the dashboard to show up front."""
+        if self.known_hosts or self.insecure_skip_host_key_check:
+            return None
+        return f"SSH host key unknown: add {self.host} to known_hosts (ssh-keyscan, see README)"
+
 
 class ProxmoxConfig(BaseModel):
     name: str

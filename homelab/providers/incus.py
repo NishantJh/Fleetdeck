@@ -28,7 +28,8 @@ class IncusProvider:
 
     async def discover(self) -> Discovered:
         found: Discovered = []
-        ssh = SSHExecutor(self.cfg.ssh) if self.cfg.ssh else None
+        ssh_problem = self.cfg.ssh.host_key_problem if self.cfg.ssh else None
+        ssh = SSHExecutor(self.cfg.ssh) if self.cfg.ssh and not ssh_problem else None
         prefix = f"incus:{self.name}"
         found.append(
             (
@@ -39,7 +40,7 @@ class IncusProvider:
                     source=self.name,
                     kind="host",
                     updatable=ssh is not None,
-                    note=None if ssh else "add ssh settings to update this host",
+                    note=None if ssh else ssh_problem or "add ssh settings to update this host",
                 ),
                 ssh,  # type: ignore[arg-type]
             )

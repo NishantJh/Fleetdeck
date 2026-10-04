@@ -11,9 +11,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import ssl
+from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 import httpx
+from cryptography import x509
 
 FETCH_TIMEOUT = 15.0
 
@@ -30,6 +32,13 @@ def pinned_context(host: str, port: int, fingerprint: str, cert: tuple[str, str]
         raise RuntimeError(
             f"TLS certificate of {host}:{port} does not match tls_fingerprint (it is {_fmt(actual)}). "
             "If the certificate was renewed on purpose, update tls_fingerprint."
+        )
+    # An expired certificate fails verification with an opaque OpenSSL error; say what to do instead.
+    expires = x509.load_pem_x509_certificate(pem.encode()).not_valid_after_utc
+    if expires < datetime.now(UTC):
+        raise RuntimeError(
+            f"TLS certificate of {host}:{port} expired on {expires:%Y-%m-%d}. Renew it (on Proxmox: "
+            "`pvecm updatecerts --force`, then `systemctl restart pveproxy`) and update tls_fingerprint."
         )
     ctx = ssl.create_default_context(cadata=pem)
     # The pinned certificate itself is the trust anchor (it is usually a leaf signed by the node's
@@ -54,6 +63,19 @@ class PinnedTransport(httpx.AsyncBaseTransport):
         self._lock = asyncio.Lock()
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        try:
+            return await self._send(request)
+        except httpx.ConnectError as e:
+            if not _verify_failed(e):
+                raise
+            # The certificate changed (renewed, or expired) since it was pinned. Pin afresh once, which
+            # either works or fails with a message that says what changed.
+            inner, self._inner = self._inner, None
+            if inner is not None:
+                await inner.aclose()
+            return await self._send(request)
+
+    async def _send(self, request: httpx.Request) -> httpx.Response:
         if self._inner is None:
             async with self._lock:
                 if self._inner is None:
@@ -65,3 +87,11 @@ class PinnedTransport(httpx.AsyncBaseTransport):
     async def aclose(self) -> None:
         if self._inner is not None:
             await self._inner.aclose()
+
+
+def _verify_failed(e: BaseException) -> bool:
+    while e is not None:
+        if isinstance(e, ssl.SSLCertVerificationError) or "CERTIFICATE_VERIFY_FAILED" in str(e):
+            return True
+        e = e.__cause__ or e.__context__
+    return False

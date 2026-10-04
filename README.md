@@ -115,6 +115,22 @@ and set `auth:` in the config.
   `verify_ssl: false`. It pins the exact certificate, works with the self-signed ones both ship and
   with IP addresses, and the dashboard warns at start-up about any API with checking off.
 
+### Upgrading from a version without host key checks
+
+SSH connections are now refused unless the machine's host key is known, so before updating the
+image (or right after; affected machines show "SSH host key unknown" and can't be updated until
+then):
+
+```bash
+# Every machine in config.yaml, and for a Proxmox cluster every node's cluster IP too.
+ssh-keyscan 192.168.1.10 192.168.1.11 192.168.1.20 192.168.1.30 my-vps.example.com > config/known_hosts
+ssh-keygen -lf config/known_hosts   # compare with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on each
+```
+
+Then add `known_hosts: /config/known_hosts` at the top of `config.yaml`. Optionally add
+`tls_fingerprint` to each Proxmox/Incus entry (see the example config) so the API certificate is
+pinned too.
+
 ## Development
 
 ```bash
