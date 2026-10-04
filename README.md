@@ -116,6 +116,10 @@ and set `known_hosts` so SSH host keys are verified.
   Caddy, Traefik or `tailscale serve` in front.
 * Set `allowed_hosts` to the names/IPs you open the dashboard by, so other websites can't reach it
   through DNS rebinding.
+* Behind a reverse proxy, set `trusted_proxies` to its address (or the Docker network's range), so
+  the lockout applies to each visitor's IP rather than the proxy's. The proxy must pass the original
+  `Host` header, because `allowed_hosts` and the cross-site check compare against it. Caddy and
+  Traefik do this by default; with nginx add `proxy_set_header Host $host;`.
 * Cross-site form posts are refused, and the page can't be framed by another site.
 
 ## Development

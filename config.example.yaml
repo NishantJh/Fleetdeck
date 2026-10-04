@@ -8,7 +8,12 @@ auth:
   password: ${HOMELAB_PASSWORD}
 
 # The names/IPs you open the dashboard by. Anything else is refused (stops DNS rebinding).
-# allowed_hosts: ["192.168.1.50", "homelab.lan"]
+# Keep localhost in the list if you open it on the machine itself or a health check does.
+# allowed_hosts: ["192.168.1.50", "homelab.lan", "localhost", "127.0.0.1"]
+
+# Behind a reverse proxy (Caddy, Traefik, nginx)? List its address so the login lockout sees each
+# visitor's own IP instead of the proxy's. The proxy must also pass the original Host header.
+# trusted_proxies: ["172.18.0.0/16"]
 
 # How many machines may be checked/updated at once.
 max_parallel: 4

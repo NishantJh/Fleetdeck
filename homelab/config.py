@@ -94,6 +94,9 @@ class AppConfig(BaseModel):
     # Host names/IPs the dashboard is reached by (e.g. ["192.168.1.50", "homelab.lan"]). Requests
     # for any other Host header are refused, which stops DNS-rebinding attacks. Empty allows any.
     allowed_hosts: list[str] = Field(default_factory=list)
+    # Reverse proxies whose X-Forwarded-For is believed (IPs or CIDRs). Without it, everyone behind a
+    # proxy shares the proxy's address, so the login lockout would lock them all out together.
+    trusted_proxies: list[str] = Field(default_factory=list)
 
     @property
     def has_real_targets(self) -> bool:

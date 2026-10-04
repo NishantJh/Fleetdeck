@@ -70,6 +70,16 @@ def test_login_throttle(monkeypatch):
     assert t.blocked_for("a") == 0
 
 
+def test_login_throttle_counts_a_resent_password_once():
+    t = LoginThrottle(max_failures=3)
+    for _ in range(20):  # the browser resends the same typo with every request
+        t.failed("a", "Basic dHlwbw==")
+    assert t.blocked_for("a") == 0
+    t.failed("a", "Basic Z3Vlc3Mx")
+    t.failed("a", "Basic Z3Vlc3My")
+    assert t.blocked_for("a") > 0
+
+
 def test_login_throttle_bounded_memory():
     t = LoginThrottle(max_failures=100, max_ips=10)
     for i in range(50):
@@ -81,8 +91,8 @@ def test_app_blocks_after_failed_logins():
     with TestClient(create_app(AppConfig(demo=True, auth=AuthConfig(password="s3cret")))) as client:
         for _ in range(3):
             assert client.get("/api/jobs").status_code == 401  # no credentials: not counted
-        for _ in range(10):
-            assert client.get("/api/jobs", auth=("admin", "guess")).status_code == 401
+        for i in range(10):
+            assert client.get("/api/jobs", auth=("admin", f"guess{i}")).status_code == 401
         r = client.get("/api/jobs", auth=("admin", "s3cret"))
         assert r.status_code == 429 and int(r.headers["Retry-After"]) > 0
 
@@ -123,3 +133,29 @@ async def test_job_log_is_capped(monkeypatch):
     assert len(job.log) < 60
     assert any("truncated after 50 lines" in line for line in job.log)
     assert job.status == "succeeded"
+
+
+def test_server_options_trust_forwarded_headers_only_from_proxies():
+    from homelab.__main__ import server_options
+
+    assert server_options(AppConfig(demo=True))["forwarded_allow_ips"] == "127.0.0.1"
+    opts = server_options(AppConfig(demo=True, trusted_proxies=["10.0.0.2", "172.18.0.0/16"]))
+    assert opts["proxy_headers"] is True and opts["forwarded_allow_ips"] == "10.0.0.2,172.18.0.0/16"
+
+
+async def test_forwarded_for_is_ignored_unless_peer_is_trusted():
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    seen = []
+
+    async def inner(scope, receive, send):
+        seen.append(scope["client"][0])
+
+    app = ProxyHeadersMiddleware(inner, trusted_hosts="10.0.0.2")
+    for peer in ("10.0.0.2", "10.0.0.9"):
+        scope = {
+            "type": "http", "client": (peer, 1234), "scheme": "http",
+            "headers": [(b"x-forwarded-for", b"203.0.113.7")],
+        }  # fmt: skip
+        await app(scope, None, None)
+    assert seen == ["203.0.113.7", "10.0.0.9"]
