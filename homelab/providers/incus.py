@@ -18,11 +18,9 @@ class IncusProvider:
             self.client = httpx.AsyncClient(
                 transport=httpx.AsyncHTTPTransport(uds=cfg.socket), base_url="http://incus", timeout=30
             )
-        elif cfg.url:
+        else:
             cert = (cfg.client_cert, cfg.client_key) if cfg.client_cert and cfg.client_key else None
             self.client = httpx.AsyncClient(base_url=cfg.url.rstrip("/"), cert=cert, verify=cfg.verify_ssl, timeout=30)
-        else:
-            raise ValueError(f"incus '{cfg.name}': set either url or socket")
 
     async def discover(self) -> Discovered:
         found: Discovered = []

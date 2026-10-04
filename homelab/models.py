@@ -20,6 +20,8 @@ class Target(BaseModel):
     parent: str | None = None  # host this guest runs on
     status: str = "running"
     updatable: bool = True
+    # Can be checked but not upgraded from here (e.g. a Proxmox node without SSH settings).
+    check_only: bool = False
     note: str | None = None
 
 

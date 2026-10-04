@@ -37,6 +37,8 @@ function groups() {
   return [...map.values()];
 }
 
+const canUpgrade = (t) => t.updatable && !t.check_only;
+
 function updatesCell(v) {
   const t = v.target;
   if (v.active_job) return `<span class="spin"></span> ${v.active_job.action === "upgrade" ? "updating" : "checking"}…`;
@@ -59,15 +61,15 @@ function rowHtml(v) {
     : "";
   const pending = c && !c.error && c.packages.length > 0;
   let html = `<tr class="${t.kind === "host" ? "host" : "guest"}">
-    <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${t.updatable ? "" : "disabled"}></td>
-    <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span></td>
+    <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${canUpgrade(t) ? "" : "disabled"}></td>
+    <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
     <td class="muted">${esc(c?.os || "")}</td>
     <td>${esc(t.status)}</td>
     <td>${updatesCell(v)} ${reboot}${notes}</td>
     <td class="muted">${c ? ago(c.checked_at) : ""}</td>
     <td>
       <button class="small" data-act="check" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Check</button>
-      <button class="small ${pending ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Update</button>
+      <button class="small ${pending && !t.check_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy ? "" : "disabled"} title="${t.check_only ? esc(t.note) : ""}">Update</button>
     </td></tr>`;
   if (pending && state.expanded.has(t.id)) {
     const rows = c.packages.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.current || "")}</td><td>→ ${esc(p.available)}</td></tr>`).join("");
@@ -118,8 +120,9 @@ async function load(refresh = false) {
     state.targets = data.targets;
     state.errors = data.errors;
     state.jobs = await api("/api/jobs");
-    const known = new Set(state.targets.map((v) => v.target.id));
-    for (const id of state.selected) if (!known.has(id)) state.selected.delete(id);
+    // Drop selections for targets that disappeared or can no longer be upgraded.
+    const selectable = new Set(state.targets.filter((v) => canUpgrade(v.target)).map((v) => v.target.id));
+    for (const id of state.selected) if (!selectable.has(id)) state.selected.delete(id);
   } catch (e) {
     state.errors = { dashboard: e.message };
   }
@@ -128,10 +131,20 @@ async function load(refresh = false) {
 
 async function act(action, ids) {
   if (!ids.length) return;
-  const res = await api("/api/actions", { method: "POST", body: JSON.stringify({ action, target_ids: ids }) });
+  let res;
+  try {
+    res = await api("/api/actions", { method: "POST", body: JSON.stringify({ action, target_ids: ids }) });
+  } catch (e) {
+    alert(`Could not start ${action}: ${e.message}`);
+    return;
+  }
   const rejected = Object.entries(res.rejected);
-  if (rejected.length) alert(rejected.map(([id, why]) => `${id}: ${why}`).join("\n"));
-  if (res.jobs.length === 1) state.logJob = res.jobs[0].id, state.logLines = [];
+  // The server's reason already names the target; fall back to the id for unknown ones.
+  if (rejected.length) alert(rejected.map(([id, why]) => (why === "unknown target" ? `${id}: ${why}` : why)).join("\n"));
+  if (res.jobs.length === 1) {
+    state.logJob = res.jobs[0].id;
+    state.logLines = [];
+  }
   schedule(200);
 }
 
@@ -154,8 +167,17 @@ function confirmUpgrade(ids) {
 
 async function showLog(jobId) {
   if (state.logJob !== jobId) { state.logJob = jobId; state.logLines = []; }
-  const job = await api(`/api/jobs/${jobId}?since=${state.logLines.length}`);
-  state.logLines.push(...job.log);
+  let job;
+  try {
+    job = await api(`/api/jobs/${jobId}?since=${state.logLines.length}`);
+  } catch (e) {
+    $("#log-title").textContent = `Could not load job output: ${e.message}`;
+    return;
+  }
+  // A click and the poller can fetch at the same time: drop stale answers and splice by
+  // offset so lines are never appended twice.
+  if (state.logJob !== jobId) return;
+  state.logLines.splice(job.log_offset, Infinity, ...job.log);
   $("#log-title").textContent = `${job.target_name} · ${job.action} · ${job.status}`;
   const pre = $("#log");
   const stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
@@ -195,9 +217,15 @@ $("#update-selected").onclick = () => confirmUpgrade([...state.selected]);
 let timer;
 function schedule(ms) { clearTimeout(timer); timer = setTimeout(tick, ms); }
 async function tick() {
-  await load();
-  if (state.logJob && state.jobs.some((j) => j.id === state.logJob)) await showLog(state.logJob);
-  const busy = state.jobs.some((j) => j.status === "running" || j.status === "queued");
-  schedule(busy ? 1500 : 15000);
+  try {
+    await load();
+    if (state.logJob && state.jobs.some((j) => j.id === state.logJob)) await showLog(state.logJob);
+  } catch (e) {
+    console.error(e);
+  } finally {
+    // Always keep polling, even if one request failed (e.g. a job evicted from history).
+    const busy = state.jobs.some((j) => j.status === "running" || j.status === "queued");
+    schedule(busy ? 1500 : 15000);
+  }
 }
 tick();

@@ -23,7 +23,8 @@ proxmox:
       user: root
       key_file: /config/id_ed25519
       known_hosts: /config/known_hosts # omit to skip host key checks
-    # Cluster? Give each extra node its own SSH settings:
+    # Cluster? Other nodes are reached at their cluster IP (from /cluster/status) with the same
+    # SSH settings. If that network isn't reachable from here, give each node its own settings:
     # node_ssh:
     #   pve2: { host: 192.168.1.11, user: root, key_file: /config/id_ed25519 }
     exclude: [] # VMIDs to hide
