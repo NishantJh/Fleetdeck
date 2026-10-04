@@ -8,6 +8,10 @@ auth:
 # How many machines may be checked/updated at once.
 max_parallel: 4
 
+# Where check results and job history are saved, so a restart doesn't lose them.
+# The Docker image already sets this to /data/state.db (HOMELAB_STATE); omit to keep state in memory.
+# state_file: ./data/state.db
+
 proxmox:
   - name: pve
     api_url: https://192.168.1.10:8006

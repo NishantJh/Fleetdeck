@@ -18,6 +18,8 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   whether a reboot is needed.
 * **Update** runs a full upgrade (`apt-get dist-upgrade`, `dnf upgrade`, `apk upgrade`,
   `pacman -Syu`), streams the output to the Activity panel, then re-checks. Nothing is rebooted.
+* Check results and the Activity history are saved to `data/state.db` (SQLite), so they survive a
+  restart or an image update. A job that was running when the dashboard stopped shows as interrupted.
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,
   never two jobs on the same machine at once).
 
@@ -44,7 +46,7 @@ HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d
 
 1. Create a new project in Arcane and paste in `docker-compose.yml`.
 2. Put `config.yaml`, the SSH key and `known_hosts` in a `config/` folder inside that project's
-   directory on the Docker host, and set `HOMELAB_PASSWORD` and `PVE_TOKEN_SECRET` in the
+   directory on the Docker host (check results and job history go in `data/` next to it), and set `HOMELAB_PASSWORD` and `PVE_TOKEN_SECRET` in the
    project's `.env`.
 3. While the repo is private, the image is too: add `ghcr.io` as a registry in Arcane with your
    GitHub username and a token that has `read:packages`.

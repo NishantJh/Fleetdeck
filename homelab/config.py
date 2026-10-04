@@ -89,6 +89,9 @@ class AppConfig(BaseModel):
     max_parallel: int = Field(4, ge=1)
     # Adds fake targets so the UI can be tried without real infrastructure.
     demo: bool = False
+    # SQLite file for check results and job history, so a restart doesn't lose them.
+    # Unset keeps everything in memory. HOMELAB_STATE overrides it (the Docker image sets /data/state.db).
+    state_file: str | None = None
 
     @model_validator(mode="after")
     def _unique_names(self) -> AppConfig:
@@ -130,7 +133,9 @@ def load_config(path: str | None = None) -> AppConfig:
     p = Path(path)
     if not p.exists():
         log.warning("Config file %s not found; starting with no targets.", p)
-        return AppConfig(demo=os.environ.get("HOMELAB_DEMO", "") == "1")
+        return AppConfig(
+            demo=os.environ.get("HOMELAB_DEMO", "") == "1", state_file=os.environ.get("HOMELAB_STATE") or None
+        )
     missing: set[str] = set()
     data = _expand(yaml.safe_load(p.read_text()) or {}, missing)
     if missing:
@@ -138,6 +143,8 @@ def load_config(path: str | None = None) -> AppConfig:
     cfg = AppConfig.model_validate(data)
     if os.environ.get("HOMELAB_DEMO") == "1":
         cfg.demo = True
+    if os.environ.get("HOMELAB_STATE"):
+        cfg.state_file = os.environ["HOMELAB_STATE"]
     for ssh in _ssh_configs(cfg):
         if not ssh.known_hosts:
             log.warning("SSH host key checking is off for %s; set known_hosts to enable it.", ssh.host)

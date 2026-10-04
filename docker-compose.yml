@@ -11,6 +11,8 @@ services:
     volumes:
       # config.yaml, SSH key, known_hosts, Incus client cert
       - ./config:/config:ro
+      # Check results and job history (SQLite), kept across restarts and image updates
+      - ./data:/data
     environment:
       HOMELAB_PASSWORD: ${HOMELAB_PASSWORD}
       PVE_TOKEN_SECRET: ${PVE_TOKEN_SECRET}
