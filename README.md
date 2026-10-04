@@ -5,7 +5,7 @@ upgrade, from a single page, across:
 
 | Platform | Host | Guests | How it reaches the guest |
 | --- | --- | --- | --- |
-| Proxmox VE | SSH to each node | LXCs | `pct exec` over the node's SSH |
+| Proxmox VE | PVE API to check (uses PVE's own repositories), SSH to upgrade | LXCs | `pct exec` over the node's SSH |
 | | | VMs | QEMU guest agent, via the Proxmox API |
 | Incus | SSH | containers and VMs | Incus REST API `exec` (VMs need `incus-agent`) |
 | Anything else (Raspberry Pi, etc.) | SSH | | |
@@ -55,9 +55,14 @@ HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d
 ### What each platform needs
 
 * **Proxmox:** an API token (Datacenter → Permissions → API Tokens) with `VM.Audit`/`Sys.Audit` to
-  list guests and guest-agent exec rights to update VMs (`VM.GuestAgent.Unrestricted` on PVE 9,
-  `VM.Monitor` on PVE 8). VMs need the *QEMU Guest Agent* option on and `qemu-guest-agent`
-  installed inside. SSH to the node is used for the host itself and for LXCs.
+  list guests, `Sys.Modify` on `/nodes` so the host check can refresh package lists, and
+  guest-agent exec rights to update VMs (`VM.GuestAgent.Unrestricted` on PVE 9, `VM.Monitor` on
+  PVE 8). VMs need the *QEMU Guest Agent* option on and `qemu-guest-agent` installed inside.
+* **Proxmox host updates** are checked through PVE itself, the same as *Updates → Refresh* in the
+  web UI, so they come from whatever is enabled under *Updates → Repositories*. The dashboard shows
+  which repositories were used and warns if the Enterprise repo is on without a subscription.
+  PVE's API has no non-interactive upgrade call (its Upgrade button opens a shell), so the upgrade
+  runs `apt-get dist-upgrade` over SSH, against those same repositories. SSH is also used for LXCs.
 * **Incus:** expose the API (`incus config set core.https_address :8443`) and trust a client
   certificate (`incus config trust add-certificate client.crt`), or run the dashboard on the Incus
   host and point `socket:` at `/var/lib/incus/unix.socket`. SSH is used for the host itself.

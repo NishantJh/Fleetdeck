@@ -67,3 +67,60 @@ async def test_incus_discovery_without_ssh():
     assert not found["incus01"].updatable  # host needs ssh settings
     assert found["web"].kind == "container" and found["web"].updatable
     assert found["lab/vm1"].kind == "vm" and not found["lab/vm1"].updatable
+
+
+async def test_pve_node_check_uses_pve_api(monkeypatch):
+    import asyncio
+
+    from homelab.providers.proxmox import PveNodeExecutor
+
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(asyncio, "sleep", lambda _: real_sleep(0))
+    upid = "UPID:pve:0001:0002:0003:aptupdate::root@pam!t:"
+    polls = {"n": 0}
+
+    def handler(req):
+        path = req.url.path.removeprefix("/api2/json/nodes/pve")
+        if req.method == "POST":
+            assert path == "/apt/update"
+            return httpx.Response(200, json={"data": upid})
+        if path == "/version":
+            return httpx.Response(200, json={"data": {"version": "8.3.0"}})
+        if path == "/apt/repositories":
+            standard = [
+                {"handle": "enterprise", "name": "Enterprise", "status": 1},
+                {"handle": "no-subscription", "name": "No-Subscription", "status": 1},
+                {"handle": "test", "name": "Test", "status": 0},
+            ]
+            return httpx.Response(200, json={"data": {"standard-repos": standard, "errors": []}})
+        if path == "/subscription":
+            return httpx.Response(200, json={"data": {"status": "notfound"}})
+        if path == f"/tasks/{upid}/status":
+            polls["n"] += 1
+            done = polls["n"] > 1
+            return httpx.Response(200, json={"data": {"status": "stopped" if done else "running", "exitstatus": "OK"}})
+        if path == f"/tasks/{upid}/log":
+            return httpx.Response(200, json={"data": [{"n": 1, "t": "starting apt-get update"}]})
+        if path == "/apt/update":
+            pkgs = [{"Package": "pve-manager", "OldVersion": "8.3.0", "Version": "8.3.1"}]
+            return httpx.Response(200, json={"data": pkgs})
+        raise AssertionError(path)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://pve:8006/api2/json")
+    lines = []
+    res = await PveNodeExecutor(client, "pve", None).check(lambda s, line: lines.append(line))
+    assert res.error is None
+    assert res.os == "Proxmox VE 8.3.0"
+    assert [(p.name, p.current, p.available) for p in res.packages] == [("pve-manager", "8.3.0", "8.3.1")]
+    assert res.notes[0] == "Repositories (from PVE): Enterprise, No-Subscription"
+    assert "without an active subscription" in res.notes[1]
+    assert "starting apt-get update" in lines
+
+
+async def test_pve_node_upgrade_needs_ssh():
+    import pytest
+
+    from homelab.providers.proxmox import PveNodeExecutor
+
+    with pytest.raises(RuntimeError, match="ssh"):
+        await PveNodeExecutor(httpx.AsyncClient(), "pve", None).run("true")

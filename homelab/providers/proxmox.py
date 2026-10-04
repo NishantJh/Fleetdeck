@@ -1,19 +1,107 @@
 from __future__ import annotations
 
+import asyncio
+import time
+from datetime import UTC, datetime
+
 import httpx
 
 from ..config import ProxmoxConfig, SSHConfig
-from ..executors import PctExecutor, PveAgentExecutor, SSHExecutor
-from ..models import Target
+from ..executors import DEFAULT_TIMEOUT, LineCallback, PctExecutor, PveAgentExecutor, SSHExecutor
+from ..models import CheckResult, ExecResult, Package, Target
 from . import Discovered
 
 PROTECTED_NOTE = "protected: runs this dashboard, update it from its own console"
 
 
+class PveNodeExecutor:
+    """The Proxmox host itself.
+
+    Checks go through the PVE API, exactly like Updates > Refresh in the web UI: PVE refreshes
+    package lists from the repositories configured under Updates > Repositories and reports
+    what is upgradable. The API has no non-interactive upgrade call (the UI opens a shell for
+    that), so the upgrade itself is `apt-get dist-upgrade` over SSH, against the same repositories.
+    """
+
+    def __init__(self, client: httpx.AsyncClient, node: str, ssh: SSHExecutor | None):
+        self.client = client
+        self.node = node
+        self.ssh = ssh
+
+    async def run(self, script, on_line=None, timeout=DEFAULT_TIMEOUT) -> ExecResult:
+        if self.ssh is None:
+            raise RuntimeError("upgrading the Proxmox host needs ssh settings for this node")
+        return await self.ssh.run(script, on_line, timeout)
+
+    async def _get(self, path: str, **params):
+        r = await self.client.get(f"/nodes/{self.node}{path}", params=params or None)
+        r.raise_for_status()
+        return r.json()["data"]
+
+    async def _wait_task(self, upid: str, timeout: float = 600) -> dict:
+        deadline = time.monotonic() + timeout
+        while True:
+            status = await self._get(f"/tasks/{upid}/status")
+            if status.get("status") == "stopped":
+                return status
+            if time.monotonic() > deadline:
+                raise TimeoutError("PVE package refresh task did not finish")
+            await asyncio.sleep(1)
+
+    async def check(self, on_line: LineCallback | None = None) -> CheckResult:
+        def say(line: str) -> None:
+            if on_line:
+                on_line("stdout", line)
+
+        notes: list[str] = []
+        version = await self._get("/version")
+        os_name = f"Proxmox VE {version.get('version', '?')}"
+
+        repos = await self._get("/apt/repositories")
+        enabled = [r["name"] for r in repos.get("standard-repos", []) if r.get("status") == 1]
+        notes.append("Repositories (from PVE): " + (", ".join(enabled) or "no standard Proxmox repository enabled"))
+        for err in repos.get("errors", []):
+            notes.append(f"Repository error in {err.get('path')}: {err.get('error')}")
+        if any("Enterprise" in name for name in enabled):
+            sub = await self._get("/subscription")
+            if str(sub.get("status", "")).lower() != "active":
+                notes.append(
+                    "An Enterprise repository is enabled without an active subscription, so refreshing it "
+                    "fails. Switch to No-Subscription under Updates > Repositories in PVE."
+                )
+        for note in notes:
+            say(f"== {note}")
+
+        say("== Refreshing package lists through the Proxmox API")
+        r = await self.client.post(f"/nodes/{self.node}/apt/update")
+        if r.status_code == 403:
+            raise RuntimeError("the API token needs Sys.Modify on /nodes to refresh package lists")
+        r.raise_for_status()
+        upid = r.json()["data"]
+        status = await self._wait_task(upid)
+        for entry in await self._get(f"/tasks/{upid}/log", limit=1000):
+            say(entry.get("t", ""))
+        exit_status = status.get("exitstatus", "")
+        error = None if exit_status == "OK" or exit_status.startswith("WARNINGS") else f"refresh failed: {exit_status}"
+
+        packages = [
+            Package(name=p["Package"], current=p.get("OldVersion"), available=p["Version"])
+            for p in await self._get("/apt/update")
+        ]
+        return CheckResult(
+            package_manager="apt (via PVE)",
+            os=os_name,
+            packages=packages,
+            checked_at=datetime.now(UTC),
+            error=error,
+            notes=notes,
+        )
+
+
 class ProxmoxProvider:
     """Discovers nodes, LXCs and VMs through the Proxmox VE API.
 
-    * Node (host): SSH to the node.
+    * Node (host): checked through the PVE API, upgraded over SSH (see PveNodeExecutor).
     * LXC: `pct exec` over the node's SSH connection.
     * VM: QEMU guest agent exec through the API.
     """
@@ -51,10 +139,10 @@ class ProxmoxProvider:
                 source=self.name,
                 kind="host",
                 status=node.get("status", "unknown"),
-                updatable=online and ssh is not None,
-                note=None if ssh else "add ssh settings to update this node",
+                updatable=online,
+                note=None if ssh else "check only: add ssh settings to upgrade this node",
             )
-            found.append((host, ssh))  # type: ignore[arg-type]
+            found.append((host, PveNodeExecutor(self.client, nname, ssh)))
             if not online:
                 continue
 

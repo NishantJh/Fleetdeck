@@ -54,13 +54,16 @@ function rowHtml(v) {
   const t = v.target, c = v.check;
   const busy = !!v.active_job;
   const reboot = c?.reboot_required ? `<span class="warn">reboot needed</span>` : "";
+  const notes = c?.notes?.length
+    ? ` <span class="chip ${c.notes.length > 1 ? "warn" : ""}" title="${esc(c.notes.join("\n"))}">${c.notes.length > 1 ? "repo warning" : "repos"}</span>`
+    : "";
   const pending = c && !c.error && c.packages.length > 0;
   let html = `<tr class="${t.kind === "host" ? "host" : "guest"}">
     <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${t.updatable ? "" : "disabled"}></td>
     <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span></td>
     <td class="muted">${esc(c?.os || "")}</td>
     <td>${esc(t.status)}</td>
-    <td>${updatesCell(v)} ${reboot}</td>
+    <td>${updatesCell(v)} ${reboot}${notes}</td>
     <td class="muted">${c ? ago(c.checked_at) : ""}</td>
     <td>
       <button class="small" data-act="check" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Check</button>

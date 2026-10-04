@@ -36,6 +36,8 @@ class CheckResult(BaseModel):
     reboot_required: bool | None = None
     checked_at: datetime
     error: str | None = None
+    # Extra context to show next to the result, e.g. which repositories were used.
+    notes: list[str] = Field(default_factory=list)
 
 
 class ExecResult(BaseModel):

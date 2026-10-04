@@ -67,8 +67,7 @@ class JobManager:
 
             try:
                 if job.action == "check":
-                    res = await executor.run(CHECK_SCRIPT, on_line)
-                    check = parse_check(res)
+                    check = await _check(executor, on_line)
                     self.checks[job.target_id] = check
                     if check.error:
                         raise RuntimeError(check.error)
@@ -81,7 +80,7 @@ class JobManager:
                     reboot = parse_reboot(res.stdout)
                     job.log.append("== Upgrade finished" + ("; reboot required" if reboot else ""))
                     job.log.append("== Re-checking for remaining updates")
-                    self.checks[job.target_id] = parse_check(await executor.run(CHECK_SCRIPT))
+                    self.checks[job.target_id] = await _check(executor)
                 job.status = "succeeded"
             except Exception as e:  # noqa: BLE001 - surface every failure in the UI
                 log.exception("job %s failed", job.id)
@@ -91,3 +90,10 @@ class JobManager:
                     self.checks[job.target_id] = CheckResult(checked_at=_now(), error=job.error)
             finally:
                 job.finished_at = _now()
+
+
+async def _check(executor, on_line=None) -> CheckResult:
+    # Some targets (the Proxmox host) know a better way to check than the generic script.
+    if hasattr(executor, "check"):
+        return await executor.check(on_line)
+    return parse_check(await executor.run(CHECK_SCRIPT, on_line))

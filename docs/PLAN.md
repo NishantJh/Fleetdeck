@@ -17,6 +17,7 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 
 ### 1. OS updates (this PR)
 - [x] Discover Proxmox, Incus and SSH targets
+- [x] Proxmox host checked through the PVE API, using the repositories configured in PVE
 - [x] Check pending updates (apt, dnf/yum, apk, pacman) and reboot-required
 - [x] Upgrade one or many targets, with live log
 - [x] Basic auth, Docker image on GHCR (amd64/arm64), Arcane-ready compose, demo mode, CI
