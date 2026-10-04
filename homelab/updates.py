@@ -26,6 +26,8 @@ from .models import CheckResult, ExecResult, Package
 _PRELUDE = r"""
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none
+# Ubuntu's needrestart would otherwise try to ask which services to restart.
+export NEEDRESTART_MODE=a
 export LC_ALL=C
 if command -v apt-get >/dev/null 2>&1; then PM=apt
 elif command -v dnf >/dev/null 2>&1; then PM=dnf
@@ -34,17 +36,27 @@ elif command -v apk >/dev/null 2>&1; then PM=apk
 elif command -v pacman >/dev/null 2>&1; then PM=pacman
 else PM=unknown; fi
 echo "__PM__=$PM"
-OS=unknown
-if [ -r /etc/os-release ]; then . /etc/os-release; OS="${PRETTY_NAME:-$ID}"; fi
-echo "__OS__=$OS"
+# Read os-release in a subshell so its variables can't clobber ours.
+OS=$( [ -r /etc/os-release ] && . /etc/os-release && echo "${PRETTY_NAME:-$ID}" )
+echo "__OS__=${OS:-unknown}"
+# Wait for unattended-upgrades & co. instead of failing on the dpkg lock.
+APT_OPTS="-o DPkg::Lock::Timeout=300"
 """
 
-_REBOOT = r"""
+# Reboot detection. Debian and Proxmox don't create /var/run/reboot-required for kernel
+# updates, so also compare the running kernel with the newest installed one of the same
+# flavour (the part after the last "-": pve, amd64, generic, v8, lts...). Containers have no
+# kernel of their own (no /lib/modules), so they never report one.
+REBOOT_SCRIPT = r"""
+MODULES_DIR=${MODULES_DIR:-/lib/modules}
+running=$(uname -r)
+if printf '1\n' | sort -V >/dev/null 2>&1; then SORT="sort -V"; else SORT=sort; fi
+latest=$(ls -1 "$MODULES_DIR" 2>/dev/null | grep -- "-${running##*-}\$" | $SORT | tail -n 1)
 if [ -f /var/run/reboot-required ]; then echo "__REBOOT__=yes"
+elif [ -n "$latest" ] && [ "$latest" != "$running" ]; then echo "__REBOOT__=yes"
 elif command -v needs-restarting >/dev/null 2>&1; then
   if needs-restarting -r >/dev/null 2>&1; then echo "__REBOOT__=no"; else echo "__REBOOT__=yes"; fi
-elif [ "$PM" = apt ]; then echo "__REBOOT__=no"
-else echo "__REBOOT__=unknown"; fi
+else echo "__REBOOT__=no"; fi
 """
 
 CHECK_SCRIPT = (
@@ -53,20 +65,21 @@ CHECK_SCRIPT = (
 rc=0
 case "$PM" in
   apt)
-    apt-get update -q >&2 || rc=$?
+    apt-get $APT_OPTS update -q >&2 || rc=$?
     echo "__BEGIN__"
     apt list --upgradable 2>/dev/null | grep -v '^Listing'
     echo "__END__" ;;
   dnf|yum)
+    REFRESH=""; [ "$PM" = dnf ] && REFRESH="--refresh"  # yum has no --refresh
     echo "__BEGIN__"
-    $PM -q check-update --refresh 2>/dev/null; r=$?
+    $PM -q check-update $REFRESH 2>/dev/null; r=$?
     echo "__END__"
     # check-update exits 100 when updates exist, 1 on error.
     [ "$r" = 1 ] && rc=1 ;;
   apk)
     apk update -q >&2 || rc=$?
     echo "__BEGIN__"
-    apk -u list 2>/dev/null
+    apk list -u 2>/dev/null
     echo "__END__" ;;
   pacman)
     # Never `pacman -Sy` the real database without upgrading (a partial upgrade); sync a copy
@@ -83,7 +96,7 @@ case "$PM" in
     exit 3 ;;
 esac
 """
-    + _REBOOT
+    + REBOOT_SCRIPT
     + "exit $rc\n"
 )
 
@@ -93,16 +106,17 @@ UPGRADE_SCRIPT = (
 set -e
 case "$PM" in
   apt)
-    apt-get update -q
+    apt-get $APT_OPTS update -q
     # dist-upgrade (a.k.a. full-upgrade) is what Proxmox and Raspberry Pi OS recommend.
-    apt-get -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold dist-upgrade ;;
-  dnf|yum) $PM -y upgrade --refresh ;;
+    apt-get $APT_OPTS -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold dist-upgrade ;;
+  dnf) dnf -y upgrade --refresh ;;
+  yum) yum -y upgrade ;;
   apk) apk update && apk upgrade ;;
   pacman) pacman -Syu --noconfirm ;;
   *) echo "No supported package manager found" >&2; exit 3 ;;
 esac
 """
-    + _REBOOT
+    + REBOOT_SCRIPT
 )
 
 

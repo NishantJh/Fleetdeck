@@ -9,6 +9,7 @@ import httpx
 from ..config import ProxmoxConfig, SSHConfig
 from ..executors import DEFAULT_TIMEOUT, LineCallback, PctExecutor, PveAgentExecutor, SSHExecutor
 from ..models import CheckResult, ExecResult, Package, Target
+from ..updates import REBOOT_SCRIPT, parse_reboot
 from . import Discovered
 
 PROTECTED_NOTE = "protected: runs this dashboard, update it from its own console"
@@ -88,10 +89,19 @@ class PveNodeExecutor:
             Package(name=p["Package"], current=p.get("OldVersion"), available=p["Version"])
             for p in await self._get("/apt/update")
         ]
+
+        # The API doesn't say whether a reboot is pending (e.g. a newer kernel is installed).
+        reboot = None
+        if self.ssh is not None:
+            try:
+                reboot = parse_reboot((await self.ssh.run(REBOOT_SCRIPT, timeout=60)).stdout)
+            except Exception as e:  # informational only; don't fail the check
+                say(f"! could not check for a pending reboot: {e}")
         return CheckResult(
             package_manager="apt (via PVE)",
             os=os_name,
             packages=packages,
+            reboot_required=reboot,
             checked_at=datetime.now(UTC),
             error=error,
             notes=notes,
@@ -116,8 +126,23 @@ class ProxmoxProvider:
             timeout=30,
         )
 
-    def _node_ssh(self, node: str) -> SSHConfig | None:
-        return self.cfg.node_ssh.get(node) or self.cfg.ssh
+    def _node_ssh(self, node: str, node_ips: dict[str, str]) -> SSHConfig | None:
+        if node in self.cfg.node_ssh:
+            return self.cfg.node_ssh[node]
+        if self.cfg.ssh is None:
+            return None
+        # `pct exec` only works on the node that runs the container, so in a cluster reuse the
+        # shared ssh settings but point them at each node's own address.
+        if len(node_ips) > 1 and node in node_ips:
+            return self.cfg.ssh.model_copy(update={"host": node_ips[node]})
+        return self.cfg.ssh
+
+    async def _node_ips(self) -> dict[str, str]:
+        try:
+            status = await self._get("/cluster/status")
+        except httpx.HTTPError:
+            return {}
+        return {e["name"]: e["ip"] for e in status if e.get("type") == "node" and e.get("ip")}
 
     async def _get(self, path: str):
         r = await self.client.get(path)
@@ -139,10 +164,11 @@ class ProxmoxProvider:
 
     async def discover(self) -> Discovered:
         found: Discovered = []
+        node_ips = await self._node_ips()
         for node in await self._get("/nodes"):
             nname = node["node"]
             online = node.get("status") == "online"
-            ssh_cfg = self._node_ssh(nname)
+            ssh_cfg = self._node_ssh(nname, node_ips)
             ssh = SSHExecutor(ssh_cfg) if ssh_cfg else None
             prefix = f"proxmox:{self.name}:{nname}"
             host = Target(

@@ -1,3 +1,4 @@
+import os
 import shutil
 import subprocess
 
@@ -77,3 +78,32 @@ def test_check_script_runs_locally():
 def test_scripts_are_valid_sh():
     for script in (CHECK_SCRIPT, UPGRADE_SCRIPT):
         assert subprocess.run(["sh", "-n", "-c", script]).returncode == 0
+
+
+def test_reboot_detection_compares_kernels(tmp_path):
+    from homelab.updates import REBOOT_SCRIPT
+
+    if os.path.exists("/var/run/reboot-required"):
+        pytest.skip("this machine already needs a reboot")
+    running = os.uname().release
+    flavour = running.rsplit("-", 1)[-1]
+
+    def reboot(*dirs):
+        d = tmp_path / str(len(list(tmp_path.iterdir())))
+        d.mkdir()
+        for name in dirs:
+            (d / name).mkdir()
+        env = {**os.environ, "MODULES_DIR": str(d)}
+        return subprocess.run(["sh", "-c", REBOOT_SCRIPT], env=env, capture_output=True, text=True).stdout.strip()
+
+    assert reboot() == "__REBOOT__=no"  # container: no kernels installed
+    assert reboot(running) == "__REBOOT__=no"
+    assert reboot(running, f"999.0.0-1-{flavour}") == "__REBOOT__=yes"
+    assert reboot(running, "999.0.0-1-otherflavour") == "__REBOOT__=no"
+
+
+def test_check_script_uses_documented_apk_and_apt_lock_options():
+    assert "apk list -u" in CHECK_SCRIPT
+    for script in (CHECK_SCRIPT, UPGRADE_SCRIPT):
+        assert "DPkg::Lock::Timeout" in script
+    assert "yum) yum -y upgrade ;;" in UPGRADE_SCRIPT  # yum has no --refresh

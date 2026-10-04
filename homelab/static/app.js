@@ -217,9 +217,15 @@ $("#update-selected").onclick = () => confirmUpgrade([...state.selected]);
 let timer;
 function schedule(ms) { clearTimeout(timer); timer = setTimeout(tick, ms); }
 async function tick() {
-  await load();
-  if (state.logJob && state.jobs.some((j) => j.id === state.logJob)) await showLog(state.logJob);
-  const busy = state.jobs.some((j) => j.status === "running" || j.status === "queued");
-  schedule(busy ? 1500 : 15000);
+  try {
+    await load();
+    if (state.logJob && state.jobs.some((j) => j.id === state.logJob)) await showLog(state.logJob);
+  } catch (e) {
+    console.error(e);
+  } finally {
+    // Always keep polling, even if one request failed (e.g. a job evicted from history).
+    const busy = state.jobs.some((j) => j.status === "running" || j.status === "queued");
+    schedule(busy ? 1500 : 15000);
+  }
 }
 tick();

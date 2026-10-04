@@ -5,6 +5,7 @@ from homelab.providers.incus import IncusProvider
 from homelab.providers.proxmox import ProxmoxProvider
 
 PVE = {
+    "/api2/json/cluster/status": [{"type": "node", "name": "pve", "ip": "10.0.0.1"}],
     "/api2/json/nodes": [{"node": "pve", "status": "online"}],
     "/api2/json/nodes/pve/lxc": [
         {"vmid": "101", "name": "pihole", "status": "running"},
@@ -55,6 +56,7 @@ async def test_proxmox_discovery():
 async def test_proxmox_node_without_ssh_is_check_only():
     p = ProxmoxProvider(ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x"))
     data = {"/api2/json/nodes": [{"node": "pve", "status": "online"}], "/api2/json/nodes/pve/lxc": []}
+    data["/api2/json/cluster/status"] = []
     data["/api2/json/nodes/pve/qemu"] = []
     p.client = httpx.AsyncClient(
         transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": data[req.url.path]})),
@@ -140,3 +142,35 @@ async def test_pve_node_upgrade_needs_ssh():
 
     with pytest.raises(RuntimeError, match="ssh"):
         await PveNodeExecutor(httpx.AsyncClient(), "pve", None).run("true")
+
+
+async def test_proxmox_cluster_uses_each_nodes_address():
+    from homelab.executors import PctExecutor
+
+    data = {
+        "/api2/json/cluster/status": [
+            {"type": "cluster", "name": "lab"},
+            {"type": "node", "name": "pve1", "ip": "10.0.0.1"},
+            {"type": "node", "name": "pve2", "ip": "10.0.0.2"},
+        ],
+        "/api2/json/nodes": [{"node": "pve1", "status": "online"}, {"node": "pve2", "status": "online"}],
+        "/api2/json/nodes/pve1/lxc": [],
+        "/api2/json/nodes/pve2/lxc": [{"vmid": "300", "name": "ct", "status": "running"}],
+        "/api2/json/nodes/pve1/qemu": [],
+        "/api2/json/nodes/pve2/qemu": [],
+    }
+    cfg = ProxmoxConfig(
+        name="lab", api_url="https://pve1:8006", token_id="t", token_secret="x",
+        ssh=SSHConfig(host="10.0.0.1", key_file="/k"),
+        node_ssh={"pve1": SSHConfig(host="pve1.lan")},
+    )  # fmt: skip
+    p = ProxmoxProvider(cfg)
+    p.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": data[req.url.path]})),
+        base_url=p.client.base_url,
+    )
+    found = {t.name: ex for t, ex in await p.discover()}
+    assert found["pve1"].ssh.cfg.host == "pve1.lan"  # explicit override wins
+    ct = found["ct"]
+    assert isinstance(ct, PctExecutor)
+    assert ct.node_ssh.cfg.host == "10.0.0.2" and ct.node_ssh.cfg.key_file == "/k"
