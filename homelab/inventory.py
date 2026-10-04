@@ -12,6 +12,7 @@ from .providers.demo import DemoProvider
 from .providers.incus import IncusProvider
 from .providers.proxmox import ProxmoxProvider
 from .providers.ssh_hosts import SSHHostsProvider
+from .snapshots import Snapshots
 
 log = logging.getLogger(__name__)
 
@@ -35,6 +36,9 @@ class Inventory:
         self.ttl = ttl
         self.targets: dict[str, tuple[Target, Executor | None]] = {}
         self.errors: dict[str, str] = {}
+        # Snapshot handles of the guests that have them. Separate from the executor because a
+        # rollback goes through the platform's API, so it works on a guest that can't run commands.
+        self.snapshots: dict[str, Snapshots] = {}
         self._refreshed = 0.0
         self._lock = asyncio.Lock()
 
@@ -44,6 +48,7 @@ class Inventory:
                 return
             results = await asyncio.gather(*(p.discover() for p in self.providers), return_exceptions=True)
             targets: dict[str, tuple[Target, Executor | None]] = {}
+            snapshots: dict[str, Snapshots] = {}
             errors: dict[str, str] = {}
             for provider, res in zip(self.providers, results, strict=True):
                 if isinstance(res, BaseException):
@@ -51,10 +56,12 @@ class Inventory:
                     errors[provider.name] = str(res) or type(res).__name__
                     # Keep what we knew before so one flaky provider doesn't blank the page.
                     targets.update({k: v for k, v in self.targets.items() if v[0].source == provider.name})
+                    snapshots.update({k: v for k, v in self.snapshots.items() if k in targets})
                     continue
                 for target, executor in res:
                     targets[target.id] = (target, executor)
-            self.targets, self.errors = targets, errors
+                snapshots.update(getattr(provider, "snapshots", {}))
+            self.targets, self.snapshots, self.errors = targets, snapshots, errors
             self._refreshed = time.monotonic()
 
     def get(self, target_id: str) -> tuple[Target, Executor | None]:

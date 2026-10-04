@@ -24,13 +24,15 @@ class DemoSnapshots:
         self.executor = executor
         self.saved: dict[str, list[str]] = {}
 
-    async def create(self, name: str, description: str) -> None:
+    async def create(self, name: str, description: str) -> str | None:
         await asyncio.sleep(0.5)
         self.saved[name] = list(self.executor.lines)
+        return None
 
-    async def rollback(self, name: str) -> None:
+    async def rollback(self, name: str) -> str | None:
         await asyncio.sleep(1)
         self.executor.lines = list(self.saved[name])
+        return None
 
     async def list_ours(self) -> list[str]:
         return list(self.saved)
@@ -66,6 +68,7 @@ class DemoProvider:
 
     def __init__(self) -> None:
         self._found: Discovered | None = None
+        self.snapshots: dict[str, DemoSnapshots] = {}
 
     async def discover(self) -> Discovered:
         if self._found is not None:
@@ -94,7 +97,7 @@ class DemoProvider:
             )
             ex = DemoExecutor(pm, os_name, list(lines))
             if t.can_snapshot:
-                ex.snapshots = DemoSnapshots(ex)
+                self.snapshots[t.id] = DemoSnapshots(ex)
             found.append((t, ex))
         self._found = found
         return found

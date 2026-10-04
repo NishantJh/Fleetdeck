@@ -41,7 +41,7 @@ const canUpgrade = (t) => t.updatable && !t.check_only;
 
 function updatesCell(v) {
   const t = v.target;
-  if (v.active_job) return `<span class="spin"></span> ${v.active_job.action === "upgrade" ? "updating" : "checking"}…`;
+  if (v.active_job) return `<span class="spin"></span> ${{ upgrade: "updating", rollback: "rolling back" }[v.active_job.action] || "checking"}…`;
   if (!t.updatable) return `<span class="muted">${esc(t.note || "unavailable")}</span>`;
   const c = v.check;
   if (!c) return `<span class="muted">not checked</span>`;
@@ -186,6 +186,8 @@ async function showLog(jobId) {
   $("#log-title").textContent = `${job.target_name} · ${job.action} · ${job.status}`;
   const rb = $("#rollback");
   rb.hidden = !(job.action === "upgrade" && job.snapshot && (job.status === "succeeded" || job.status === "failed"));
+  // Not while the machine has a job queued or running (e.g. the rollback just started).
+  rb.disabled = state.targets.some((v) => v.target.id === job.target_id && v.active_job);
   rb.dataset.rollbackJob = job.id;
   rb.dataset.snapshot = job.snapshot || "";
   rb.dataset.name = job.target_name;

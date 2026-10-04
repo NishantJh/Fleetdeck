@@ -21,10 +21,17 @@ def snapshot_name() -> str:
 
 
 class Snapshots(Protocol):
-    async def create(self, name: str, description: str) -> None: ...
-    async def rollback(self, name: str) -> None: ...
+    """``create`` and ``rollback`` return a warning when the platform finished with one."""
+
+    async def create(self, name: str, description: str) -> str | None: ...
+    async def rollback(self, name: str) -> str | None: ...
     async def list_ours(self) -> list[str]: ...
     async def delete(self, name: str) -> None: ...
+
+
+def unsupported(error: BaseException) -> bool:
+    """True when the guest's storage can't take snapshots at all (dir/NFS raw disks, some mount points)."""
+    return "snapshot feature is not available" in str(error)
 
 
 async def prune(snaps: Snapshots, keep: int) -> list[str]:
@@ -50,7 +57,7 @@ class PveSnapshots:
         self.base = f"/nodes/{node}/{'lxc' if kind == 'lxc' else 'qemu'}/{vmid}/snapshot"
         self.task_timeout = task_timeout
 
-    async def _task(self, r: httpx.Response, what: str) -> None:
+    async def _task(self, r: httpx.Response, what: str) -> str | None:
         _raise(r, what)
         upid = r.json()["data"]
         deadline = time.monotonic() + self.task_timeout
@@ -63,17 +70,22 @@ class PveSnapshots:
             if time.monotonic() > deadline:
                 raise TimeoutError(f"{what} did not finish in {self.task_timeout:.0f}s")
             await asyncio.sleep(1)
-        if status.get("exitstatus") != "OK":
-            raise RuntimeError(f"{what} failed: {status.get('exitstatus')}")
+        exit_status = str(status.get("exitstatus", ""))
+        # "WARNINGS: n" means it worked, e.g. a VM snapshot where the agent's fs-freeze complained.
+        if exit_status.startswith("WARNINGS"):
+            return f"{what} finished with {exit_status.lower()} (see the task log in Proxmox)"
+        if exit_status != "OK":
+            raise RuntimeError(f"{what} failed: {exit_status}")
+        return None
 
-    async def create(self, name: str, description: str) -> None:
+    async def create(self, name: str, description: str) -> str | None:
         r = await self.client.post(self.base, data={"snapname": name, "description": description})
-        await self._task(r, "snapshot")
+        return await self._task(r, "snapshot")
 
-    async def rollback(self, name: str) -> None:
+    async def rollback(self, name: str) -> str | None:
         # start=1 brings the guest back up afterwards (a snapshot without RAM state leaves it stopped).
         r = await self.client.post(f"{self.base}/{name}/rollback", data={"start": 1})
-        await self._task(r, "rollback")
+        return await self._task(r, "rollback")
 
     async def list_ours(self) -> list[str]:
         r = await self.client.get(self.base)
@@ -105,14 +117,16 @@ class IncusSnapshots:
         if md.get("status") != "Success":
             raise RuntimeError(f"{what} failed: {md.get('err') or md.get('status')}")
 
-    async def create(self, name: str, description: str) -> None:
+    async def create(self, name: str, description: str) -> str | None:
         r = await self.client.post(f"{self.base}/snapshots", params=self.params, json={"name": name, "stateful": False})
         await self._wait(r, "snapshot")
+        return None
 
-    async def rollback(self, name: str) -> None:
+    async def rollback(self, name: str) -> str | None:
         # Incus stops and restarts a running instance around the restore.
         r = await self.client.put(self.base, params=self.params, json={"restore": name})
         await self._wait(r, "restore")
+        return None
 
     async def list_ours(self) -> list[str]:
         r = await self.client.get(f"{self.base}/snapshots", params=self.params)

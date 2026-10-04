@@ -15,6 +15,7 @@ class IncusProvider:
     def __init__(self, cfg: IncusConfig):
         self.cfg = cfg
         self.name = cfg.name
+        self.snapshots: dict[str, IncusSnapshots] = {}
         if cfg.socket:
             self.client = httpx.AsyncClient(
                 transport=httpx.AsyncHTTPTransport(uds=cfg.socket), base_url="http://incus", timeout=30
@@ -25,6 +26,7 @@ class IncusProvider:
 
     async def discover(self) -> Discovered:
         found: Discovered = []
+        snapshots: dict[str, IncusSnapshots] = {}
         ssh = SSHExecutor(self.cfg.ssh) if self.cfg.ssh else None
         prefix = f"incus:{self.name}"
         found.append(
@@ -64,7 +66,7 @@ class IncusProvider:
                 note=None if running else "not running",
                 can_snapshot=True,
             )
-            ex = IncusExecutor(self.client, name, project)
-            ex.snapshots = IncusSnapshots(self.client, name, project)
-            found.append((t, ex))
+            snapshots[t.id] = IncusSnapshots(self.client, name, project)
+            found.append((t, IncusExecutor(self.client, name, project)))
+        self.snapshots = snapshots
         return found

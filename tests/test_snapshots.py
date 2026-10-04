@@ -13,18 +13,21 @@ from homelab.snapshots import PREFIX, IncusSnapshots, PveSnapshots, prune, snaps
 
 
 class FakeSnapshots:
-    def __init__(self, existing=(), fail=False):
+    def __init__(self, existing=(), fail=None, warning=None):
         self.names = list(existing)
         self.fail = fail
+        self.warning = warning
         self.rolled_back: list[str] = []
 
     async def create(self, name, description):
         if self.fail:
-            raise RuntimeError("snapshot feature is not available")
+            raise RuntimeError(self.fail)
         self.names.append(name)
+        return self.warning
 
     async def rollback(self, name):
         self.rolled_back.append(name)
+        return self.warning
 
     async def list_ours(self):
         return [n for n in self.names if n.startswith(PREFIX)]
@@ -33,10 +36,9 @@ class FakeSnapshots:
         self.names.remove(name)
 
 
-def _guest(snaps):
-    ex = FakeExecutor()
-    ex.snapshots = snaps
-    return ex
+def _with_snapshots(inv, **snaps):
+    inv.snapshots = dict(snaps)
+    return inv
 
 
 def test_snapshot_names_are_valid_for_proxmox():
@@ -52,7 +54,7 @@ async def test_prune_keeps_newest_and_ignores_other_snapshots():
 
 async def test_upgrade_snapshots_first_and_can_roll_back():
     snaps = FakeSnapshots([f"{PREFIX}2000{i}" for i in range(3)])
-    jobs = JobManager(_inventory((_target(), _guest(snaps))), snapshot_keep=3)
+    jobs = JobManager(_with_snapshots(_inventory((_target(), FakeExecutor())), t1=snaps), snapshot_keep=3)
     job = jobs.submit("t1", "upgrade", snapshot_first=True)
     await _finish(jobs)
     assert job.status == "succeeded" and job.snapshot and job.snapshot in snaps.names
@@ -73,8 +75,7 @@ async def test_failed_snapshot_stops_the_upgrade():
             return await super().run(script, on_line, timeout)
 
     ex = Recording()
-    ex.snapshots = FakeSnapshots(fail=True)
-    jobs = JobManager(_inventory((_target(), ex)))
+    jobs = JobManager(_with_snapshots(_inventory((_target(), ex)), t1=FakeSnapshots(fail="disk full")))
     job = jobs.submit("t1", "upgrade", snapshot_first=True)
     await _finish(jobs)
     assert job.status == "failed" and "upgrade was not started" in job.error
@@ -177,3 +178,55 @@ def test_demo_upgrade_with_snapshot_and_rollback():
             "check"
         ]
         assert len(check["packages"]) == 2  # the updates are pending again
+
+        client.app.state.inventory.snapshots[pihole["id"]].saved.clear()  # pruned meanwhile
+        r = client.post(f"/api/jobs/{job['id']}/rollback")
+        assert r.status_code == 400 and "no longer exists" in r.json()["detail"]
+
+
+async def test_storage_without_snapshots_upgrades_anyway():
+    jobs = JobManager(
+        _with_snapshots(
+            _inventory((_target(), FakeExecutor())), t1=FakeSnapshots(fail="snapshot feature is not available")
+        )
+    )
+    job = jobs.submit("t1", "upgrade", snapshot_first=True)
+    await _finish(jobs)
+    assert job.status == "succeeded" and job.snapshot is None
+    assert any("can't take snapshots" in line for line in job.log)
+
+
+async def test_rollback_works_when_the_guest_cannot_run_commands():
+    stopped = _target("stopped", updatable=False, note="not running")
+    no_agent = _target("noagent", updatable=False, note="QEMU guest agent is not enabled")
+    no_ssh = _target("nossh", updatable=False, note="needs node ssh for pct exec")
+    snaps = {t: FakeSnapshots([f"{PREFIX}1"]) for t in ("stopped", "noagent", "nossh")}
+    inv = _with_snapshots(_inventory((stopped, FakeExecutor()), (no_agent, FakeExecutor()), (no_ssh, None)), **snaps)
+    jobs = JobManager(inv)
+    submitted = [jobs.submit(t, "rollback", snapshot=f"{PREFIX}1") for t in snaps]
+    await _finish(jobs)
+    assert [j.status for j in submitted] == ["succeeded"] * 3
+    assert all(s.rolled_back == [f"{PREFIX}1"] for s in snaps.values())
+    # Ordinary jobs on those guests are still refused.
+    with pytest.raises(ValueError, match="not running"):
+        jobs.submit("stopped", "upgrade")
+
+
+async def test_snapshot_warnings_are_logged_not_failures():
+    snaps = FakeSnapshots(warning="snapshot finished with warnings: 1")
+    jobs = JobManager(_with_snapshots(_inventory((_target(), FakeExecutor())), t1=snaps))
+    job = jobs.submit("t1", "upgrade", snapshot_first=True)
+    await _finish(jobs)
+    assert job.status == "succeeded" and job.snapshot
+    assert "! snapshot finished with warnings: 1" in job.log
+
+
+async def test_pve_task_with_warnings_counts_as_done():
+    def handler(req):
+        if req.url.path.endswith("/status"):
+            return httpx.Response(200, json={"data": {"status": "stopped", "exitstatus": "WARNINGS: 1"}})
+        return httpx.Response(200, json={"data": "UPID"})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://pve/api2/json")
+    warning = await PveSnapshots(client, "pve", "qemu", 200).create("homelab_x", "d")
+    assert "warnings: 1" in warning

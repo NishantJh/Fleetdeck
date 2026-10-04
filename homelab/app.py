@@ -113,6 +113,18 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
         if job.action != "upgrade" or not job.snapshot:
             raise HTTPException(400, "this job took no snapshot")
         await inventory.refresh()
+        snaps = inventory.snapshots.get(job.target_id)
+        if snaps is not None:
+            try:
+                exists = job.snapshot in await snaps.list_ours()
+            except Exception:  # noqa: BLE001 - let the job itself report what is wrong
+                exists = True
+            if not exists:
+                raise HTTPException(
+                    400,
+                    f"snapshot {job.snapshot} no longer exists (only the newest {cfg.snapshot_keep} are kept); "
+                    "roll back to an older one in Proxmox or Incus",
+                )
         try:
             return _light(jobs.submit(job.target_id, "rollback", snapshot=job.snapshot))
         except KeyError:

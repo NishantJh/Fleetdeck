@@ -120,6 +120,7 @@ class ProxmoxProvider:
     def __init__(self, cfg: ProxmoxConfig):
         self.cfg = cfg
         self.name = cfg.name
+        self.snapshots: dict[str, PveSnapshots] = {}
         self.client = httpx.AsyncClient(
             base_url=cfg.api_url.rstrip("/") + "/api2/json",
             headers={"Authorization": f"PVEAPIToken={cfg.token_id}={cfg.token_secret}"},
@@ -166,6 +167,7 @@ class ProxmoxProvider:
 
     async def discover(self) -> Discovered:
         found: Discovered = []
+        snapshots: dict[str, PveSnapshots] = {}
         node_ips = await self._node_ips()
         for node in await self._get("/nodes"):
             nname = node["node"]
@@ -207,12 +209,11 @@ class ProxmoxProvider:
                     status=ct.get("status", "unknown"),
                     updatable=updatable,
                     note=note,
-                    can_snapshot=ssh is not None,
+                    can_snapshot=vmid not in self.cfg.protect,
                 )
-                ex = PctExecutor(ssh, vmid) if ssh else None
-                if ex is not None:
-                    ex.snapshots = PveSnapshots(self.client, nname, "lxc", vmid)
-                found.append((t, ex))  # type: ignore[arg-type]
+                if t.can_snapshot:
+                    snapshots[t.id] = PveSnapshots(self.client, nname, "lxc", vmid)
+                found.append((t, PctExecutor(ssh, vmid) if ssh else None))  # type: ignore[arg-type]
 
             for vm in await self._get(f"/nodes/{nname}/qemu"):
                 vmid = int(vm["vmid"])
@@ -236,9 +237,10 @@ class ProxmoxProvider:
                     status=vm.get("status", "unknown"),
                     updatable=updatable,
                     note=note,
-                    can_snapshot=True,
+                    can_snapshot=vmid not in self.cfg.protect,
                 )
-                ex = PveAgentExecutor(self.client, nname, vmid)
-                ex.snapshots = PveSnapshots(self.client, nname, "qemu", vmid)
-                found.append((t, ex))
+                if t.can_snapshot:
+                    snapshots[t.id] = PveSnapshots(self.client, nname, "qemu", vmid)
+                found.append((t, PveAgentExecutor(self.client, nname, vmid)))
+        self.snapshots = snapshots
         return found

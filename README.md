@@ -19,10 +19,13 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
 * **Update** runs a full upgrade (`apt-get dist-upgrade`, `dnf upgrade`, `apk upgrade`,
   `pacman -Syu`), streams the output to the Activity panel, then re-checks. Nothing is rebooted.
 * **Snapshot first:** the Update dialog can snapshot Proxmox LXCs/VMs and Incus instances before
-  upgrading (on by default, `snapshot_before_upgrade`). If the snapshot fails, for example because
-  the guest's storage can't snapshot, the upgrade isn't started. The job's log then has a
-  **Roll back to snapshot** button. The dashboard keeps its last `snapshot_keep` (3) snapshots per
-  guest, named `homelab_<date>_<time>`, and never touches snapshots it didn't make.
+  upgrading (on by default, `snapshot_before_upgrade`). A guest whose storage can't snapshot at all
+  (a raw disk on dir/NFS storage) is upgraded without one and the log says so; any other snapshot
+  failure stops the upgrade. The job's log then has a **Roll back to snapshot** button, which also
+  works when the guest no longer boots or its agent stopped answering. The dashboard keeps its last
+  `snapshot_keep` (3) snapshots per guest, named `homelab_<date>_<time>`, and never touches
+  snapshots it didn't make. The button only covers the job's own snapshot while it is still kept
+  and the job is still in Activity; roll back to anything older in Proxmox or Incus.
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,
   never two jobs on the same machine at once).
 
