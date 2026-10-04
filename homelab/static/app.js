@@ -177,7 +177,14 @@ function confirmAction(action, ids) {
     const v = byId.get(id);
     const n = v?.check?.packages?.length;
     let detail = n != null ? `${n} package(s)` : "not checked";
-    if (action === "reboot") detail = v?.check?.reboot_required ? "reboot needed" : "";
+    if (action === "reboot") {
+      detail = v?.check?.reboot_required ? "reboot needed" : "";
+      const t = v?.target;
+      const guests = t?.kind === "host"
+        ? state.targets.filter((g) => g.target.parent === t.name && g.target.source === t.source && g.target.status === "running").length : 0;
+      // Waits for running guest jobs first, but the guests themselves go down with it.
+      if (guests) detail += `${detail ? " · " : ""}and every guest running on it (${guests})`;
+    }
     if (action === "upgrade" && v?.target.no_reboot) detail += ` · won't reboot: ${v.target.no_reboot}`;
     return `<li>${esc(v?.target.name || id)} <span class="muted">${esc(detail)}</span></li>`;
   }).join("");
