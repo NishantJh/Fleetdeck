@@ -8,6 +8,31 @@ auth:
 # How many machines may be checked/updated at once.
 max_parallel: 4
 
+# Check every machine on a timer (e.g. 30m, 6h, 1d; at least 5m). Nothing is ever upgraded
+# automatically; you get a notification when something new is pending.
+schedule:
+  check_every: 6h
+
+# Linked from notifications.
+# public_url: http://192.168.1.50:8080
+
+# Where to send "updates available" messages. Only new things are announced: an update that
+# wasn't pending at the last scheduled check, a new pending reboot, or a check that started failing.
+notify: []
+#  - type: ntfy
+#    url: https://ntfy.sh/my-homelab-topic
+#    token: ${NTFY_TOKEN} # only for protected topics
+#  - type: gotify
+#    url: https://gotify.example.com
+#    token: ${GOTIFY_APP_TOKEN}
+#  - type: discord
+#    url: ${DISCORD_WEBHOOK_URL}
+#  - type: telegram
+#    token: ${TELEGRAM_BOT_TOKEN}
+#    chat_id: "123456789"
+#  - type: webhook # JSON POST: {"title", "message", "url"}
+#    url: https://example.com/hook
+
 proxmox:
   - name: pve
     api_url: https://192.168.1.10:8006

@@ -16,6 +16,8 @@ from .config import AppConfig, load_config
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
 from .models import CheckResult, Job, JobAction, Target
+from .notify import Notifier
+from .scheduler import Scheduler
 
 log = logging.getLogger("homelab")
 STATIC = Path(__file__).parent / "static"
@@ -36,12 +38,18 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
     cfg = cfg or load_config()
     inventory = inventory or Inventory(build_providers(cfg))
     jobs = JobManager(inventory, cfg.max_parallel)
+    notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
+    scheduler = Scheduler(cfg.schedule.check_every, inventory, jobs, notifier)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         if cfg.auth is None:
             log.warning("No auth configured: anyone who can reach this dashboard can update your machines.")
+        scheduler.start()
         yield
+        await scheduler.stop()
+        if notifier is not None:
+            await notifier.aclose()
         for provider in inventory.providers:
             client = getattr(provider, "client", None)
             if client is not None:
@@ -50,6 +58,7 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
     app = FastAPI(title="Homelab Manager", lifespan=lifespan)
     app.state.jobs = jobs
     app.state.inventory = inventory
+    app.state.scheduler = scheduler
 
     if cfg.auth:
         auth = cfg.auth
@@ -95,6 +104,23 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
         data["log"] = job.log[since:]
         data["log_offset"] = since
         return data
+
+    @app.get("/api/schedule")
+    async def schedule():
+        return {
+            "check_every": scheduler.interval,
+            "next_run": scheduler.next_run,
+            "last_run": scheduler.last_run,
+            "last_notified": scheduler.last_notified,
+            "notify_targets": len(cfg.notify),
+        }
+
+    @app.post("/api/notify/test")
+    async def notify_test():
+        if notifier is None:
+            raise HTTPException(400, "no notify targets configured")
+        errors = await notifier.send("Homelab Manager test", "Notifications from your homelab dashboard work.")
+        return {"sent": len(cfg.notify) - len(errors), "errors": errors}
 
     @app.get("/")
     async def index():

@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { targets: [], errors: {}, jobs: [], selected: new Set(), expanded: new Set(), logJob: null, logLines: [] };
+const state = { targets: [], errors: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), logJob: null, logLines: [] };
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const PLATFORM = { proxmox: "Proxmox", incus: "Incus", ssh: "Standalone", demo: "Demo" };
@@ -19,6 +19,28 @@ function ago(iso) {
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
   return `${Math.round(s / 86400)} d ago`;
+}
+
+function until(iso) {
+  const s = Math.round((new Date(iso) - Date.now()) / 1000);
+  if (s < 60) return "in under a minute";
+  if (s < 3600) return `in ${Math.round(s / 60)} min`;
+  if (s < 86400) return `in ${Math.round(s / 3600)} h`;
+  return `in ${Math.round(s / 86400)} d`;
+}
+
+function every(seconds) {
+  if (seconds % 86400 === 0) return `${seconds / 86400} d`;
+  if (seconds % 3600 === 0) return `${seconds / 3600} h`;
+  return `${Math.round(seconds / 60)} min`;
+}
+
+function scheduleStat() {
+  const sc = state.schedule;
+  if (!sc?.check_every) return `<div class="stat" title="Set schedule.check_every in config.yaml"><b>off</b><span class="muted">auto-check</span></div>`;
+  const next = sc.next_run ? until(sc.next_run) : "running now";
+  const notify = sc.notify_targets ? `notifies ${sc.notify_targets} target${sc.notify_targets > 1 ? "s" : ""}` : "no notifications set up";
+  return `<div class="stat" title="Every ${every(sc.check_every)}; ${notify}"><b>${next}</b><span class="muted">next auto-check</span></div>`;
 }
 
 function groupKey(t) {
@@ -91,7 +113,9 @@ function render() {
     <div class="stat"><b>${updatable.length}</b><span class="muted">machines</span></div>
     <div class="stat"><b class="${pending.length ? "warn" : "ok"}">${pending.length}</b><span class="muted">need updates (${pkgCount} pkgs)</span></div>
     <div class="stat"><b class="${reboot ? "warn" : ""}">${reboot}</b><span class="muted">need a reboot</span></div>
-    <div class="stat"><b>${unchecked}</b><span class="muted">not checked yet</span></div>`;
+    <div class="stat"><b>${unchecked}</b><span class="muted">not checked yet</span></div>
+    ${scheduleStat()}`;
+  $("#test-notify").hidden = !state.schedule?.notify_targets;
 
   $("#groups").innerHTML = groups().map((g) => `
     <div class="group">
@@ -120,6 +144,7 @@ async function load(refresh = false) {
     state.targets = data.targets;
     state.errors = data.errors;
     state.jobs = await api("/api/jobs");
+    state.schedule = await api("/api/schedule");
     // Drop selections for targets that disappeared or can no longer be upgraded.
     const selectable = new Set(state.targets.filter((v) => canUpgrade(v.target)).map((v) => v.target.id));
     for (const id of state.selected) if (!selectable.has(id)) state.selected.delete(id);
@@ -210,6 +235,15 @@ document.addEventListener("change", (e) => {
 });
 
 $("#refresh").onclick = () => load(true);
+$("#test-notify").onclick = async () => {
+  try {
+    const r = await api("/api/notify/test", { method: "POST" });
+    const failed = Object.entries(r.errors);
+    alert(failed.length ? `Sent to ${r.sent}. Failed:\n${failed.map(([n, e]) => `${n}: ${e}`).join("\n")}` : `Sent to ${r.sent} target(s).`);
+  } catch (e) {
+    alert(`Could not send: ${e.message}`);
+  }
+};
 $("#check-all").onclick = () => act("check", state.targets.filter((v) => v.target.updatable).map((v) => v.target.id));
 $("#update-selected").onclick = () => confirmUpgrade([...state.selected]);
 

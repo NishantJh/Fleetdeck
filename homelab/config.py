@@ -11,9 +11,10 @@ import logging
 import os
 import re
 from pathlib import Path
+from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 log = logging.getLogger(__name__)
 
@@ -79,6 +80,60 @@ class AuthConfig(BaseModel):
     password: str = Field(min_length=1)
 
 
+_DURATION = re.compile(r"^\s*(\d+)\s*([smhd]?)\s*$")
+_UNITS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+MIN_CHECK_INTERVAL = 300
+
+
+def parse_duration(value: str | int) -> int:
+    """``90``, ``"90s"``, ``"30m"``, ``"6h"`` or ``"1d"`` to seconds."""
+    if isinstance(value, int):
+        return value
+    m = _DURATION.match(value.lower())
+    if not m:
+        raise ValueError(f"not a duration: {value!r} (use e.g. 30m, 6h, 1d)")
+    return int(m[1]) * _UNITS[m[2]]
+
+
+class ScheduleConfig(BaseModel):
+    # Check every machine for updates this often (e.g. 6h, 1d). Unset: only when you click Check.
+    check_every: int | None = None
+
+    @field_validator("check_every", mode="before")
+    @classmethod
+    def _duration(cls, v):
+        if v is None or v == "":
+            return None
+        seconds = parse_duration(v)
+        if seconds < MIN_CHECK_INTERVAL:
+            raise ValueError(f"check_every must be at least {MIN_CHECK_INTERVAL // 60} minutes")
+        return seconds
+
+
+class NotifyConfig(BaseModel):
+    """Where to send a message when a scheduled check finds updates."""
+
+    type: Literal["ntfy", "gotify", "discord", "telegram", "webhook"]
+    name: str | None = None
+    # ntfy: topic URL (https://ntfy.sh/my-topic); gotify: server URL; discord: webhook URL;
+    # webhook: any URL that accepts a JSON POST. Not used for telegram.
+    url: str | None = None
+    # ntfy access token, Gotify application token, or Telegram bot token.
+    token: str | None = None
+    chat_id: str | None = None  # telegram
+
+    @model_validator(mode="after")
+    def _required(self) -> NotifyConfig:
+        if self.type == "telegram":
+            if not self.token or not self.chat_id:
+                raise ValueError("telegram notifications need token and chat_id")
+        elif not self.url:
+            raise ValueError(f"{self.type} notifications need url")
+        if self.type == "gotify" and not self.token:
+            raise ValueError("gotify notifications need token")
+        return self
+
+
 class AppConfig(BaseModel):
     proxmox: list[ProxmoxConfig] = Field(default_factory=list)
     incus: list[IncusConfig] = Field(default_factory=list)
@@ -89,6 +144,10 @@ class AppConfig(BaseModel):
     max_parallel: int = Field(4, ge=1)
     # Adds fake targets so the UI can be tried without real infrastructure.
     demo: bool = False
+    schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
+    notify: list[NotifyConfig] = Field(default_factory=list)
+    # The dashboard's address, linked from notifications (e.g. http://192.168.1.50:8080).
+    public_url: str | None = None
 
     @model_validator(mode="after")
     def _unique_names(self) -> AppConfig:

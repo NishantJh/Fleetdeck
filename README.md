@@ -18,6 +18,10 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   whether a reboot is needed.
 * **Update** runs a full upgrade (`apt-get dist-upgrade`, `dnf upgrade`, `apk upgrade`,
   `pacman -Syu`), streams the output to the Activity panel, then re-checks. Nothing is rebooted.
+* **Scheduled checks:** set `schedule.check_every` (e.g. `6h`) and the dashboard checks everything on
+  its own, then notifies you through ntfy, Gotify, Discord, Telegram or a JSON webhook when something
+  new is pending (a new update, a new pending reboot, or a check that started failing). It never
+  upgrades on its own. *Test notification* in the toolbar sends a test message.
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,
   never two jobs on the same machine at once).
 
