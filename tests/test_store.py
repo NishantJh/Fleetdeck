@@ -8,13 +8,14 @@ from homelab.app import create_app
 from homelab.config import AppConfig
 from homelab.jobs import JobManager
 from homelab.models import CheckResult, Job, Package
-from homelab.store import INTERRUPTED, MAX_STORED_LOG_LINES, Store
+from homelab.store import INTERRUPTED, MAX_STORED_LOG_LINES, NEVER_STARTED, Store
 
 
-def _job(jid: str, status="succeeded", log=None) -> Job:
+def _job(jid: str, status="succeeded", log=None, started=False) -> Job:
+    now = datetime.now(UTC)
     return Job(
         id=jid, target_id="t1", target_name="t1", action="check", status=status,
-        created_at=datetime.now(UTC), log=log or [],
+        created_at=now, started_at=now if started else None, log=log or [],
     )  # fmt: skip
 
 
@@ -31,13 +32,13 @@ def test_checks_round_trip(tmp_path):
 def test_jobs_keep_order_trim_and_mark_interrupted(tmp_path):
     s = Store(tmp_path / "sub" / "state.db")  # parent folder is created
     s.save_job(_job("a"))
-    s.save_job(_job("b", status="running"))
+    s.save_job(_job("b", status="running", started=True))
     s.save_job(_job("c", log=[str(i) for i in range(MAX_STORED_LOG_LINES + 10)]))
     s.save_job(_job("a", log=["saved again"]))  # an update keeps its place
     jobs = s.load_jobs(limit=10)
     assert [j.id for j in jobs] == ["a", "b", "c"]
     assert jobs[0].log == ["saved again"]
-    assert jobs[1].status == "failed" and jobs[1].error == INTERRUPTED
+    assert jobs[1].status == "failed" and jobs[1].error == INTERRUPTED and jobs[1].finished_at
     assert len(jobs[2].log) == MAX_STORED_LOG_LINES + 1 and jobs[2].log[-1] == str(MAX_STORED_LOG_LINES + 9)
     # Reloading with a smaller limit drops the oldest for good.
     assert [j.id for j in s.load_jobs(limit=2)] == ["b", "c"]
@@ -99,3 +100,25 @@ def test_unwritable_state_file_falls_back_to_memory(tmp_path):
     blocker.write_text("")
     with TestClient(create_app(AppConfig(demo=True, state_file=str(blocker / "state.db")))) as client:
         assert client.get("/api/jobs").status_code == 200
+
+
+def test_queued_job_is_marked_never_started(tmp_path):
+    s = Store(tmp_path / "state.db")
+    s.save_job(_job("q", status="queued"))
+    (job,) = s.load_jobs(limit=10)
+    assert job.status == "failed" and job.error == NEVER_STARTED and job.finished_at
+
+
+async def test_shutdown_stops_jobs_and_records_them(tmp_path):
+    gate = asyncio.Event()
+    store = Store(tmp_path / "state.db")
+    jobs = JobManager(_inventory((_target(), FakeExecutor(gate=gate))), store=store)
+    running = jobs.submit("t1", "check")
+    queued = jobs.submit("t1", "upgrade")
+    await asyncio.sleep(0)
+    await jobs.shutdown()
+    assert running.error == INTERRUPTED and queued.error == NEVER_STARTED
+    assert not jobs._tasks
+    store.close()
+    stored = {j.id: j for j in Store(tmp_path / "state.db").load_jobs(limit=10)}
+    assert stored[running.id].error == INTERRUPTED and stored[queued.id].error == NEVER_STARTED

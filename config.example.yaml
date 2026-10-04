@@ -10,6 +10,7 @@ max_parallel: 4
 
 # Where check results and job history are saved, so a restart doesn't lose them.
 # The Docker image already sets this to /data/state.db (HOMELAB_STATE); omit to keep state in memory.
+# A relative path is relative to this file.
 # state_file: ./data/state.db
 
 proxmox:

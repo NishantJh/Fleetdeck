@@ -145,6 +145,9 @@ def load_config(path: str | None = None) -> AppConfig:
         cfg.demo = True
     if os.environ.get("HOMELAB_STATE"):
         cfg.state_file = os.environ["HOMELAB_STATE"]
+    elif cfg.state_file and not Path(cfg.state_file).is_absolute():
+        # Relative to the config file, like the other paths people put next to it.
+        cfg.state_file = str(p.parent / cfg.state_file)
     for ssh in _ssh_configs(cfg):
         if not ssh.known_hosts:
             log.warning("SSH host key checking is off for %s; set known_hosts to enable it.", ssh.host)

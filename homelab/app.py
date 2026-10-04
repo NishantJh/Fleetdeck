@@ -44,6 +44,7 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
         if cfg.auth is None:
             log.warning("No auth configured: anyone who can reach this dashboard can update your machines.")
         yield
+        await jobs.shutdown()
         for provider in inventory.providers:
             client = getattr(provider, "client", None)
             if client is not None:

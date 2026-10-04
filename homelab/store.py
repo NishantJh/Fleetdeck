@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import sqlite3
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .models import CheckResult, Job
@@ -16,6 +17,15 @@ log = logging.getLogger(__name__)
 # Upgrade logs can be long; keep the end, which is where errors are.
 MAX_STORED_LOG_LINES = 5000
 INTERRUPTED = "interrupted: the dashboard restarted while this job was running"
+NEVER_STARTED = "not run: the dashboard restarted before this job started"
+
+
+def mark_interrupted(job: Job) -> None:
+    """Fail a job that a shutdown or restart cut off."""
+    msg = INTERRUPTED if job.started_at else NEVER_STARTED
+    job.status, job.error = "failed", msg
+    job.finished_at = job.finished_at or datetime.now(UTC)
+    job.log.append(f"!! {msg}")
 
 
 class Store:
@@ -74,8 +84,7 @@ class Store:
                 log.warning("dropping unreadable stored job")
                 continue
             if job.status in ("queued", "running"):
-                job.status, job.error = "failed", INTERRUPTED
-                job.log.append(f"!! {INTERRUPTED}")
+                mark_interrupted(job)
                 self.save_job(job)
             jobs.append(job)
         # Older rows beyond the limit are no longer reachable from the UI.

@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 
 from .inventory import Inventory
 from .models import CheckResult, Job, JobAction, Target
-from .store import Store
+from .store import Store, mark_interrupted
 from .updates import CHECK_SCRIPT, UPGRADE_SCRIPT, parse_check, parse_reboot
 
 log = logging.getLogger(__name__)
@@ -54,6 +54,17 @@ class JobManager:
             fn(*args)
         except Exception:  # noqa: BLE001
             log.exception("could not save state")
+
+    async def shutdown(self) -> None:
+        """Stop running jobs and record them as interrupted, before the store is closed."""
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for job in self.jobs.values():
+            if job.status in ("queued", "running"):
+                mark_interrupted(job)
+                self._save_job(job)
 
     def active_job(self, target_id: str) -> Job | None:
         for job in reversed(self.jobs.values()):
