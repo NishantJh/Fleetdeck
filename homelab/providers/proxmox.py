@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -13,6 +14,7 @@ from ..models import BackupInfo, CheckResult, ExecResult, Package, Target
 from ..updates import REBOOT_SCRIPT, parse_reboot
 from . import Discovered
 
+log = logging.getLogger(__name__)
 PROTECTED_NOTE = "protected: runs this dashboard, update it from its own console"
 # Listing backup storages (PBS in particular) is slow, so it is done less often than discovery.
 BACKUP_TTL = 300.0
@@ -183,9 +185,11 @@ class ProxmoxProvider:
         if self._backups is not None and time.monotonic() - self._backups_at < BACKUP_TTL:
             return self._backups
         index = BackupIndex()
-        seen_storages: set[str] = set()
-        seen_volids: set[str] = set()
         errors: list[str] = []
+        # (node, storage, shared) to read. Shared storages (PBS, NFS) list the same backups from
+        # every node, so they're read once.
+        to_read: list[tuple[str, str, bool]] = []
+        seen_storages: set[str] = set()
         for node in nodes:
             try:
                 r = await self.client.get(f"/nodes/{node}/storage", params={"content": "backup", "enabled": 1})
@@ -195,38 +199,54 @@ class ProxmoxProvider:
                 errors.append(f"{node}: {e}")
                 continue
             for st in storages:
-                name = st["storage"]
-                # Shared storages (PBS, NFS) list the same backups from every node; ask once.
-                if not st.get("active", 1) or (st.get("shared") and name in seen_storages):
+                name, shared = st["storage"], bool(st.get("shared"))
+                if shared and name in seen_storages:
                     continue
                 seen_storages.add(name)
-                try:
-                    r = await self.client.get(f"/nodes/{node}/storage/{name}/content", params={"content": "backup"})
-                    r.raise_for_status()
-                except httpx.HTTPError as e:
-                    errors.append(f"{name}: {e}")
+                if not st.get("active", 1):
+                    errors.append(f"{name}: storage inactive")
                     continue
-                for item in r.json()["data"]:
-                    if item.get("volid") in seen_volids or not item.get("vmid") or not item.get("ctime"):
-                        continue
-                    seen_volids.add(item.get("volid"))
-                    vmid = int(item["vmid"])
-                    when = datetime.fromtimestamp(int(item["ctime"]), UTC)
-                    state = (item.get("verification") or {}).get("state")
-                    verified = {"ok": True, "failed": False}.get(state)
-                    index.counts[vmid] = index.counts.get(vmid, 0) + 1
-                    if vmid not in index.latest or when > index.latest[vmid][0]:
-                        index.latest[vmid] = (when, name, verified)
-        if not seen_storages:
+                to_read.append((node, name, shared))
+
+        async def content(node: str, name: str) -> list[dict]:
+            r = await self.client.get(f"/nodes/{node}/storage/{name}/content", params={"content": "backup"})
+            r.raise_for_status()
+            return r.json()["data"]
+
+        # A PBS datastore with many snapshots can take seconds to list; read them all at once.
+        results = await asyncio.gather(*(content(n, s) for n, s, _ in to_read), return_exceptions=True)
+        read_any = False
+        seen_volids: set[tuple[str | None, str]] = set()
+        for (node, name, shared), res in zip(to_read, results, strict=True):
+            if isinstance(res, BaseException):
+                errors.append(f"{name}: {res}")
+                continue
+            read_any = True
+            for item in res:
+                # The same volid on two nodes' local storages is two different backups.
+                key = (None if shared else node, item.get("volid"))
+                if key in seen_volids or not item.get("vmid") or not item.get("ctime"):
+                    continue
+                seen_volids.add(key)
+                vmid = int(item["vmid"])
+                when = datetime.fromtimestamp(int(item["ctime"]), UTC)
+                state = (item.get("verification") or {}).get("state")
+                verified = {"ok": True, "failed": False}.get(state)
+                index.counts[vmid] = index.counts.get(vmid, 0) + 1
+                if vmid not in index.latest or when > index.latest[vmid][0]:
+                    index.latest[vmid] = (when, name, verified)
+        if not read_any:
             index.note = "; ".join(errors) or NO_BACKUP_STORAGE
         elif errors:
             index.note = "some storages could not be read: " + "; ".join(errors)
         try:
             missing = await self._get("/cluster/backup-info/not-backed-up")
             index.not_in_job = {int(g["vmid"]) for g in missing}
-        except httpx.HTTPError:
-            pass
-        self._backups, self._backups_at = index, time.monotonic()
+        except httpx.HTTPError as e:
+            log.warning("%s: could not tell which guests are in no backup job: %s", self.name, e)
+        # Don't remember a complete failure for the whole TTL; the next refresh tries again.
+        if read_any or not errors:
+            self._backups, self._backups_at = index, time.monotonic()
         return index
 
     def _backup_for(self, vmid: int, index: BackupIndex | None) -> BackupInfo | None:

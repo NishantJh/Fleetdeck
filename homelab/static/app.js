@@ -106,7 +106,8 @@ function render() {
   const pkgCount = pending.reduce((n, v) => n + v.check.packages.length, 0);
   const reboot = updatable.filter((v) => v.check?.reboot_required).length;
   const unchecked = updatable.filter((v) => !v.check).length;
-  const withBackups = state.targets.filter((v) => v.target.backup);
+  // Leave out guests whose backups couldn't be read (a note but no date): unknown isn't "fine".
+  const withBackups = state.targets.filter((v) => v.target.backup && (v.target.backup.last || !v.target.backup.note));
   const staleBackups = withBackups.filter((v) => v.target.backup.stale || v.target.backup.verified === false).length;
   $("#summary").innerHTML = `
     <div class="stat"><b>${updatable.length}</b><span class="muted">machines</span></div>

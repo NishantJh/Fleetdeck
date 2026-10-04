@@ -21,7 +21,10 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
 * **Backups:** each Proxmox guest shows when it was last backed up (vzdump or Proxmox Backup
   Server), turns orange once that's older than `backup_max_age_hours` (48 by default), and is flagged
   *none*, *no job* (not in any scheduled backup job) or *verify failed*. This needs `Datastore.Audit`
-  on the backup storages; without it the column shows `?` and says why.
+  on the backup storages; without it the column shows `?` and says why. **Upgrading:** an existing
+  API token most likely lacks it, so add the read-only `PVEAuditor` role on `/storage`
+  (`pveum acl modify /storage --tokens 'root@pam!homelab' --roles PVEAuditor`, with your token id),
+  or set `backup_max_age_hours: 0` to turn the column off.
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,
   never two jobs on the same machine at once).
 
