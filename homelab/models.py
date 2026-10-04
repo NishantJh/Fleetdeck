@@ -23,6 +23,8 @@ class Target(BaseModel):
     # Can be checked but not upgraded from here (e.g. a Proxmox node without SSH settings).
     check_only: bool = False
     note: str | None = None
+    # Why this target must not be rebooted from here (e.g. the node that runs this dashboard).
+    no_reboot: str | None = None
 
 
 class Package(BaseModel):
@@ -48,7 +50,7 @@ class ExecResult(BaseModel):
     stderr: str = ""
 
 
-JobAction = Literal["check", "upgrade"]
+JobAction = Literal["check", "upgrade", "reboot"]
 JobStatus = Literal["queued", "running", "succeeded", "failed"]
 
 
@@ -57,6 +59,8 @@ class Job(BaseModel):
     target_id: str
     target_name: str
     action: JobAction
+    # Upgrade only: reboot afterwards if the upgrade left a reboot pending.
+    reboot_if_required: bool = False
     status: JobStatus = "queued"
     created_at: datetime
     started_at: datetime | None = None

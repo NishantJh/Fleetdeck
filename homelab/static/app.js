@@ -38,10 +38,12 @@ function groups() {
 }
 
 const canUpgrade = (t) => t.updatable && !t.check_only;
+const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
+const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting" };
 
 function updatesCell(v) {
   const t = v.target;
-  if (v.active_job) return `<span class="spin"></span> ${v.active_job.action === "upgrade" ? "updating" : "checking"}…`;
+  if (v.active_job) return `<span class="spin"></span> ${BUSY[v.active_job.action] || v.active_job.action}…`;
   if (!t.updatable) return `<span class="muted">${esc(t.note || "unavailable")}</span>`;
   const c = v.check;
   if (!c) return `<span class="muted">not checked</span>`;
@@ -70,6 +72,7 @@ function rowHtml(v) {
     <td>
       <button class="small" data-act="check" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Check</button>
       <button class="small ${pending && !t.check_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy ? "" : "disabled"} title="${t.check_only ? esc(t.note) : ""}">Update</button>
+      <button class="small" data-act="reboot" data-id="${esc(t.id)}" ${canReboot(t) && !busy ? "" : "disabled"} title="${esc(t.no_reboot || (t.check_only ? t.note : ""))}">Reboot</button>
     </td></tr>`;
   if (pending && state.expanded.has(t.id)) {
     const rows = c.packages.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.current || "")}</td><td>→ ${esc(p.available)}</td></tr>`).join("");
@@ -129,11 +132,12 @@ async function load(refresh = false) {
   render();
 }
 
-async function act(action, ids) {
+async function act(action, ids, rebootIfRequired = false) {
   if (!ids.length) return;
   let res;
   try {
-    res = await api("/api/actions", { method: "POST", body: JSON.stringify({ action, target_ids: ids }) });
+    const body = { action, target_ids: ids, reboot_if_required: rebootIfRequired };
+    res = await api("/api/actions", { method: "POST", body: JSON.stringify(body) });
   } catch (e) {
     alert(`Could not start ${action}: ${e.message}`);
     return;
@@ -148,20 +152,42 @@ async function act(action, ids) {
   schedule(200);
 }
 
-function confirmUpgrade(ids) {
+const CONFIRM = {
+  upgrade: {
+    title: "Update these machines?",
+    text: "Runs a full OS upgrade (apt dist-upgrade, dnf upgrade, apk upgrade or pacman -Syu).",
+    ok: "Update",
+  },
+  reboot: {
+    title: "Reboot these machines?",
+    text: "Reboots now and waits for each machine to come back, then re-checks it. Services on it will be down meanwhile.",
+    ok: "Reboot",
+  },
+};
+
+function confirmAction(action, ids) {
   const byId = new Map(state.targets.map((v) => [v.target.id, v]));
+  const c = CONFIRM[action];
+  $("#confirm-title").textContent = c.title;
+  $("#confirm-text").textContent = c.text;
+  $("#confirm-ok").textContent = c.ok;
+  $("#confirm-reboot-row").hidden = action !== "upgrade";
+  $("#confirm-reboot").checked = false;
   $("#confirm-list").innerHTML = ids.map((id) => {
     const v = byId.get(id);
     const n = v?.check?.packages?.length;
-    return `<li>${esc(v?.target.name || id)} <span class="muted">${n != null ? `${n} package(s)` : "not checked"}</span></li>`;
+    let detail = n != null ? `${n} package(s)` : "not checked";
+    if (action === "reboot") detail = v?.check?.reboot_required ? "reboot needed" : "";
+    if (action === "upgrade" && v?.target.no_reboot) detail += ` · won't reboot: ${v.target.no_reboot}`;
+    return `<li>${esc(v?.target.name || id)} <span class="muted">${esc(detail)}</span></li>`;
   }).join("");
   const dlg = $("#confirm");
   dlg.returnValue = "";
   dlg.showModal();
   dlg.addEventListener("close", () => {
     if (dlg.returnValue !== "ok") return;
-    state.selected.clear();
-    act("upgrade", ids);
+    if (action === "upgrade") state.selected.clear();
+    act(action, ids, action === "upgrade" && $("#confirm-reboot").checked);
   }, { once: true });
 }
 
@@ -197,8 +223,8 @@ document.addEventListener("click", (e) => {
     showLog(el.dataset.job);
   } else if (el.dataset.act === "check") {
     act("check", [el.dataset.id]);
-  } else if (el.dataset.act === "upgrade") {
-    confirmUpgrade([el.dataset.id]);
+  } else if (el.dataset.act === "upgrade" || el.dataset.act === "reboot") {
+    confirmAction(el.dataset.act, [el.dataset.id]);
   }
 });
 
@@ -211,7 +237,7 @@ document.addEventListener("change", (e) => {
 
 $("#refresh").onclick = () => load(true);
 $("#check-all").onclick = () => act("check", state.targets.filter((v) => v.target.updatable).map((v) => v.target.id));
-$("#update-selected").onclick = () => confirmUpgrade([...state.selected]);
+$("#update-selected").onclick = () => confirmAction("upgrade", [...state.selected]);
 
 // Poll fast while anything is running, slowly otherwise.
 let timer;

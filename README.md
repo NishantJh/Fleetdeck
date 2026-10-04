@@ -17,7 +17,10 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
 * **Check** refreshes package lists and shows each pending package with old → new version, plus
   whether a reboot is needed.
 * **Update** runs a full upgrade (`apt-get dist-upgrade`, `dnf upgrade`, `apk upgrade`,
-  `pacman -Syu`), streams the output to the Activity panel, then re-checks. Nothing is rebooted.
+  `pacman -Syu`), streams the output to the Activity panel, then re-checks. Nothing is rebooted unless you ask.
+* **Reboot** reboots a machine, waits until it is back (its boot id changes), then re-checks it.
+  Tick *Reboot afterwards if a reboot is needed* when updating to do both in one go. A Proxmox node
+  that runs a `protect:`ed guest (the dashboard's own LXC) is never rebooted from here.
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,
   never two jobs on the same machine at once).
 

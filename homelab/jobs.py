@@ -2,16 +2,28 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 import uuid
 from collections import OrderedDict
 from datetime import UTC, datetime
 
 from .inventory import Inventory
 from .models import CheckResult, Job, JobAction, Target
-from .updates import CHECK_SCRIPT, UPGRADE_SCRIPT, parse_check, parse_reboot
+from .updates import (
+    BOOT_ID_SCRIPT,
+    CHECK_SCRIPT,
+    REBOOT_NOW_SCRIPT,
+    UPGRADE_SCRIPT,
+    parse_boot_id,
+    parse_check,
+    parse_reboot,
+)
 
 log = logging.getLogger(__name__)
 MAX_JOBS = 500
+# How long a rebooting machine gets to come back, and how often we look.
+REBOOT_TIMEOUT = 900.0
+REBOOT_POLL = 5.0
 
 
 def _now() -> datetime:
@@ -38,14 +50,19 @@ class JobManager:
                 return job
         return None
 
-    def submit(self, target_id: str, action: JobAction) -> Job:
+    def submit(self, target_id: str, action: JobAction, reboot_if_required: bool = False) -> Job:
         target, executor = self.inventory.get(target_id)
         _ensure_runnable(target, executor, action)
         existing = self.active_job(target_id)
         if existing and existing.action == action:
             return existing
         job = Job(
-            id=uuid.uuid4().hex[:12], target_id=target_id, target_name=target.name, action=action, created_at=_now()
+            id=uuid.uuid4().hex[:12],
+            target_id=target_id,
+            target_name=target.name,
+            action=action,
+            reboot_if_required=reboot_if_required and action == "upgrade",
+            created_at=_now(),
         )
         self.jobs[job.id] = job
         self._evict()
@@ -85,6 +102,8 @@ class JobManager:
                     if check.error:
                         raise RuntimeError(check.error)
                     job.log.append(f"== {len(check.packages)} update(s) available")
+                elif job.action == "reboot":
+                    await self._reboot(job, executor, on_line)
                 else:
                     job.log.append("== Running OS upgrade")
                     res = await executor.run(UPGRADE_SCRIPT, on_line)
@@ -103,6 +122,15 @@ class JobManager:
                         job.log.append(f"! re-check failed: {check.error}")
                     else:
                         job.log.append(f"== {len(check.packages)} update(s) still available")
+                    if job.reboot_if_required:
+                        # Trust the re-check when it worked; it also sees reboots pending from before.
+                        pending = check.reboot_required if not check.error else reboot
+                        if not pending:
+                            job.log.append("== No reboot needed")
+                        elif target.no_reboot:
+                            job.log.append(f"! Not rebooting: {target.no_reboot}")
+                        else:
+                            await self._reboot(job, executor, on_line)
                 job.status = "succeeded"
             except Exception as e:  # noqa: BLE001 - surface every failure in the UI
                 log.exception("job %s failed", job.id)
@@ -112,6 +140,41 @@ class JobManager:
                     self._record_check_error(job.target_id, job.error)
             finally:
                 job.finished_at = _now()
+
+    async def _reboot(self, job: Job, executor, on_line) -> None:
+        """Reboot the target, wait until it is back (a new boot id), then re-check it."""
+        before = parse_boot_id((await executor.run(BOOT_ID_SCRIPT, timeout=60)).stdout)
+        if before is None:
+            raise RuntimeError("could not read the boot id, so a reboot could not be confirmed")
+        job.log.append("== Rebooting")
+        res = await executor.run(REBOOT_NOW_SCRIPT, on_line, timeout=60)
+        if res.rc != 0:
+            raise RuntimeError(f"reboot command exited with code {res.rc}")
+        job.log.append("== Waiting for it to come back")
+        deadline = time.monotonic() + REBOOT_TIMEOUT
+        while True:
+            await asyncio.sleep(REBOOT_POLL)
+            try:
+                res = await asyncio.wait_for(executor.run(BOOT_ID_SCRIPT, timeout=30), 60)
+                now = parse_boot_id(res.stdout) if res.rc == 0 else None
+            except Exception:  # noqa: BLE001 - unreachable while it reboots
+                now = None
+            if now and now != before:
+                break
+            if time.monotonic() > deadline:
+                raise TimeoutError(f"not back after {REBOOT_TIMEOUT / 60:.0f} min")
+        job.log.append("== Back up; re-checking")
+        try:
+            check = await _check(executor)
+        except Exception as e:  # noqa: BLE001
+            check = CheckResult(checked_at=_now(), error=str(e) or type(e).__name__)
+        self.checks[job.target_id] = check
+        if check.error:
+            job.log.append(f"! re-check failed: {check.error}")
+        elif check.reboot_required:
+            job.log.append("! still reports a pending reboot")
+        else:
+            job.log.append("== Reboot finished")
 
     def _record_check_error(self, target_id: str, error: str) -> None:
         """Show a failed check as an error, keeping the OS name from the last good check."""
@@ -129,8 +192,10 @@ class JobManager:
 def _ensure_runnable(target: Target, executor, action: JobAction) -> None:
     if not target.updatable or executor is None:
         raise ValueError(f"{target.name}: {target.note or 'not updatable'}")
-    if action == "upgrade" and target.check_only:
+    if action in ("upgrade", "reboot") and target.check_only:
         raise ValueError(f"{target.name}: {target.note or 'can only be checked'}")
+    if action == "reboot" and target.no_reboot:
+        raise ValueError(f"{target.name}: {target.no_reboot}")
 
 
 async def _check(executor, on_line=None) -> CheckResult:

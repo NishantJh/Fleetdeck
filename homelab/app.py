@@ -30,6 +30,8 @@ class TargetView(BaseModel):
 class ActionRequest(BaseModel):
     action: JobAction
     target_ids: list[str]
+    # Upgrade only: reboot afterwards when the upgrade leaves a reboot pending.
+    reboot_if_required: bool = False
 
 
 def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None) -> FastAPI:
@@ -75,7 +77,7 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
         submitted, rejected = [], {}
         for tid in req.target_ids:
             try:
-                submitted.append(_light(jobs.submit(tid, req.action)))
+                submitted.append(_light(jobs.submit(tid, req.action, req.reboot_if_required)))
             except KeyError:
                 rejected[tid] = "unknown target"
             except ValueError as e:
