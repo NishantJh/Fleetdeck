@@ -21,6 +21,8 @@ from .models import ExecResult
 
 LineCallback = Callable[[str, str], None]
 DEFAULT_TIMEOUT = 3600.0
+# Fail fast on a host that is down instead of waiting for the OS TCP timeout.
+CONNECT_TIMEOUT = 15.0
 
 
 class Executor(Protocol):
@@ -46,6 +48,7 @@ class SSHExecutor:
             "username": self.cfg.user,
             # None disables host key checking; set known_hosts in config to enforce it.
             "known_hosts": self.cfg.known_hosts,
+            "connect_timeout": CONNECT_TIMEOUT,
         }
         if self.cfg.key_file:
             kw["client_keys"] = [self.cfg.key_file]
@@ -69,7 +72,8 @@ class SSHExecutor:
                     on_line(name, line.rstrip("\n"))
 
         async with asyncssh.connect(**self._connect_kwargs()) as conn:
-            proc = await conn.create_process(self._as_root(command))
+            # Package output isn't always valid UTF-8; don't let one odd byte kill an upgrade log.
+            proc = await conn.create_process(self._as_root(command), errors="replace")
             try:
                 await asyncio.wait_for(
                     asyncio.gather(pump(proc.stdout, "stdout", out), pump(proc.stderr, "stderr", err)),

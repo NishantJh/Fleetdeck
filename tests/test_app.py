@@ -49,6 +49,18 @@ def test_basic_auth():
     with TestClient(create_app(AppConfig(demo=True, auth=AuthConfig(password="s3cret")))) as client:
         assert client.get("/api/targets").status_code == 401
         assert client.get("/api/targets", auth=("admin", "s3cret")).status_code == 200
+        assert client.get("/api/targets", auth=("admin", "wrong")).status_code == 401
+        assert client.get("/api/targets", auth=("root", "s3cret")).status_code == 401
+        for header in ("Basic !!!", "Bearer abc", "Basic", "Basic \u00e9".encode("latin-1")):
+            assert client.get("/api/targets", headers={"Authorization": header}).status_code == 401
+        # The scheme is case-insensitive.
+        assert client.get("/api/targets", headers={"Authorization": "basic YWRtaW46czNjcmV0"}).status_code == 200
+
+
+def test_job_query_validation():
+    with TestClient(create_app(AppConfig(demo=True))) as client:
+        assert client.get("/api/jobs?limit=-1").status_code == 422
+        assert client.get("/api/jobs/x?since=-1").status_code == 422
 
 
 @pytest.mark.skipif(shutil.which("apt-get") is None, reason="needs a Debian-family box")

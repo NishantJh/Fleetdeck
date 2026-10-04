@@ -27,6 +27,23 @@ def test_parse_dnf():
     assert [(p.name, p.available) for p in pkgs] == [("kernel", "6.10.6-200.fc40"), ("python3-libs", "3.12.5-1.fc40")]
 
 
+def test_parse_dnf_wrapped_and_obsoleting():
+    pkgs = parse_dnf(
+        [
+            "a-very-long-package-name-that-wraps.noarch",
+            "                             1.2.3-1.fc40             updates",
+            "bash.x86_64                  5.2.26-4.fc40            updates",
+            "Obsoleting Packages",
+            "grub2-tools.x86_64           1:2.06-123.fc40          updates",
+            "    grub2-tools.x86_64       1:2.06-100.fc40          @fedora",
+        ]
+    )
+    assert [(p.name, p.available) for p in pkgs] == [
+        ("a-very-long-package-name-that-wraps", "1.2.3-1.fc40"),
+        ("bash", "5.2.26-4.fc40"),
+    ]
+
+
 def test_parse_apk():
     pkgs = parse_apk(["busybox-1.36.1-r31 x86_64 {busybox} (GPL-2.0-only) [upgradable from: busybox-1.36.1-r29]"])
     assert [(p.name, p.current, p.available) for p in pkgs] == [("busybox", "1.36.1-r29", "1.36.1-r31")]

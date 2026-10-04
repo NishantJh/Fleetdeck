@@ -22,6 +22,7 @@ PVE = {
     "/api2/json/nodes/pve/qemu/201/config": {"agent": "1", "ostype": "win11"},
     "/api2/json/nodes/pve/qemu/202/config": {"ostype": "l26"},
 }
+PVE["/api2/json/nodes/pve/qemu"].append({"vmid": 203, "name": "broken", "status": "running"})
 
 
 async def test_proxmox_discovery():
@@ -33,19 +34,34 @@ async def test_proxmox_discovery():
 
     def handler(req):
         assert req.headers["Authorization"] == "PVEAPIToken=root@pam!t=x"
+        if req.url.path not in PVE:
+            return httpx.Response(500, json={"data": None})
         return httpx.Response(200, json={"data": PVE[req.url.path]})
 
     p.client = httpx.AsyncClient(
         transport=httpx.MockTransport(handler), base_url=p.client.base_url, headers=p.client.headers
     )
     found = {t.name: t for t, _ in await p.discover()}
-    assert set(found) == {"pve", "pihole", "old", "arcane", "docker", "win11", "noagent"}
-    assert found["pve"].kind == "host" and found["pve"].updatable
+    assert set(found) == {"pve", "pihole", "old", "arcane", "docker", "win11", "noagent", "broken"}
+    assert found["pve"].kind == "host" and found["pve"].updatable and not found["pve"].check_only
+    assert not found["broken"].updatable and "VM config" in found["broken"].note
     assert found["pihole"].updatable and not found["old"].updatable
     assert not found["arcane"].updatable and "protected" in found["arcane"].note
     assert found["docker"].updatable
     assert not found["win11"].updatable and "Windows" in found["win11"].note
     assert not found["noagent"].updatable and "agent" in found["noagent"].note
+
+
+async def test_proxmox_node_without_ssh_is_check_only():
+    p = ProxmoxProvider(ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x"))
+    data = {"/api2/json/nodes": [{"node": "pve", "status": "online"}], "/api2/json/nodes/pve/lxc": []}
+    data["/api2/json/nodes/pve/qemu"] = []
+    p.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": data[req.url.path]})),
+        base_url=p.client.base_url,
+    )
+    ((host, _),) = await p.discover()
+    assert host.updatable and host.check_only
 
 
 async def test_incus_discovery_without_ssh():

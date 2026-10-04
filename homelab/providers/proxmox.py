@@ -124,6 +124,19 @@ class ProxmoxProvider:
         r.raise_for_status()
         return r.json()["data"]
 
+    async def _vm_blocker(self, node: str, vmid: int) -> str | None:
+        """Why a running VM can't be updated through the guest agent, or None if it can."""
+        try:
+            conf = await self._get(f"/nodes/{node}/qemu/{vmid}/config")
+        except httpx.HTTPError as e:
+            # One unreadable VM shouldn't hide the rest of the node.
+            return f"could not read VM config: {e}"
+        if str(conf.get("ostype", "")).startswith("w"):
+            return "Windows guests are not supported yet"
+        if not str(conf.get("agent", "0")).startswith(("1", "enabled=1")):
+            return "QEMU guest agent is not enabled"
+        return None
+
     async def discover(self) -> Discovered:
         found: Discovered = []
         for node in await self._get("/nodes"):
@@ -140,7 +153,8 @@ class ProxmoxProvider:
                 kind="host",
                 status=node.get("status", "unknown"),
                 updatable=online,
-                note=None if ssh else "check only: add ssh settings to upgrade this node",
+                check_only=ssh is None,
+                note=(None if ssh else "check only: add ssh settings to upgrade this node") if online else "offline",
             )
             found.append((host, PveNodeExecutor(self.client, nname, ssh)))
             if not online:
@@ -178,11 +192,8 @@ class ProxmoxProvider:
                 if vmid in self.cfg.protect:
                     updatable, note = False, PROTECTED_NOTE
                 elif running:
-                    conf = await self._get(f"/nodes/{nname}/qemu/{vmid}/config")
-                    if str(conf.get("ostype", "")).startswith("w"):
-                        updatable, note = False, "Windows guests are not supported yet"
-                    elif not str(conf.get("agent", "0")).startswith(("1", "enabled=1")):
-                        updatable, note = False, "QEMU guest agent is not enabled"
+                    note = await self._vm_blocker(nname, vmid)
+                    updatable = note is None
                 t = Target(
                     id=f"{prefix}:vm:{vmid}",
                     name=vm.get("name") or f"vm{vmid}",

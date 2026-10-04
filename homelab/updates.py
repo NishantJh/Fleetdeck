@@ -25,7 +25,7 @@ from .models import CheckResult, ExecResult, Package
 
 _PRELUDE = r"""
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
-export DEBIAN_FRONTEND=noninteractive
+export DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none
 export LC_ALL=C
 if command -v apt-get >/dev/null 2>&1; then PM=apt
 elif command -v dnf >/dev/null 2>&1; then PM=dnf
@@ -69,10 +69,15 @@ case "$PM" in
     apk -u list 2>/dev/null
     echo "__END__" ;;
   pacman)
+    # Never `pacman -Sy` the real database without upgrading (a partial upgrade); sync a copy
+    # instead, which is what checkupdates does.
+    db=$(mktemp -d)
+    ln -s /var/lib/pacman/local "$db/local"
+    pacman -Sy --dbpath "$db" --logfile /dev/null >&2 || rc=$?
     echo "__BEGIN__"
-    if command -v checkupdates >/dev/null 2>&1; then checkupdates 2>/dev/null
-    else pacman -Sy >&2 && pacman -Qu 2>/dev/null; fi
-    echo "__END__" ;;
+    pacman -Qu --dbpath "$db" 2>/dev/null
+    echo "__END__"
+    rm -rf "$db" ;;
   *)
     echo "No supported package manager found" >&2
     exit 3 ;;
@@ -135,10 +140,22 @@ def parse_apt(lines: list[str]) -> list[Package]:
 
 def parse_dnf(lines: list[str]) -> list[Package]:
     out = []
+    pending = ""
     for line in lines:
-        if line.startswith(("Obsoleting", "Last metadata", "Security:")) or line.startswith(" "):
+        if line.startswith("Obsoleting"):
+            break  # what follows repeats packages already listed above, plus the ones they replace
+        if line.startswith(("Last metadata", "Security:")):
             continue
+        if line.startswith(" "):
+            # dnf wraps long package names: the version and repo continue on the next line.
+            if not pending:
+                continue
+            line, pending = f"{pending} {line}", ""
         parts = line.split()
+        if len(parts) == 1:
+            pending = parts[0]
+            continue
+        pending = ""
         if len(parts) == 3 and "." in parts[0]:
             name = parts[0].rsplit(".", 1)[0]
             out.append(Package(name=name, available=parts[1]))
