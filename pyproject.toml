@@ -8,6 +8,7 @@ dependencies = [
   "uvicorn[standard]>=0.31",  # 0.31 added CIDR ranges in forwarded_allow_ips
   "httpx>=0.27",
   "asyncssh>=2.14",
+  "cryptography>=42",
   "pydantic>=2.6",
   "PyYAML>=6.0",
 ]

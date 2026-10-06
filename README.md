@@ -106,8 +106,14 @@ For a VPS:
 ### Security
 
 This app can run commands as root on everything it manages. Keep it on your LAN or behind a VPN,
-and set `known_hosts` so SSH host keys are verified.
+and set `auth:` in the config.
 
+* **SSH host keys are always checked.** Put every machine's key in `config/known_hosts`
+  (`ssh-keyscan`, see below) and set the top-level `known_hosts:`. A machine without one is refused
+  with a message saying so; `insecure_skip_host_key_check: true` on that entry opts out.
+* **Proxmox and Incus certificates:** set `tls_fingerprint` (shown in the example config) rather than
+  `verify_ssl: false`. It pins the exact certificate, works with the self-signed ones both ship and
+  with IP addresses, and the dashboard warns at start-up about any API with checking off.
 * `auth:` is required once real machines are configured (the dashboard refuses to start without
   it, unless you set `allow_no_auth: true` because a proxy in front does the login). Repeated wrong
   passwords lock that IP out for 5 minutes.
@@ -121,6 +127,22 @@ and set `known_hosts` so SSH host keys are verified.
   `Host` header, because `allowed_hosts` and the cross-site check compare against it. Caddy and
   Traefik do this by default; with nginx add `proxy_set_header Host $host;`.
 * Cross-site form posts are refused, and the page can't be framed by another site.
+
+### Upgrading from a version without host key checks
+
+SSH connections are now refused unless the machine's host key is known, so before updating the
+image (or right after; affected machines show "SSH host key unknown" and can't be updated until
+then):
+
+```bash
+# Every machine in config.yaml, and for a Proxmox cluster every node's cluster IP too.
+ssh-keyscan 192.168.1.10 192.168.1.11 192.168.1.20 192.168.1.30 my-vps.example.com > config/known_hosts
+ssh-keygen -lf config/known_hosts   # compare with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on each
+```
+
+Then add `known_hosts: /config/known_hosts` at the top of `config.yaml`. Optionally add
+`tls_fingerprint` to each Proxmox/Incus entry (see the example config) so the API certificate is
+pinned too.
 
 ## Development
 
