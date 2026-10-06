@@ -26,7 +26,7 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 - [x] Persist check results and job history (SQLite) so restarts don't lose state
 - [ ] Snapshot before upgrade (Proxmox `vzdump`/snapshot, `incus snapshot create`), with rollback button
 - [x] Reboot action, and "reboot if required" option after upgrade
-- [ ] Scheduled checks plus notifications (ntfy, Discord, email) when updates are pending
+- [x] Scheduled checks plus notifications (ntfy, Gotify, Discord, Telegram, webhook) when updates are pending
 - [ ] Per-target holds (skip kernel / Proxmox major upgrades)
 - [ ] Optional SSH for VMs that don't run the guest agent
 - [ ] Run upgrades detached on the target (e.g. `systemd-run`) so they survive a dashboard restart; then `protect:` is no longer needed for the dashboard's own LXC
