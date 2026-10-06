@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { targets: [], errors: {}, settings: {}, jobs: [], selected: new Set(), expanded: new Set(), logJob: null, logLines: [] };
+const state = { targets: [], errors: {}, settings: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), logJob: null, logLines: [] };
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const PLATFORM = { proxmox: "Proxmox", incus: "Incus", ssh: "Standalone", demo: "Demo" };
@@ -21,6 +21,28 @@ function ago(iso) {
   return `${Math.round(s / 86400)} d ago`;
 }
 
+function until(iso) {
+  const s = Math.round((new Date(iso) - Date.now()) / 1000);
+  if (s < 60) return "in under a minute";
+  if (s < 3600) return `in ${Math.round(s / 60)} min`;
+  if (s < 86400) return `in ${Math.round(s / 3600)} h`;
+  return `in ${Math.round(s / 86400)} d`;
+}
+
+function every(seconds) {
+  if (seconds % 86400 === 0) return `${seconds / 86400} d`;
+  if (seconds % 3600 === 0) return `${seconds / 3600} h`;
+  return `${Math.round(seconds / 60)} min`;
+}
+
+function scheduleStat() {
+  const sc = state.schedule;
+  if (!sc?.check_every) return `<div class="stat" title="Set schedule.check_every in config.yaml"><b>off</b><span class="muted">auto-check</span></div>`;
+  const next = sc.next_run ? until(sc.next_run) : "running now";
+  const notify = sc.notify_targets ? `notifies ${sc.notify_targets} target${sc.notify_targets > 1 ? "s" : ""}` : "no notifications set up";
+  return `<div class="stat" title="Every ${every(sc.check_every)}; ${notify}"><b>${next}</b><span class="muted">next auto-check</span></div>`;
+}
+
 function groupKey(t) {
   if (t.platform === "ssh") return "ssh";
   return `${t.platform}:${t.source}:${t.parent || t.name}`;
@@ -38,10 +60,12 @@ function groups() {
 }
 
 const canUpgrade = (t) => t.updatable && !t.check_only;
+const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
+const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back" };
 
 function updatesCell(v) {
   const t = v.target;
-  if (v.active_job) return `<span class="spin"></span> ${{ upgrade: "updating", rollback: "rolling back" }[v.active_job.action] || "checking"}…`;
+  if (v.active_job) return `<span class="spin"></span> ${BUSY[v.active_job.action] || v.active_job.action}…`;
   if (!t.updatable) return `<span class="muted">${esc(t.note || "unavailable")}</span>`;
   const c = v.check;
   if (!c) return `<span class="muted">not checked</span>`;
@@ -49,10 +73,30 @@ function updatesCell(v) {
   const n = c.packages.length;
   if (n === 0) return `<span class="ok">up to date</span>`;
   const open = state.expanded.has(t.id);
-  return `<button class="small" data-toggle="${esc(t.id)}">${n} update${n > 1 ? "s" : ""} ${open ? "▴" : "▾"}</button>`;
+  const sec = c.packages.filter((p) => p.security).length;
+  const secChip = sec ? ` <span class="chip sec" title="From a security repository">${sec} security</span>` : "";
+  return `<button class="small" data-toggle="${esc(t.id)}">${n} update${n > 1 ? "s" : ""} ${open ? "▴" : "▾"}</button>${secChip}`;
 }
 
-function rowHtml(v) {
+function backupCell(t) {
+  const b = t.backup;
+  if (!b) return "";
+  let html;
+  if (b.last) {
+    const tip = `${new Date(b.last).toLocaleString()} on ${b.storage} · ${b.count} backup${b.count > 1 ? "s" : ""}`;
+    html = `<span class="${b.stale ? "warn" : ""}" title="${esc(tip)}">${ago(b.last)}</span>`;
+  } else if (b.note) {
+    html = `<span class="muted" title="${esc(b.note)}">?</span>`;
+  } else {
+    html = `<span class="bad">none</span>`;
+  }
+  if (b.verified === false) html += ` <span class="chip bad" title="The newest backup failed verification">verify failed</span>`;
+  if (b.in_job === false) html += ` <span class="chip warn" title="Not in any scheduled backup job">no job</span>`;
+  if (b.last && b.note) html += ` <span class="muted" title="${esc(b.note)}">ⓘ</span>`;
+  return html;
+}
+
+function rowHtml(v, withBackup) {
   const t = v.target, c = v.check;
   const busy = !!v.active_job;
   const reboot = c?.reboot_required ? `<span class="warn">reboot needed</span>` : "";
@@ -65,15 +109,19 @@ function rowHtml(v) {
     <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
     <td class="muted">${esc(c?.os || "")}</td>
     <td>${esc(t.status)}</td>
+    ${withBackup ? `<td>${backupCell(t)}</td>` : ""}
     <td>${updatesCell(v)} ${reboot}${notes}</td>
     <td class="muted">${c ? ago(c.checked_at) : ""}</td>
     <td>
       <button class="small" data-act="check" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Check</button>
       <button class="small ${pending && !t.check_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy ? "" : "disabled"} title="${t.check_only ? esc(t.note) : ""}">Update</button>
+      <button class="small" data-act="reboot" data-id="${esc(t.id)}" ${canReboot(t) && !busy ? "" : "disabled"} title="${esc(t.no_reboot || (t.check_only ? t.note : ""))}">Reboot</button>
     </td></tr>`;
   if (pending && state.expanded.has(t.id)) {
-    const rows = c.packages.map((p) => `<tr><td>${esc(p.name)}</td><td>${esc(p.current || "")}</td><td>→ ${esc(p.available)}</td></tr>`).join("");
-    html += `<tr class="pkgs"><td></td><td colspan="6"><table>${rows}</table></td></tr>`;
+    // Security updates first, so they stand out in a long list.
+    const pkgs = [...c.packages].sort((a, b) => b.security - a.security);
+    const rows = pkgs.map((p) => `<tr><td>${esc(p.name)}${p.security ? ` <span class="chip sec">security</span>` : ""}</td><td>${esc(p.current || "")}</td><td>→ ${esc(p.available)}</td></tr>`).join("");
+    html += `<tr class="pkgs"><td></td><td colspan="${withBackup ? 7 : 6}"><table>${rows}</table></td></tr>`;
   }
   return html;
 }
@@ -85,22 +133,33 @@ function render() {
   const updatable = state.targets.filter((v) => v.target.updatable);
   const pending = updatable.filter((v) => v.check && !v.check.error && v.check.packages.length);
   const pkgCount = pending.reduce((n, v) => n + v.check.packages.length, 0);
+  const secMachines = pending.filter((v) => v.check.packages.some((p) => p.security)).length;
   const reboot = updatable.filter((v) => v.check?.reboot_required).length;
   const unchecked = updatable.filter((v) => !v.check).length;
+  // Leave out guests whose backups couldn't be read (a note but no date): unknown isn't "fine".
+  const withBackups = state.targets.filter((v) => v.target.backup && (v.target.backup.last || !v.target.backup.note));
+  const staleBackups = withBackups.filter((v) => v.target.backup.stale || v.target.backup.verified === false).length;
   $("#summary").innerHTML = `
     <div class="stat"><b>${updatable.length}</b><span class="muted">machines</span></div>
     <div class="stat"><b class="${pending.length ? "warn" : "ok"}">${pending.length}</b><span class="muted">need updates (${pkgCount} pkgs)</span></div>
+    <div class="stat"><b class="${secMachines ? "bad" : ""}">${secMachines}</b><span class="muted">have security updates</span></div>
     <div class="stat"><b class="${reboot ? "warn" : ""}">${reboot}</b><span class="muted">need a reboot</span></div>
-    <div class="stat"><b>${unchecked}</b><span class="muted">not checked yet</span></div>`;
+    <div class="stat"><b>${unchecked}</b><span class="muted">not checked yet</span></div>
+    ${withBackups.length ? `<div class="stat"><b class="${staleBackups ? "warn" : "ok"}">${staleBackups}</b><span class="muted">guests with old or no backups</span></div>` : ""}
+    ${scheduleStat()}`;
+  $("#test-notify").hidden = !state.schedule?.notify_targets;
 
-  $("#groups").innerHTML = groups().map((g) => `
+  $("#groups").innerHTML = groups().map((g) => {
+    const withBackup = g.rows.some((v) => v.target.backup);
+    return `
     <div class="group">
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
       <table>
-        <thead><tr><th></th><th>Name</th><th>OS</th><th>State</th><th>Updates</th><th>Checked</th><th></th></tr></thead>
-        <tbody>${g.rows.map(rowHtml).join("")}</tbody>
+        <thead><tr><th></th><th>Name</th><th>OS</th><th>State</th>${withBackup ? "<th>Last backup</th>" : ""}<th>Updates</th><th>Checked</th><th></th></tr></thead>
+        <tbody>${g.rows.map((v) => rowHtml(v, withBackup)).join("")}</tbody>
       </table>
-    </div>`).join("") || `<p class="muted">No targets yet. Add Proxmox, Incus or SSH hosts to config.yaml.</p>`;
+    </div>`;
+  }).join("") || `<p class="muted">No targets yet. Add Proxmox, Incus or SSH hosts to config.yaml.</p>`;
 
   const btn = $("#update-selected");
   btn.disabled = state.selected.size === 0;
@@ -121,6 +180,7 @@ async function load(refresh = false) {
     state.errors = data.errors;
     state.settings = data.settings || {};
     state.jobs = await api("/api/jobs");
+    state.schedule = await api("/api/schedule");
     // Drop selections for targets that disappeared or can no longer be upgraded.
     const selectable = new Set(state.targets.filter((v) => canUpgrade(v.target)).map((v) => v.target.id));
     for (const id of state.selected) if (!selectable.has(id)) state.selected.delete(id);
@@ -130,11 +190,11 @@ async function load(refresh = false) {
   render();
 }
 
-async function act(action, ids, snapshotFirst = false) {
+async function act(action, ids, { rebootIfRequired = false, snapshotFirst = false } = {}) {
   if (!ids.length) return;
   let res;
   try {
-    const body = { action, target_ids: ids, snapshot_first: snapshotFirst };
+    const body = { action, target_ids: ids, reboot_if_required: rebootIfRequired, snapshot_first: snapshotFirst };
     res = await api("/api/actions", { method: "POST", body: JSON.stringify(body) });
   } catch (e) {
     alert(`Could not start ${action}: ${e.message}`);
@@ -150,14 +210,43 @@ async function act(action, ids, snapshotFirst = false) {
   schedule(200);
 }
 
-function confirmUpgrade(ids) {
+const CONFIRM = {
+  upgrade: {
+    title: "Update these machines?",
+    text: "Runs a full OS upgrade (apt dist-upgrade, dnf upgrade, apk upgrade or pacman -Syu).",
+    ok: "Update",
+  },
+  reboot: {
+    title: "Reboot these machines?",
+    text: "Reboots now and waits for each machine to come back, then re-checks it. Services on it will be down meanwhile.",
+    ok: "Reboot",
+  },
+};
+
+function confirmAction(action, ids) {
   const byId = new Map(state.targets.map((v) => [v.target.id, v]));
+  const c = CONFIRM[action];
+  $("#confirm-title").textContent = c.title;
+  $("#confirm-text").textContent = c.text;
+  $("#confirm-ok").textContent = c.ok;
+  $("#confirm-reboot-row").hidden = action !== "upgrade";
+  $("#confirm-reboot").checked = false;
   $("#confirm-list").innerHTML = ids.map((id) => {
     const v = byId.get(id);
     const n = v?.check?.packages?.length;
-    return `<li>${esc(v?.target.name || id)} <span class="muted">${n != null ? `${n} package(s)` : "not checked"}</span></li>`;
+    let detail = n != null ? `${n} package(s)` : "not checked";
+    if (action === "reboot") {
+      detail = v?.check?.reboot_required ? "reboot needed" : "";
+      const t = v?.target;
+      const guests = t?.kind === "host"
+        ? state.targets.filter((g) => g.target.parent === t.name && g.target.source === t.source && g.target.status === "running").length : 0;
+      // Waits for running guest jobs first, but the guests themselves go down with it.
+      if (guests) detail += `${detail ? " · " : ""}and every guest running on it (${guests})`;
+    }
+    if (action === "upgrade" && v?.target.no_reboot) detail += ` · won't reboot: ${v.target.no_reboot}`;
+    return `<li>${esc(v?.target.name || id)} <span class="muted">${esc(detail)}</span></li>`;
   }).join("");
-  const snapshottable = ids.some((id) => byId.get(id)?.target.can_snapshot);
+  const snapshottable = action === "upgrade" && ids.some((id) => byId.get(id)?.target.can_snapshot);
   $("#confirm-snapshot-row").hidden = !snapshottable;
   $("#confirm-snapshot").checked = snapshottable && !!state.settings.snapshot_before_upgrade;
   const dlg = $("#confirm");
@@ -165,8 +254,12 @@ function confirmUpgrade(ids) {
   dlg.showModal();
   dlg.addEventListener("close", () => {
     if (dlg.returnValue !== "ok") return;
-    state.selected.clear();
-    act("upgrade", ids, $("#confirm-snapshot").checked);
+    if (action === "upgrade") state.selected.clear();
+    const upgrade = action === "upgrade";
+    act(action, ids, {
+      rebootIfRequired: upgrade && $("#confirm-reboot").checked,
+      snapshotFirst: upgrade && $("#confirm-snapshot").checked,
+    });
   }, { once: true });
 }
 
@@ -209,8 +302,8 @@ document.addEventListener("click", (e) => {
     showLog(el.dataset.job);
   } else if (el.dataset.act === "check") {
     act("check", [el.dataset.id]);
-  } else if (el.dataset.act === "upgrade") {
-    confirmUpgrade([el.dataset.id]);
+  } else if (el.dataset.act === "upgrade" || el.dataset.act === "reboot") {
+    confirmAction(el.dataset.act, [el.dataset.id]);
   }
 });
 
@@ -222,6 +315,15 @@ document.addEventListener("change", (e) => {
 });
 
 $("#refresh").onclick = () => load(true);
+$("#test-notify").onclick = async () => {
+  try {
+    const r = await api("/api/notify/test", { method: "POST" });
+    const failed = Object.entries(r.errors);
+    alert(failed.length ? `Sent to ${r.sent}. Failed:\n${failed.map(([n, e]) => `${n}: ${e}`).join("\n")}` : `Sent to ${r.sent} target(s).`);
+  } catch (e) {
+    alert(`Could not send: ${e.message}`);
+  }
+};
 $("#rollback").onclick = async (e) => {
   const { rollbackJob: job, snapshot, name } = e.currentTarget.dataset;
   if (!confirm(`Roll ${name} back to snapshot ${snapshot}? Everything changed on it since the snapshot is lost.`)) return;
@@ -235,7 +337,7 @@ $("#rollback").onclick = async (e) => {
   }
 };
 $("#check-all").onclick = () => act("check", state.targets.filter((v) => v.target.updatable).map((v) => v.target.id));
-$("#update-selected").onclick = () => confirmUpgrade([...state.selected]);
+$("#update-selected").onclick = () => confirmAction("upgrade", [...state.selected]);
 
 // Poll fast while anything is running, slowly otherwise.
 let timer;

@@ -1,9 +1,19 @@
 # Copy to config.yaml and fill in. ${VARS} are read from the environment.
 
-# Basic auth for the dashboard. Leave it on: this app can run commands as root on your lab.
+# Basic auth for the dashboard. Required: this app can run commands as root on your lab. (If a
+# proxy in front already does the login, `allow_no_auth: true` lets it start without.)
+# 10 wrong passwords from one IP within 5 minutes lock that IP out for 5 minutes.
 auth:
   username: admin
   password: ${HOMELAB_PASSWORD}
+
+# The names/IPs you open the dashboard by. Anything else is refused (stops DNS rebinding).
+# Keep localhost in the list if you open it on the machine itself or a health check does.
+# allowed_hosts: ["192.168.1.50", "homelab.lan", "localhost", "127.0.0.1"]
+
+# Behind a reverse proxy (Caddy, Traefik, nginx)? List its address so the login lockout sees each
+# visitor's own IP instead of the proxy's. The proxy must also pass the original Host header.
+# trusted_proxies: ["172.18.0.0/16"]
 
 # How many machines may be checked/updated at once.
 max_parallel: 4
@@ -13,23 +23,62 @@ max_parallel: 4
 # (ZFS, LVM-thin, Ceph, qcow2) and VM.Snapshot + VM.Snapshot.Rollback on the token.
 snapshot_before_upgrade: true
 snapshot_keep: 3
+# Check every machine on a timer (e.g. 30m, 6h, 1d; at least 5m). Nothing is ever upgraded
+# automatically; you get a notification when something new is pending.
+schedule:
+  check_every: 6h
+
+# Linked from notifications.
+# public_url: http://192.168.1.50:8080
+
+# Where to send "updates available" messages. Only new things are announced: an update that
+# wasn't pending at the last scheduled check, a new pending reboot, or a check that started failing.
+notify: []
+#  - type: ntfy
+#    url: https://ntfy.sh/my-homelab-topic
+#    token: ${NTFY_TOKEN} # only for protected topics
+#  - type: gotify
+#    url: https://gotify.example.com
+#    token: ${GOTIFY_APP_TOKEN}
+#  - type: discord
+#    url: ${DISCORD_WEBHOOK_URL}
+#  - type: telegram
+#    token: ${TELEGRAM_BOT_TOKEN}
+#    chat_id: "123456789"
+#  - type: webhook # JSON POST: {"title", "message", "url"}
+#    url: https://example.com/hook
+
+# Where check results and job history are saved, so a restart doesn't lose them.
+# The Docker image already sets this to /data/state.db (HOMELAB_STATE); omit to keep state in memory.
+# A relative path is relative to this file.
+# state_file: ./data/state.db
+
+# SSH host keys of every machine (`ssh-keyscan host1 host2 ... > config/known_hosts`). Every SSH entry
+# uses this unless it names its own; a machine with neither is refused. A Proxmox cluster already
+# keeps all its nodes' keys in /etc/pve/priv/known_hosts. Include each node's cluster IP (the address
+# in Datacenter > Cluster), since that is what other nodes are reached by.
+known_hosts: /config/known_hosts
 
 proxmox:
   - name: pve
     api_url: https://192.168.1.10:8006
     # Datacenter > Permissions > API Tokens. Needs VM.Audit + Sys.Audit to list guests,
     # Sys.Modify on /nodes to refresh the host's package lists through PVE,
-    # VM.GuestAgent.Unrestricted (PVE 9) / VM.Monitor (PVE 8) to update VMs via the guest agent,
+    # and VM.GuestAgent.Unrestricted (PVE 9) / VM.Monitor (PVE 8) to update VMs via the guest agent,
     # and VM.Snapshot + VM.Snapshot.Rollback for snapshots before upgrades.
-    token_id: root@pam!homelab
+    # Use a dedicated user rather than root (README, "Least privilege for the Proxmox token").
+    token_id: homelab@pve!dashboard
     token_secret: ${PVE_TOKEN_SECRET}
-    verify_ssl: false # or a path to your CA bundle
+    # Pins the node's TLS certificate. On the node, run
+    #   openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256
+    # (use pveproxy-ssl.pem instead if you uploaded your own certificate), or copy it from
+    # Node > System > Certificates, and put yours here.
+    # tls_fingerprint: "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF"
     # SSH to the node: upgrades the host itself and runs `pct exec` inside LXCs.
     ssh:
       host: 192.168.1.10
       user: root
       key_file: /config/id_ed25519
-      known_hosts: /config/known_hosts # omit to skip host key checks
     # Cluster? Other nodes are reached at their cluster IP (from /cluster/status) with the same
     # SSH settings. If that network isn't reachable from here, give each node its own settings:
     # node_ssh:
@@ -38,15 +87,19 @@ proxmox:
     # VMIDs shown but never updated from here: put the LXC that runs this dashboard here,
     # otherwise upgrading Docker inside it restarts the dashboard mid-upgrade.
     protect: [] # e.g. [105]
+    # Flag guests whose newest backup is older than this (0 = don't track backups). Needs
+    # Datastore.Audit on /storage for the token.
+    backup_max_age_hours: 48
 
 incus:
   - name: incus01
-    # Remote API: `incus config set core.https_address :8443`, then trust the client cert:
-    # `incus config trust add-certificate client.crt`
+    # Remote API: `incus config set core.https_address :8443`, then trust the client cert for the
+    # projects you use only: `incus config trust add-certificate client.crt --restricted --projects default`
     url: https://192.168.1.20:8443
     client_cert: /config/incus-client.crt
     client_key: /config/incus-client.key
-    verify_ssl: false
+    # Pins the server certificate: `incus info | grep certificate_fingerprint` on the Incus host.
+    # tls_fingerprint: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
     # Or, if the dashboard runs on the Incus host itself:
     # socket: /var/lib/incus/unix.socket
     ssh:
@@ -67,5 +120,7 @@ hosts:
     port: 22
     user: ubuntu
     key_file: /config/id_ed25519
-    known_hosts: /config/known_hosts # strongly recommended for anything on the internet
     sudo: true
+  # - name: old-box
+  #   host: 192.168.1.40
+  #   insecure_skip_host_key_check: true # accept any host key; anyone on the path can pose as it

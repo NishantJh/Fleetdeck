@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import random
+import uuid
+from datetime import UTC, datetime, timedelta
 
-from ..models import ExecResult, Target
-from ..updates import CHECK_SCRIPT
+from ..models import BackupInfo, ExecResult, Target
+from ..updates import BOOT_ID_SCRIPT, CHECK_SCRIPT, REBOOT_NOW_SCRIPT
 from . import Discovered
 
 _APT = [
@@ -44,13 +46,20 @@ class DemoSnapshots:
 class DemoExecutor:
     def __init__(self, pm: str, os_name: str, lines: list[str]):
         self.pm, self.os_name, self.lines = pm, os_name, lines
+        self.boot_id = uuid.uuid4().hex
+        self.reboot_pending = any("kernel" in line for line in lines)
 
     async def run(self, script, on_line=None, timeout=3600) -> ExecResult:
         await asyncio.sleep(random.uniform(0.3, 1.2))
         head = f"__PM__={self.pm}\n__OS__={self.os_name}\n"
+        if script == BOOT_ID_SCRIPT:
+            return ExecResult(rc=0, stdout=f"__BOOT__={self.boot_id}\n")
+        if script == REBOOT_NOW_SCRIPT:
+            self.boot_id, self.reboot_pending = uuid.uuid4().hex, False
+            return ExecResult(rc=0, stdout="== Reboot scheduled (demo)\n")
+        reboot = "yes" if self.reboot_pending else "no"
         if script == CHECK_SCRIPT:
             body = "\n".join(self.lines)
-            reboot = "yes" if any("kernel" in line for line in self.lines) else "no"
             return ExecResult(rc=0, stdout=f"{head}__BEGIN__\n{body}\n__END__\n__REBOOT__={reboot}\n")
         for line in self.lines:
             name = line.split("/")[0].split(" ")[0]
@@ -60,7 +69,7 @@ class DemoExecutor:
             if on_line:
                 on_line("stdout", f"Setting up {name} ...")
         self.lines = []
-        return ExecResult(rc=0, stdout=f"{head}__REBOOT__=no\n")
+        return ExecResult(rc=0, stdout=f"{head}__REBOOT__={reboot}\n")
 
 
 class DemoProvider:
@@ -84,6 +93,12 @@ class DemoProvider:
             ("incus", "fedora-vm", "vm", "incus01", "dnf", "Fedora Linux 40", []),
             ("ssh", "pi4", "host", None, "apt", "Raspberry Pi OS (Debian 12)", _APT[:3]),
         ]
+        now = datetime.now(UTC)
+        backups = {
+            "pihole": BackupInfo(last=now - timedelta(hours=5), storage="pbs", count=14, in_job=True, verified=True),
+            "alpine-dns": BackupInfo(last=now - timedelta(days=4), storage="local", count=3, stale=True, in_job=True),
+            "docker-vm": BackupInfo(stale=True, in_job=False),
+        }
         found: Discovered = []
         for platform, name, kind, parent, pm, os_name, lines in items:
             t = Target(
@@ -93,6 +108,7 @@ class DemoProvider:
                 source="demo",
                 kind=kind,  # type: ignore[arg-type]
                 parent=parent,
+                backup=backups.get(name),
                 can_snapshot=kind != "host" and platform != "ssh",
             )
             ex = DemoExecutor(pm, os_name, list(lines))

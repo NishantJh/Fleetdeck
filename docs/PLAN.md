@@ -23,10 +23,10 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 - [x] Basic auth, Docker image on GHCR (amd64/arm64), Arcane-ready compose, demo mode, CI
 
 ### 2. Make updates safe and hands-off
-- [ ] Persist check results and job history (SQLite) so restarts don't lose state
+- [x] Persist check results and job history (SQLite) so restarts don't lose state
 - [x] Snapshot before upgrade (Proxmox snapshot, Incus snapshot), with rollback button
-- [ ] Reboot action, and "reboot if required" option after upgrade
-- [ ] Scheduled checks plus notifications (ntfy, Discord, email) when updates are pending
+- [x] Reboot action, and "reboot if required" option after upgrade
+- [x] Scheduled checks plus notifications (ntfy, Gotify, Discord, Telegram, webhook) when updates are pending
 - [ ] Per-target holds (skip kernel / Proxmox major upgrades)
 - [ ] Optional SSH for VMs that don't run the guest agent
 - [ ] Run upgrades detached on the target (e.g. `systemd-run`) so they survive a dashboard restart; then `protect:` is no longer needed for the dashboard's own LXC
@@ -35,5 +35,6 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 - [ ] Live resource view (CPU/RAM/disk) for nodes and guests
 - [ ] Start/stop/restart guests
 - [ ] Docker/Compose stacks inside guests: image update checks
-- [ ] Backup status (Proxmox Backup Server)
+- [x] Backup status: last backup per guest (vzdump/PBS), stale, not in a job, failed verification
+- [ ] Notify when a backup goes stale
 - [ ] Proper login (OIDC) instead of basic auth

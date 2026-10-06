@@ -11,6 +11,7 @@
     <h1>Homelab Manager</h1>
     <div class="toolbar">
       <button id="refresh" title="Re-discover hosts and guests">Refresh inventory</button>
+      <button id="test-notify" hidden title="Send a test message to every notify target">Test notification</button>
       <button id="check-all">Check all</button>
       <button id="update-selected" class="primary" disabled>Update selected</button>
     </div>
@@ -38,13 +39,14 @@
 
   <dialog id="confirm">
     <form method="dialog">
-      <h3>Update these machines?</h3>
-      <p class="muted">Runs a full OS upgrade (apt dist-upgrade, dnf upgrade, apk upgrade or pacman -Syu). Nothing is rebooted.</p>
+      <h3 id="confirm-title">Update these machines?</h3>
+      <p id="confirm-text" class="muted"></p>
       <ul id="confirm-list"></ul>
+      <label id="confirm-reboot-row" class="check-row"><input type="checkbox" id="confirm-reboot"> Reboot afterwards if a reboot is needed</label>
       <label id="confirm-snapshot-row" class="check-row"><input type="checkbox" id="confirm-snapshot"> Snapshot Proxmox/Incus guests first, so the upgrade can be rolled back</label>
       <menu>
         <button value="cancel">Cancel</button>
-        <button value="ok" class="primary">Update</button>
+        <button value="ok" id="confirm-ok" class="primary">Update</button>
       </menu>
     </form>
   </dialog>

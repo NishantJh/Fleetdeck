@@ -1,19 +1,38 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
 from ..config import ProxmoxConfig, SSHConfig
 from ..executors import DEFAULT_TIMEOUT, LineCallback, PctExecutor, PveAgentExecutor, SSHExecutor
-from ..models import CheckResult, ExecResult, Package, Target
+from ..models import BackupInfo, CheckResult, ExecResult, Package, Target
 from ..snapshots import PveSnapshots
-from ..updates import REBOOT_SCRIPT, parse_reboot
+from ..tls import PinnedTransport
+from ..updates import REBOOT_SCRIPT, parse_apt, parse_reboot
 from . import Discovered
 
+log = logging.getLogger(__name__)
+# The PVE API doesn't say which suite an update comes from; apt does, after the API's refresh.
+APT_LIST_SCRIPT = "LC_ALL=C apt list --upgradable 2>/dev/null"
 PROTECTED_NOTE = "protected: runs this dashboard, update it from its own console"
+# Listing backup storages (PBS in particular) is slow, so it is done less often than discovery.
+BACKUP_TTL = 300.0
+NO_BACKUP_STORAGE = "the API token can't see any backup storage (it needs Datastore.Audit on /storage)"
+
+
+@dataclass
+class BackupIndex:
+    """Backups found on all storages, by VMID."""
+
+    latest: dict[int, tuple[datetime, str, bool | None]] = field(default_factory=dict)
+    counts: dict[int, int] = field(default_factory=dict)
+    not_in_job: set[int] | None = None  # None: unknown
+    note: str | None = None
 
 
 class PveNodeExecutor:
@@ -98,6 +117,12 @@ class PveNodeExecutor:
                 reboot = parse_reboot((await self.ssh.run(REBOOT_SCRIPT, timeout=60)).stdout)
             except Exception as e:  # informational only; don't fail the check
                 say(f"! could not check for a pending reboot: {e}")
+            try:
+                res = await self.ssh.run(APT_LIST_SCRIPT, timeout=60)
+                security = {p.name for p in parse_apt(res.stdout.splitlines()) if p.security}
+                packages = [p.model_copy(update={"security": p.name in security}) for p in packages]
+            except Exception as e:  # noqa: BLE001 - informational only
+                say(f"! could not tell which updates are security updates: {e}")
         return CheckResult(
             package_manager="apt (via PVE)",
             os=os_name,
@@ -120,11 +145,14 @@ class ProxmoxProvider:
     def __init__(self, cfg: ProxmoxConfig):
         self.cfg = cfg
         self.name = cfg.name
+        self._backups: BackupIndex | None = None
+        self._backups_at = 0.0
         self.snapshots: dict[str, PveSnapshots] = {}
         self.client = httpx.AsyncClient(
             base_url=cfg.api_url.rstrip("/") + "/api2/json",
             headers={"Authorization": f"PVEAPIToken={cfg.token_id}={cfg.token_secret}"},
             verify=cfg.verify_ssl,
+            transport=PinnedTransport(cfg.api_url, cfg.tls_fingerprint) if cfg.tls_fingerprint else None,
             timeout=30,
         )
 
@@ -165,15 +193,112 @@ class ProxmoxProvider:
             return "QEMU guest agent is not enabled"
         return None
 
+    async def _backup_index(self, nodes: list[str]) -> BackupIndex:
+        if self._backups is not None and time.monotonic() - self._backups_at < BACKUP_TTL:
+            return self._backups
+        index = BackupIndex()
+        errors: list[str] = []
+        # (node, storage, shared) to read. Shared storages (PBS, NFS) list the same backups from
+        # every node, so they're read once.
+        to_read: list[tuple[str, str, bool]] = []
+        queued: set[str] = set()
+        inactive: set[str] = set()
+        for node in nodes:
+            try:
+                r = await self.client.get(f"/nodes/{node}/storage", params={"content": "backup", "enabled": 1})
+                r.raise_for_status()
+                storages = r.json()["data"]
+            except httpx.HTTPError as e:
+                errors.append(f"{node}: {e}")
+                continue
+            for st in storages:
+                name, shared = st["storage"], bool(st.get("shared"))
+                if shared and name in queued:
+                    continue
+                if not st.get("active", 1):
+                    if shared:  # it may be mounted on another node only; try that one
+                        inactive.add(name)
+                    else:
+                        errors.append(f"{name} on {node}: storage inactive")
+                    continue
+                queued.add(name)
+                to_read.append((node, name, shared))
+        errors += [f"{name}: storage inactive" for name in sorted(inactive - queued)]
+
+        async def content(node: str, name: str) -> list[dict]:
+            r = await self.client.get(f"/nodes/{node}/storage/{name}/content", params={"content": "backup"})
+            r.raise_for_status()
+            return r.json()["data"]
+
+        # A PBS datastore with many snapshots can take seconds to list; read them all at once.
+        results = await asyncio.gather(*(content(n, s) for n, s, _ in to_read), return_exceptions=True)
+        read_any = False
+        seen_volids: set[tuple[str | None, str]] = set()
+        for (node, name, shared), res in zip(to_read, results, strict=True):
+            if isinstance(res, BaseException):
+                errors.append(f"{name}: {res}")
+                continue
+            read_any = True
+            for item in res:
+                # The same volid on two nodes' local storages is two different backups.
+                key = (None if shared else node, item.get("volid"))
+                if key in seen_volids or not item.get("vmid") or not item.get("ctime"):
+                    continue
+                seen_volids.add(key)
+                vmid = int(item["vmid"])
+                when = datetime.fromtimestamp(int(item["ctime"]), UTC)
+                state = (item.get("verification") or {}).get("state")
+                verified = {"ok": True, "failed": False}.get(state)
+                index.counts[vmid] = index.counts.get(vmid, 0) + 1
+                if vmid not in index.latest or when > index.latest[vmid][0]:
+                    index.latest[vmid] = (when, name, verified)
+        if not read_any:
+            index.note = "; ".join(errors) or NO_BACKUP_STORAGE
+        elif errors:
+            index.note = "some storages could not be read: " + "; ".join(errors)
+        try:
+            missing = await self._get("/cluster/backup-info/not-backed-up")
+            index.not_in_job = {int(g["vmid"]) for g in missing}
+        except httpx.HTTPError as e:
+            log.warning("%s: could not tell which guests are in no backup job: %s", self.name, e)
+        # Don't remember a complete failure for the whole TTL; the next refresh tries again.
+        if read_any or not errors:
+            self._backups, self._backups_at = index, time.monotonic()
+        return index
+
+    def _backup_for(self, vmid: int, index: BackupIndex | None) -> BackupInfo | None:
+        if index is None:
+            return None
+        in_job = None if index.not_in_job is None else vmid not in index.not_in_job
+        if vmid not in index.latest:
+            # Without a readable storage, "no backup" would be a guess.
+            return BackupInfo(stale=index.note is None, in_job=in_job, note=index.note)
+        when, storage, verified = index.latest[vmid]
+        stale = datetime.now(UTC) - when > timedelta(hours=self.cfg.backup_max_age_hours)
+        return BackupInfo(
+            last=when, storage=storage, count=index.counts[vmid], stale=stale, in_job=in_job, verified=verified,
+            note=index.note,
+        )  # fmt: skip
+
     async def discover(self) -> Discovered:
         found: Discovered = []
         snapshots: dict[str, PveSnapshots] = {}
         node_ips = await self._node_ips()
-        for node in await self._get("/nodes"):
+        nodes = await self._get("/nodes")
+        backups = None
+        if self.cfg.backup_max_age_hours:
+            online = [n["node"] for n in nodes if n.get("status") == "online"]
+            try:
+                backups = await self._backup_index(online)
+            except Exception as e:  # noqa: BLE001 - backups are extra; never hide the guests
+                backups = BackupIndex(note=f"could not read backups: {e}")
+        for node in nodes:
             nname = node["node"]
             online = node.get("status") == "online"
             ssh_cfg = self._node_ssh(nname, node_ips)
-            ssh = SSHExecutor(ssh_cfg) if ssh_cfg else None
+            # Without a verifiable host key the node is used as if it had no SSH settings, and says why.
+            ssh_problem = ssh_cfg.host_key_problem if ssh_cfg else None
+            ssh = SSHExecutor(ssh_cfg) if ssh_cfg and not ssh_problem else None
             prefix = f"proxmox:{self.name}:{nname}"
             host = Target(
                 id=prefix,
@@ -184,11 +309,15 @@ class ProxmoxProvider:
                 status=node.get("status", "unknown"),
                 updatable=online,
                 check_only=ssh is None,
-                note=(None if ssh else "check only: add ssh settings to upgrade this node") if online else "offline",
+                note=(None if ssh else ssh_problem or "check only: add ssh settings to upgrade this node")
+                if online
+                else "offline",
             )
             found.append((host, PveNodeExecutor(self.client, nname, ssh)))
             if not online:
                 continue
+            # Rebooting the node would take down the protected guest, i.e. this dashboard.
+            protected_here: list[str] = []
 
             for ct in await self._get(f"/nodes/{nname}/lxc"):
                 vmid = int(ct["vmid"])
@@ -196,9 +325,11 @@ class ProxmoxProvider:
                     continue
                 running = ct.get("status") == "running"
                 updatable = running and ssh is not None
-                note = (None if ssh else "needs node ssh for pct exec") if running else "not running"
+                note = (None if ssh else ssh_problem or "needs node ssh for pct exec") if running else "not running"
                 if vmid in self.cfg.protect:
                     updatable, note = False, PROTECTED_NOTE
+                    if running:
+                        protected_here.append(ct.get("name") or f"ct{vmid}")
                 t = Target(
                     id=f"{prefix}:lxc:{vmid}",
                     name=ct.get("name") or f"ct{vmid}",
@@ -209,6 +340,7 @@ class ProxmoxProvider:
                     status=ct.get("status", "unknown"),
                     updatable=updatable,
                     note=note,
+                    backup=self._backup_for(vmid, backups),
                     can_snapshot=vmid not in self.cfg.protect,
                 )
                 if t.can_snapshot:
@@ -224,6 +356,8 @@ class ProxmoxProvider:
                 updatable = running
                 if vmid in self.cfg.protect:
                     updatable, note = False, PROTECTED_NOTE
+                    if running:
+                        protected_here.append(vm.get("name") or f"vm{vmid}")
                 elif running:
                     note = await self._vm_blocker(nname, vmid)
                     updatable = note is None
@@ -237,10 +371,13 @@ class ProxmoxProvider:
                     status=vm.get("status", "unknown"),
                     updatable=updatable,
                     note=note,
+                    backup=self._backup_for(vmid, backups),
                     can_snapshot=vmid not in self.cfg.protect,
                 )
                 if t.can_snapshot:
                     snapshots[t.id] = PveSnapshots(self.client, nname, "qemu", vmid)
                 found.append((t, PveAgentExecutor(self.client, nname, vmid)))
+            if protected_here:
+                host.no_reboot = f"runs protected guest {', '.join(protected_here)}; reboot it from the Proxmox UI"
         self.snapshots = snapshots
         return found

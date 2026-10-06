@@ -1,0 +1,33 @@
+name: Clean up old images
+on:
+  workflow_run:
+    workflows: [Image]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * 0"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Only list what would be deleted
+        type: boolean
+        default: true
+concurrency:
+  group: ghcr-cleanup
+jobs:
+  cleanup:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      # Deletes only untagged versions that no tagged image uses. Each multi-arch image is a tagged
+      # index plus untagged amd64/arm64 manifests; the action keeps those, so tagged images still pull.
+      - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
+        with:
+          package: homelab-manager
+          keep-n-untagged: 3
+          validate: true
+          # Dry run until the repository variable GHCR_CLEANUP_LIVE is 'true': run it manually first,
+          # read the log, then set the variable (Settings > Secrets and variables > Actions > Variables).
+          dry-run: ${{ vars.GHCR_CLEANUP_LIVE != 'true' || (github.event_name == 'workflow_dispatch' && inputs.dry-run) }}
