@@ -9,6 +9,22 @@ Platform = Literal["proxmox", "incus", "ssh", "demo"]
 Kind = Literal["host", "lxc", "vm", "container"]
 
 
+class BackupInfo(BaseModel):
+    """Proxmox backups (vzdump / Proxmox Backup Server) of one guest."""
+
+    last: datetime | None = None
+    storage: str | None = None  # where the newest backup is
+    count: int = 0
+    # No backup, or the newest is older than the configured maximum age.
+    stale: bool = False
+    # Whether a scheduled backup job covers this guest (None when unknown).
+    in_job: bool | None = None
+    # Verification state of the newest backup on PBS (None when not verified / not PBS).
+    verified: bool | None = None
+    # Why backups couldn't be read, e.g. missing permissions.
+    note: str | None = None
+
+
 class Target(BaseModel):
     """Something whose OS can be updated."""
 
@@ -23,6 +39,7 @@ class Target(BaseModel):
     # Can be checked but not upgraded from here (e.g. a Proxmox node without SSH settings).
     check_only: bool = False
     note: str | None = None
+    backup: BackupInfo | None = None
     # Why this target must not be rebooted from here (e.g. the node that runs this dashboard).
     no_reboot: str | None = None
 

@@ -81,6 +81,9 @@ proxmox:
     # VMIDs shown but never updated from here: put the LXC that runs this dashboard here,
     # otherwise upgrading Docker inside it restarts the dashboard mid-upgrade.
     protect: [] # e.g. [105]
+    # Flag guests whose newest backup is older than this (0 = don't track backups). Needs
+    # Datastore.Audit on /storage for the token.
+    backup_max_age_hours: 48
 
 incus:
   - name: incus01

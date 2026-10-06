@@ -184,6 +184,160 @@ async def test_proxmox_cluster_uses_each_nodes_address():
     assert found["pve3"].ssh.cfg.host == "pve3"
 
 
+def _pve_with_backups(storages, contents, not_backed_up, calls):
+    import time
+
+    now = int(time.time())
+    base = {
+        "/api2/json/cluster/status": [],
+        "/api2/json/nodes": [{"node": "pve", "status": "online"}],
+        "/api2/json/nodes/pve/lxc": [
+            {"vmid": "101", "name": "pihole", "status": "running"},
+            {"vmid": "102", "name": "old", "status": "stopped"},
+        ],
+        "/api2/json/nodes/pve/qemu": [{"vmid": 200, "name": "docker", "status": "stopped"}],
+        "/api2/json/nodes/pve/storage": storages,
+        "/api2/json/cluster/backup-info/not-backed-up": not_backed_up,
+    }
+    for name, items in contents.items():
+        base[f"/api2/json/nodes/pve/storage/{name}/content"] = [
+            {**i, "ctime": now - i.pop("age_h", 0) * 3600} for i in items
+        ]
+
+    def handler(req):
+        calls.append(req.url.path)
+        if req.url.path not in base:
+            return httpx.Response(403, json={"data": None})
+        return httpx.Response(200, json={"data": base[req.url.path]})
+
+    return handler, now
+
+
+async def test_proxmox_backups():
+    calls: list[str] = []
+    handler, _ = _pve_with_backups(
+        storages=[{"storage": "local", "active": 1}, {"storage": "pbs", "active": 1, "shared": 1}],
+        contents={
+            "local": [{"volid": "local:backup/ct101-a", "vmid": 101, "age_h": 30}],
+            "pbs": [
+                {"volid": "pbs:ct/101/x", "vmid": 101, "age_h": 2, "verification": {"state": "ok"}},
+                {"volid": "pbs:vm/200/y", "vmid": 200, "age_h": 100, "verification": {"state": "failed"}},
+            ],
+        },
+        not_backed_up=[{"vmid": 102}],
+        calls=calls,
+    )
+    p = ProxmoxProvider(ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x"))
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
+    found = {t.name: t for t, _ in await p.discover()}
+    pihole, old, docker = found["pihole"].backup, found["old"].backup, found["docker"].backup
+    assert pihole.count == 2 and pihole.storage == "pbs" and pihole.verified and not pihole.stale and pihole.in_job
+    assert old.last is None and old.stale and old.in_job is False
+    assert docker.stale and docker.verified is False
+    assert found["pve"].backup is None  # hosts aren't backed up by vzdump
+
+    before = len(calls)
+    await p.discover()
+    assert not any("/storage" in c for c in calls[before:])  # cached between discoveries
+
+
+async def test_proxmox_backups_without_storage_permission():
+    calls: list[str] = []
+    handler, _ = _pve_with_backups(storages=[], contents={}, not_backed_up=[], calls=calls)
+    p = ProxmoxProvider(ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x"))
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
+    found = {t.name: t for t, _ in await p.discover()}
+    b = found["pihole"].backup
+    assert b.last is None and not b.stale and "Datastore.Audit" in b.note
+
+
+async def test_proxmox_backup_tracking_can_be_turned_off():
+    calls: list[str] = []
+    handler, _ = _pve_with_backups(storages=[], contents={}, not_backed_up=[], calls=calls)
+    cfg = ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x", backup_max_age_hours=0)
+    p = ProxmoxProvider(cfg)
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
+    found = {t.name: t for t, _ in await p.discover()}
+    assert found["pihole"].backup is None and not any("storage" in c for c in calls)
+
+
+async def test_proxmox_backups_inactive_storage_and_failures_are_not_cached():
+    calls: list[str] = []
+    handler, _ = _pve_with_backups(
+        storages=[{"storage": "nas", "active": 0}, {"storage": "pbs", "active": 1, "shared": 1}],
+        contents={},  # pbs content answers 403
+        not_backed_up=[],
+        calls=calls,
+    )
+    p = ProxmoxProvider(ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x"))
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
+    found = {t.name: t for t, _ in await p.discover()}
+    note = found["pihole"].backup.note
+    assert "nas on pve: storage inactive" in note and "pbs:" in note and not found["pihole"].backup.stale
+    before = len(calls)
+    await p.discover()
+    assert any(c.endswith("/storage") for c in calls[before:])  # tried again, not cached
+
+
+async def test_proxmox_backups_on_two_nodes():
+    import time
+
+    now = int(time.time())
+    local = [{"volid": "local:backup/vzdump-lxc-101.tar.zst", "vmid": 101, "ctime": now}]
+    pbs = [{"volid": "pbs:ct/101/x", "vmid": 101, "ctime": now}]
+    data = {
+        "/api2/json/cluster/status": [],
+        "/api2/json/cluster/backup-info/not-backed-up": [],
+        "/api2/json/nodes": [{"node": "a", "status": "online"}, {"node": "b", "status": "online"}],
+        "/api2/json/nodes/a/lxc": [{"vmid": "101", "name": "ct", "status": "running"}],
+        "/api2/json/nodes/a/qemu": [],
+        "/api2/json/nodes/b/lxc": [],
+        "/api2/json/nodes/b/qemu": [],
+    }
+    for node in ("a", "b"):
+        data[f"/api2/json/nodes/{node}/storage"] = [{"storage": "local"}, {"storage": "pbs", "shared": 1}]
+        data[f"/api2/json/nodes/{node}/storage/local/content"] = local
+        data[f"/api2/json/nodes/{node}/storage/pbs/content"] = pbs
+    calls: list[str] = []
+
+    def handler(req):
+        calls.append(req.url.path)
+        return httpx.Response(200, json={"data": data[req.url.path]})
+
+    p = ProxmoxProvider(ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x"))
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
+    found = {t.name: t for t, _ in await p.discover()}
+    # Two node-local backups with the same volid, plus one on the shared PBS read only once.
+    assert found["ct"].backup.count == 3
+    assert sum(c.endswith("/pbs/content") for c in calls) == 1
+
+
+async def test_shared_storage_inactive_on_one_node_is_read_from_another():
+    import time
+
+    now = int(time.time())
+    data = {
+        "/api2/json/cluster/status": [],
+        "/api2/json/cluster/backup-info/not-backed-up": [],
+        "/api2/json/nodes": [{"node": "a", "status": "online"}, {"node": "b", "status": "online"}],
+        "/api2/json/nodes/a/lxc": [{"vmid": "101", "name": "ct", "status": "running"}],
+        "/api2/json/nodes/a/qemu": [],
+        "/api2/json/nodes/b/lxc": [],
+        "/api2/json/nodes/b/qemu": [],
+        "/api2/json/nodes/a/storage": [{"storage": "nfs", "shared": 1, "active": 0}],
+        "/api2/json/nodes/b/storage": [{"storage": "nfs", "shared": 1, "active": 1}],
+        "/api2/json/nodes/b/storage/nfs/content": [{"volid": "nfs:backup/x", "vmid": 101, "ctime": now}],
+    }
+
+    def handler(req):
+        return httpx.Response(200, json={"data": data[req.url.path]})
+
+    p = ProxmoxProvider(ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x"))
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
+    found = {t.name: t for t, _ in await p.discover()}
+    assert found["ct"].backup.count == 1 and found["ct"].backup.note is None
+
+
 async def test_incus_restricted_certificate_lists_per_project():
     p = IncusProvider(IncusConfig(name="incus01", socket="/nonexistent"))
 
