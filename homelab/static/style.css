@@ -55,6 +55,8 @@ tr.guest td.name { padding-left: 28px; }
 pre#log { margin: 0; background: #0d1117; color: #d1d7e0; padding: 10px; border-radius: 6px; height: 320px; overflow: auto; font: 12px/1.4 var(--mono); white-space: pre-wrap; }
 dialog { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); color: var(--text); max-width: 480px; width: calc(100% - 32px); }
 dialog::backdrop { background: rgba(0,0,0,.4); }
+.check-row { display: flex; gap: 6px; align-items: center; margin: 8px 0; }
+.check-row[hidden] { display: none; }
 dialog menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; }
 .spin { display: inline-block; width: 10px; height: 10px; border: 2px solid var(--muted); border-top-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; vertical-align: -1px; }
 @keyframes spin { to { transform: rotate(360deg); } }
