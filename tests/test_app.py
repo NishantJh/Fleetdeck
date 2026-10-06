@@ -76,8 +76,32 @@ def test_check_script_runs_locally():
 
 
 def test_scripts_are_valid_sh():
-    for script in (CHECK_SCRIPT, UPGRADE_SCRIPT):
+    from homelab.updates import BOOT_ID_SCRIPT, REBOOT_NOW_SCRIPT
+
+    for script in (CHECK_SCRIPT, UPGRADE_SCRIPT, BOOT_ID_SCRIPT, REBOOT_NOW_SCRIPT):
         assert subprocess.run(["sh", "-n", "-c", script]).returncode == 0
+
+
+def test_boot_id_script_runs_locally():
+    from homelab.updates import BOOT_ID_SCRIPT, parse_boot_id
+
+    p = subprocess.run(["sh", "-c", BOOT_ID_SCRIPT], capture_output=True, text=True)
+    boot = parse_boot_id(p.stdout)
+    assert boot and boot.split("-")[-1].isdigit()  # boot_id plus PID 1's start time
+
+
+def test_demo_reboot(monkeypatch):
+    import homelab.jobs
+
+    monkeypatch.setattr(homelab.jobs, "REBOOT_POLL", 0)
+    with TestClient(create_app(AppConfig(demo=True))) as client:
+        targets = client.get("/api/targets").json()["targets"]
+        pve = next(t for t in targets if t["target"]["name"] == "pve")["target"]["id"]
+        client.post("/api/actions", json={"action": "upgrade", "target_ids": [pve], "reboot_if_required": True})
+        jobs = _wait_for_jobs(client)
+        assert jobs[0]["status"] == "succeeded" and jobs[0]["reboot_if_required"]
+        log = client.get(f"/api/jobs/{jobs[0]['id']}").json()["log"]
+        assert "== Reboot finished" in log
 
 
 def test_reboot_detection_compares_kernels(tmp_path):

@@ -1,21 +1,20 @@
 from __future__ import annotations
 
-import base64
-import binascii
 import logging
-import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, Response
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .config import AppConfig, load_config
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
 from .models import CheckResult, Job, JobAction, Target
+from .security import LoginThrottle, make_guard
 from .store import Store
 
 log = logging.getLogger("homelab")
@@ -30,11 +29,19 @@ class TargetView(BaseModel):
 
 class ActionRequest(BaseModel):
     action: JobAction
-    target_ids: list[str]
+    target_ids: list[str] = Field(max_length=1000)
+    # Upgrade only: reboot afterwards when the upgrade leaves a reboot pending.
+    reboot_if_required: bool = False
 
 
 def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None) -> FastAPI:
     cfg = cfg or load_config()
+    if cfg.auth is None and cfg.has_real_targets and not cfg.allow_no_auth:
+        raise SystemExit(
+            "Refusing to start: no `auth:` in the config, so anyone who can reach the dashboard could update "
+            "and reboot your machines. Add auth (see config.example.yaml), or set `allow_no_auth: true` if "
+            "something in front of the dashboard already handles login."
+        )
     inventory = inventory or Inventory(build_providers(cfg))
     store = _open_store(cfg.state_file)
     jobs = JobManager(inventory, cfg.max_parallel, store)
@@ -43,6 +50,8 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
     async def lifespan(_: FastAPI):
         if cfg.auth is None:
             log.warning("No auth configured: anyone who can reach this dashboard can update your machines.")
+            if not cfg.allowed_hosts:
+                log.warning("allowed_hosts is not set: without auth, web pages can reach the API via DNS rebinding.")
         yield
         await jobs.shutdown()
         for provider in inventory.providers:
@@ -56,14 +65,10 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
     app.state.jobs = jobs
     app.state.inventory = inventory
 
-    if cfg.auth:
-        auth = cfg.auth
-
-        @app.middleware("http")
-        async def basic_auth(request: Request, call_next):
-            if not _basic_auth_ok(request.headers.get("authorization", ""), auth.username, auth.password):
-                return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="homelab"'})
-            return await call_next(request)
+    app.middleware("http")(make_guard(cfg.auth, LoginThrottle()))
+    if cfg.allowed_hosts:
+        # Added last so it runs first: a request for a foreign Host never reaches the API.
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=cfg.allowed_hosts)
 
     @app.get("/api/targets")
     async def list_targets(refresh: bool = False):
@@ -80,7 +85,7 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
         submitted, rejected = [], {}
         for tid in req.target_ids:
             try:
-                submitted.append(_light(jobs.submit(tid, req.action)))
+                submitted.append(_light(jobs.submit(tid, req.action, req.reboot_if_required)))
             except KeyError:
                 rejected[tid] = "unknown target"
             except ValueError as e:
@@ -118,20 +123,6 @@ def _open_store(path: str | None) -> Store | None:
     except Exception:  # noqa: BLE001 - a bad volume shouldn't stop the dashboard from starting
         log.exception("Could not open state file %s; keeping state in memory only.", path)
         return None
-
-
-def _basic_auth_ok(header: str, username: str, password: str) -> bool:
-    scheme, _, encoded = header.partition(" ")
-    if scheme.lower() != "basic":
-        return False
-    try:
-        user, sep, pwd = base64.b64decode(encoded.strip(), validate=True).partition(b":")
-    except (binascii.Error, ValueError):
-        return False
-    # Compare both halves even when the first one fails so timing doesn't leak which was wrong.
-    user_ok = secrets.compare_digest(user, username.encode())
-    pwd_ok = secrets.compare_digest(pwd, password.encode())
-    return bool(sep) and user_ok and pwd_ok
 
 
 def _light(job: Job | None) -> Job | None:
