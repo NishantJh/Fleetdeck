@@ -184,12 +184,22 @@ def _expand(value, missing: set[str]):
     return value
 
 
+def unreadable(path: str | None) -> str | None:
+    """A message if ``path`` exists but this process can't read it (e.g. the container's non-root uid)."""
+    if not path or not os.path.exists(path) or os.access(path, os.R_OK):
+        return None
+    uid = os.getuid() if hasattr(os, "getuid") else "?"
+    return f"can't read {path} as uid {uid}; on the Docker host run: sudo chown -R 10001:10001 config"
+
+
 def load_config(path: str | None = None) -> AppConfig:
     path = path or os.environ.get("HOMELAB_CONFIG", "config.yaml")
     p = Path(path)
     if not p.exists():
         log.warning("Config file %s not found; starting with no targets.", p)
         return AppConfig(demo=os.environ.get("HOMELAB_DEMO", "") == "1")
+    if problem := unreadable(str(p)):
+        raise ValueError(problem)
     missing: set[str] = set()
     data = _expand(yaml.safe_load(p.read_text()) or {}, missing)
     if missing:
@@ -213,6 +223,10 @@ def load_config(path: str | None = None) -> AppConfig:
                 "credentials. Set tls_fingerprint (or verify_ssl to a CA file).",
                 api.name,
             )
+    files = [f for ssh in _ssh_configs(cfg) for f in (ssh.key_file, ssh.known_hosts)]
+    files += [f for i in cfg.incus for f in (i.client_cert, i.client_key)]
+    for problem in dict.fromkeys(filter(None, map(unreadable, files))):
+        log.error("%s", problem)
     return cfg
 
 

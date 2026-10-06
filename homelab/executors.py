@@ -16,7 +16,7 @@ from typing import Protocol
 import asyncssh
 import httpx
 
-from .config import SSHConfig
+from .config import SSHConfig, unreadable
 from .models import ExecResult
 
 LineCallback = Callable[[str, str], None]
@@ -47,6 +47,9 @@ class SSHExecutor:
                 f"no known_hosts for {self.cfg.host}, so its SSH host key can't be checked. Add it to a "
                 "known_hosts file (ssh-keyscan) and set known_hosts, or set insecure_skip_host_key_check: true"
             )
+        for path in (self.cfg.key_file, self.cfg.known_hosts):
+            if problem := unreadable(path):
+                raise RuntimeError(problem)
         kw: dict = {
             "host": self.cfg.host,
             "port": self.cfg.port,

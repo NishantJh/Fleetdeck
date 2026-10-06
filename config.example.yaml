@@ -30,7 +30,8 @@ proxmox:
     # Datacenter > Permissions > API Tokens. Needs VM.Audit + Sys.Audit to list guests,
     # Sys.Modify on /nodes to refresh the host's package lists through PVE,
     # and VM.GuestAgent.Unrestricted (PVE 9) / VM.Monitor (PVE 8) to update VMs via the guest agent.
-    token_id: root@pam!homelab
+    # Use a dedicated user rather than root (README, "Least privilege for the Proxmox token").
+    token_id: homelab@pve!dashboard
     token_secret: ${PVE_TOKEN_SECRET}
     # Pins the node's TLS certificate. On the node, run
     #   openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256
@@ -53,8 +54,8 @@ proxmox:
 
 incus:
   - name: incus01
-    # Remote API: `incus config set core.https_address :8443`, then trust the client cert:
-    # `incus config trust add-certificate client.crt`
+    # Remote API: `incus config set core.https_address :8443`, then trust the client cert for the
+    # projects you use only: `incus config trust add-certificate client.crt --restricted --projects default`
     url: https://192.168.1.20:8443
     client_cert: /config/incus-client.crt
     client_key: /config/incus-client.key

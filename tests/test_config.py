@@ -103,3 +103,26 @@ def test_example_config_is_valid(monkeypatch):
     monkeypatch.setenv("PVE_TOKEN_SECRET", "y")
     cfg = load_config(str(Path(__file__).parent.parent / "config.example.yaml"))
     assert [h.name for h in cfg.hosts] == ["pi4", "vps"]
+
+
+def test_unreadable_files_are_reported(tmp_path, monkeypatch, caplog):
+    import os
+
+    import homelab.config
+    from homelab.config import SSHConfig
+    from homelab.executors import SSHExecutor
+
+    key = tmp_path / "id_ed25519"
+    key.write_text("k")
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(f"hosts:\n  - name: pi\n    host: 10.0.0.2\n    key_file: {key}\n")
+    real_access = os.access
+    monkeypatch.setattr(homelab.config.os, "access", lambda p, m: str(p) != str(key) and real_access(p, m))
+    load_config(str(cfg_file))
+    assert f"can't read {key}" in caplog.text and "chown -R 10001:10001 config" in caplog.text
+    with pytest.raises(RuntimeError, match="can't read"):
+        SSHExecutor(SSHConfig(host="10.0.0.2", key_file=str(key), known_hosts="/kh"))._connect_kwargs()
+
+    monkeypatch.setattr(homelab.config.os, "access", lambda p, m: False)
+    with pytest.raises(ValueError, match="can't read"):
+        load_config(str(cfg_file))
