@@ -5,13 +5,14 @@ of their own, so "untagged" does not mean "unused". This only deletes untagged v
 tagged version references, keeps the newest KEEP of them and anything younger than MIN_AGE_HOURS.
 Set DRY_RUN=true to only print.
 """
+
 import base64
 import json
 import os
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 OWNER = os.environ["OWNER"].lower()
 PACKAGE = os.environ.get("PACKAGE", "homelab-manager")
@@ -21,12 +22,14 @@ KEEP = int(os.environ.get("KEEP", "5"))
 MIN_AGE = timedelta(hours=float(os.environ.get("MIN_AGE_HOURS", "1")))
 DRY_RUN = os.environ.get("DRY_RUN", "false").lower() == "true"
 API = "https://api.github.com"
-MANIFEST_TYPES = ",".join([
-    "application/vnd.oci.image.index.v1+json",
-    "application/vnd.oci.image.manifest.v1+json",
-    "application/vnd.docker.distribution.manifest.list.v2+json",
-    "application/vnd.docker.distribution.manifest.v2+json",
-])
+MANIFEST_TYPES = ",".join(
+    [
+        "application/vnd.oci.image.index.v1+json",
+        "application/vnd.oci.image.manifest.v1+json",
+        "application/vnd.docker.distribution.manifest.list.v2+json",
+        "application/vnd.docker.distribution.manifest.v2+json",
+    ]
+)
 
 
 def request(url, headers=None, method="GET"):
@@ -36,11 +39,15 @@ def request(url, headers=None, method="GET"):
 
 
 def api(path, method="GET"):
-    return request(API + path, {
-        "Authorization": f"Bearer {TOKEN}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }, method)
+    return request(
+        API + path,
+        {
+            "Authorization": f"Bearer {TOKEN}",
+            "Accept": "application/vnd.github+json",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+        method,
+    )
 
 
 def package_base():
@@ -70,7 +77,8 @@ def registry_token():
     basic = base64.b64encode(f"{ACTOR}:{TOKEN}".encode()).decode()
     body, _ = request(
         f"https://ghcr.io/token?service=ghcr.io&scope=repository:{OWNER}/{PACKAGE}:pull",
-        {"Authorization": f"Basic {basic}"})
+        {"Authorization": f"Basic {basic}"},
+    )
     return json.loads(body)["token"]
 
 
@@ -79,8 +87,10 @@ def children(digest, token, seen):
     if digest in seen:
         return
     seen.add(digest)
-    body, _ = request(f"https://ghcr.io/v2/{OWNER}/{PACKAGE}/manifests/{digest}",
-                      {"Authorization": f"Bearer {token}", "Accept": MANIFEST_TYPES})
+    body, _ = request(
+        f"https://ghcr.io/v2/{OWNER}/{PACKAGE}/manifests/{digest}",
+        {"Authorization": f"Bearer {token}", "Accept": MANIFEST_TYPES},
+    )
     for m in json.loads(body).get("manifests", []):
         children(m["digest"], token, seen)
 
@@ -88,7 +98,8 @@ def children(digest, token, seen):
 def select_deletions(versions, referenced, keep, min_age, now):
     """Untagged, unreferenced, older than min_age, and not among the newest `keep` of those."""
     candidates = [
-        v for v in versions
+        v
+        for v in versions
         if not v["metadata"]["container"]["tags"]
         and v["name"] not in referenced
         and now - datetime.fromisoformat(v["created_at"].replace("Z", "+00:00")) >= min_age
@@ -106,9 +117,11 @@ def main():
     token, referenced = registry_token(), set()
     for v in tagged:
         children(v["name"], token, referenced)
-    doomed = select_deletions(versions, referenced, KEEP, MIN_AGE, datetime.now(timezone.utc))
-    print(f"{len(versions)} versions: {len(tagged)} tagged, {len(referenced)} digests in use, "
-          f"{len(doomed)} untagged to delete (keeping newest {KEEP})")
+    doomed = select_deletions(versions, referenced, KEEP, MIN_AGE, datetime.now(UTC))
+    print(
+        f"{len(versions)} versions: {len(tagged)} tagged, {len(referenced)} digests in use, "
+        f"{len(doomed)} untagged to delete (keeping newest {KEEP})"
+    )
     for v in doomed:
         print(f"{'would delete' if DRY_RUN else 'deleting'} {v['name']} ({v['created_at']})")
         if not DRY_RUN:
