@@ -22,6 +22,8 @@ from .updates import (
 
 log = logging.getLogger(__name__)
 MAX_JOBS = 500
+# Per job. A misbehaving guest could otherwise stream output until the dashboard runs out of memory.
+MAX_LOG_LINES = 20_000
 # How long a rebooting machine gets to come back, and how often we look.
 REBOOT_TIMEOUT = 900.0
 REBOOT_POLL = 5.0
@@ -126,7 +128,12 @@ class JobManager:
             job.status, job.started_at = "running", _now()
 
             def on_line(stream: str, line: str) -> None:
-                job.log.append(line if stream == "stdout" else f"! {line}")
+                # Stop recording (rather than trim, which would shift the offsets the UI pages by). The
+                # job's own status lines and error are still appended after this.
+                if len(job.log) == MAX_LOG_LINES:
+                    job.log.append(f"! … output truncated after {MAX_LOG_LINES} lines")
+                if len(job.log) <= MAX_LOG_LINES:
+                    job.log.append(line if stream == "stdout" else f"! {line}")
 
             try:
                 # Look the target up again: the inventory may have changed while the job was queued

@@ -29,7 +29,7 @@ PVE["/api2/json/nodes/pve/qemu"].append({"vmid": 203, "name": "broken", "status"
 async def test_proxmox_discovery():
     cfg = ProxmoxConfig(
         name="lab", api_url="https://pve:8006", token_id="root@pam!t", token_secret="x",
-        ssh=SSHConfig(host="pve"), exclude=[199], protect=[103],
+        ssh=SSHConfig(host="pve", known_hosts="/kh"), exclude=[199], protect=[103],
     )  # fmt: skip
     p = ProxmoxProvider(cfg)
 
@@ -162,8 +162,8 @@ async def test_proxmox_cluster_uses_each_nodes_address():
     }
     cfg = ProxmoxConfig(
         name="lab", api_url="https://pve1:8006", token_id="t", token_secret="x",
-        ssh=SSHConfig(host="10.0.0.1", key_file="/k"),
-        node_ssh={"pve1": SSHConfig(host="pve1.lan")},
+        ssh=SSHConfig(host="10.0.0.1", key_file="/k", known_hosts="/kh"),
+        node_ssh={"pve1": SSHConfig(host="pve1.lan", known_hosts="/kh")},
     )  # fmt: skip
     data["/api2/json/nodes"].append({"node": "pve3", "status": "online"})
     data["/api2/json/cluster/status"].append({"type": "node", "name": "pve3", "ip": "10.0.0.3"})
@@ -181,3 +181,47 @@ async def test_proxmox_cluster_uses_each_nodes_address():
     assert isinstance(ct, PctExecutor)
     assert ct.node_ssh.cfg.host == "10.0.0.2" and ct.node_ssh.cfg.key_file == "/k"
     assert found["pve3"].ssh.cfg.host == "pve3"
+
+
+async def test_incus_restricted_certificate_lists_per_project():
+    p = IncusProvider(IncusConfig(name="incus01", socket="/nonexistent"))
+
+    def handler(req):
+        if req.url.path == "/1.0/projects":
+            return httpx.Response(200, json={"metadata": ["/1.0/projects/default", "/1.0/projects/lab"]})
+        if req.url.params.get("all-projects") == "true":
+            return httpx.Response(403, json={"error": "Forbidden"})
+        project = req.url.params["project"]
+        return httpx.Response(
+            200, json={"metadata": [{"name": f"{project}-ct", "type": "container", "status": "Running"}]}
+        )
+
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://incus")
+    names = {t.name for t, _ in await p.discover()}
+    assert names == {"incus01", "default-ct", "lab/lab-ct"}
+
+
+async def test_unknown_ssh_host_key_is_shown_on_the_dashboard():
+    from homelab.config import HostConfig
+    from homelab.providers.ssh_hosts import SSHHostsProvider
+
+    cfg = ProxmoxConfig(
+        name="lab", api_url="https://pve:8006", token_id="t", token_secret="x", ssh=SSHConfig(host="10.0.0.1")
+    )
+    p = ProxmoxProvider(cfg)
+    data = {"/api2/json/nodes": [{"node": "pve", "status": "online"}], "/api2/json/cluster/status": []}
+    data["/api2/json/nodes/pve/lxc"] = [{"vmid": 101, "name": "ct", "status": "running"}]
+    data["/api2/json/nodes/pve/qemu"] = []
+    p.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": data[req.url.path]})),
+        base_url=p.client.base_url,
+    )
+    found = {t.name: (t, ex) for t, ex in await p.discover()}
+    host, ct = found["pve"][0], found["ct"][0]
+    assert host.check_only and "known_hosts" in host.note
+    assert not ct.updatable and "known_hosts" in ct.note and found["ct"][1] is None
+
+    ((pi, _),) = await SSHHostsProvider([HostConfig(name="pi", host="10.0.0.2")]).discover()
+    assert not pi.updatable and "add 10.0.0.2 to known_hosts" in pi.note
+    ((ok, _),) = await SSHHostsProvider([HostConfig(name="pi", host="10.0.0.2", known_hosts="/kh")]).discover()
+    assert ok.updatable and ok.note is None

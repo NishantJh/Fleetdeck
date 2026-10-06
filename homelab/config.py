@@ -13,9 +13,19 @@ import re
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 log = logging.getLogger(__name__)
+
+
+def normalize_fingerprint(value: str | None) -> str | None:
+    """``AB:CD:...`` or ``abcd...`` (SHA-256, 64 hex digits) to lowercase hex without colons."""
+    if value is None:
+        return None
+    fp = value.replace(":", "").replace(" ", "").lower()
+    if len(fp) != 64 or any(c not in "0123456789abcdef" for c in fp):
+        raise ValueError("tls_fingerprint must be a SHA-256 fingerprint (64 hex digits, colons optional)")
+    return fp
 
 
 class SSHConfig(BaseModel):
@@ -24,10 +34,20 @@ class SSHConfig(BaseModel):
     user: str = "root"
     key_file: str | None = None
     password: str | None = None
-    # Path to a known_hosts file. When unset, host keys are NOT verified.
+    # Path to a known_hosts file. Falls back to the top-level `known_hosts:`. With neither,
+    # connections are refused unless insecure_skip_host_key_check is set.
     known_hosts: str | None = None
+    # Accept any host key. Anyone on the network path can then pose as this machine.
+    insecure_skip_host_key_check: bool = False
     # Wrap commands in `sudo -n` (for non-root users with passwordless sudo).
     sudo: bool = False
+
+    @property
+    def host_key_problem(self) -> str | None:
+        """Why connections to this machine would be refused, for the dashboard to show up front."""
+        if self.known_hosts or self.insecure_skip_host_key_check:
+            return None
+        return f"SSH host key unknown: add {self.host} to known_hosts (ssh-keyscan, see README)"
 
 
 class ProxmoxConfig(BaseModel):
@@ -36,6 +56,10 @@ class ProxmoxConfig(BaseModel):
     token_id: str  # e.g. root@pam!homelab
     token_secret: str
     verify_ssl: bool | str = True  # bool or path to a CA bundle
+    # SHA-256 fingerprint of the node's certificate (Node > System > Certificates, or
+    # `openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256` on the node).
+    # Pins that exact certificate; works with self-signed certs and IPs. Overrides verify_ssl.
+    tls_fingerprint: str | None = None
     # SSH to the node: used to update the host itself and to run `pct exec` in LXCs.
     ssh: SSHConfig | None = None
     # Per-node SSH overrides for clusters, keyed by node name.
@@ -46,6 +70,11 @@ class ProxmoxConfig(BaseModel):
     # Upgrading it (Docker in particular) would restart the dashboard mid-upgrade.
     protect: list[int] = Field(default_factory=list)
 
+    @field_validator("tls_fingerprint")
+    @classmethod
+    def _fingerprint(cls, v: str | None) -> str | None:
+        return normalize_fingerprint(v)
+
 
 class IncusConfig(BaseModel):
     name: str
@@ -54,12 +83,20 @@ class IncusConfig(BaseModel):
     client_cert: str | None = None
     client_key: str | None = None
     verify_ssl: bool | str = True
+    # SHA-256 fingerprint of the server certificate (`incus info | grep certificate_fingerprint`).
+    # Pins that exact certificate. Overrides verify_ssl.
+    tls_fingerprint: str | None = None
     # ...or the local unix socket when the dashboard runs on the Incus host.
     socket: str | None = None  # e.g. /var/lib/incus/unix.socket
     # SSH to the Incus host, used to update the host itself.
     ssh: SSHConfig | None = None
     # Instance names ("project/name" or "name") to hide.
     exclude: list[str] = Field(default_factory=list)
+
+    @field_validator("tls_fingerprint")
+    @classmethod
+    def _fingerprint(cls, v: str | None) -> str | None:
+        return normalize_fingerprint(v)
 
     @model_validator(mode="after")
     def _url_or_socket(self) -> IncusConfig:
@@ -89,6 +126,20 @@ class AppConfig(BaseModel):
     max_parallel: int = Field(4, ge=1)
     # Adds fake targets so the UI can be tried without real infrastructure.
     demo: bool = False
+    # known_hosts file for every SSH connection that doesn't name its own.
+    known_hosts: str | None = None
+    # Running without `auth:` against real machines must be asked for explicitly.
+    allow_no_auth: bool = False
+    # Host names/IPs the dashboard is reached by (e.g. ["192.168.1.50", "homelab.lan"]). Requests
+    # for any other Host header are refused, which stops DNS-rebinding attacks. Empty allows any.
+    allowed_hosts: list[str] = Field(default_factory=list)
+    # Reverse proxies whose X-Forwarded-For is believed (IPs or CIDRs). Without it, everyone behind a
+    # proxy shares the proxy's address, so the login lockout would lock them all out together.
+    trusted_proxies: list[str] = Field(default_factory=list)
+
+    @property
+    def has_real_targets(self) -> bool:
+        return bool(self.proxmox or self.incus or self.hosts)
 
     @model_validator(mode="after")
     def _unique_names(self) -> AppConfig:
@@ -101,6 +152,14 @@ class AppConfig(BaseModel):
         dupes = sorted({n for n in hosts if hosts.count(n) > 1})
         if dupes:
             raise ValueError(f"host names must be unique: {', '.join(dupes)}")
+        return self
+
+    @model_validator(mode="after")
+    def _inherit_known_hosts(self) -> AppConfig:
+        if self.known_hosts:
+            for ssh in _ssh_configs(self):
+                if not ssh.known_hosts and not ssh.insecure_skip_host_key_check:
+                    ssh.known_hosts = self.known_hosts
         return self
 
 
@@ -125,12 +184,22 @@ def _expand(value, missing: set[str]):
     return value
 
 
+def unreadable(path: str | None) -> str | None:
+    """A message if ``path`` exists but this process can't read it (e.g. the container's non-root uid)."""
+    if not path or not os.path.exists(path) or os.access(path, os.R_OK):
+        return None
+    uid = os.getuid() if hasattr(os, "getuid") else "?"
+    return f"can't read {path} as uid {uid}; on the Docker host run: sudo chown -R 10001:10001 config"
+
+
 def load_config(path: str | None = None) -> AppConfig:
     path = path or os.environ.get("HOMELAB_CONFIG", "config.yaml")
     p = Path(path)
     if not p.exists():
         log.warning("Config file %s not found; starting with no targets.", p)
         return AppConfig(demo=os.environ.get("HOMELAB_DEMO", "") == "1")
+    if problem := unreadable(str(p)):
+        raise ValueError(problem)
     missing: set[str] = set()
     data = _expand(yaml.safe_load(p.read_text()) or {}, missing)
     if missing:
@@ -139,8 +208,25 @@ def load_config(path: str | None = None) -> AppConfig:
     if os.environ.get("HOMELAB_DEMO") == "1":
         cfg.demo = True
     for ssh in _ssh_configs(cfg):
-        if not ssh.known_hosts:
-            log.warning("SSH host key checking is off for %s; set known_hosts to enable it.", ssh.host)
+        if ssh.insecure_skip_host_key_check:
+            log.warning("SSH host key checking is off for %s (insecure_skip_host_key_check).", ssh.host)
+        elif not ssh.known_hosts:
+            log.warning(
+                "No known_hosts for %s: connections to it will be refused. Set known_hosts (top-level or "
+                "per host), or insecure_skip_host_key_check: true.",
+                ssh.host,
+            )
+    for api in [*cfg.proxmox, *(i for i in cfg.incus if i.url)]:
+        if api.verify_ssl is False and not api.tls_fingerprint:
+            log.warning(
+                "TLS certificate checking is off for %s: anyone on the network path can read its API "
+                "credentials. Set tls_fingerprint (or verify_ssl to a CA file).",
+                api.name,
+            )
+    files = [f for ssh in _ssh_configs(cfg) for f in (ssh.key_file, ssh.known_hosts)]
+    files += [f for i in cfg.incus for f in (i.client_cert, i.client_key)]
+    for problem in dict.fromkeys(filter(None, map(unreadable, files))):
+        log.error("%s", problem)
     return cfg
 
 
