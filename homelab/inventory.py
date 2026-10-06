@@ -30,9 +30,12 @@ def build_providers(cfg: AppConfig) -> list[Provider]:
 class Inventory:
     """Holds the discovered targets; re-discovers on demand (cached briefly)."""
 
-    def __init__(self, providers: list[Provider], ttl: float = 30.0):
+    def __init__(self, providers: list[Provider], ttl: float = 30.0, min_interval: float = 5.0):
         self.providers = providers
         self.ttl = ttl
+        # Even a forced refresh waits this long after the last one, so a client hammering
+        # ?refresh=true can't turn into a flood of API calls against Proxmox/Incus.
+        self.min_interval = min_interval
         self.targets: dict[str, tuple[Target, Executor | None]] = {}
         self.errors: dict[str, str] = {}
         self._refreshed = 0.0
@@ -40,7 +43,8 @@ class Inventory:
 
     async def refresh(self, force: bool = False) -> None:
         async with self._lock:
-            if not force and time.monotonic() - self._refreshed < self.ttl:
+            age = time.monotonic() - self._refreshed
+            if age < (self.min_interval if force else self.ttl):
                 return
             results = await asyncio.gather(*(p.discover() for p in self.providers), return_exceptions=True)
             targets: dict[str, tuple[Target, Executor | None]] = {}

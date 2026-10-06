@@ -114,6 +114,19 @@ and set `auth:` in the config.
 * **Proxmox and Incus certificates:** set `tls_fingerprint` (shown in the example config) rather than
   `verify_ssl: false`. It pins the exact certificate, works with the self-signed ones both ship and
   with IP addresses, and the dashboard warns at start-up about any API with checking off.
+* `auth:` is required once real machines are configured (the dashboard refuses to start without
+  it, unless you set `allow_no_auth: true` because a proxy in front does the login). Repeated wrong
+  passwords lock that IP out for 5 minutes.
+* Basic auth sends the password with every request, so use HTTPS: either set `TLS_CERT` and
+  `TLS_KEY` (paths inside the container, e.g. `/config/tls.crt`) to serve HTTPS directly, or put
+  Caddy, Traefik or `tailscale serve` in front.
+* Set `allowed_hosts` to the names/IPs you open the dashboard by, so other websites can't reach it
+  through DNS rebinding.
+* Behind a reverse proxy, set `trusted_proxies` to its address (or the Docker network's range), so
+  the lockout applies to each visitor's IP rather than the proxy's. The proxy must pass the original
+  `Host` header, because `allowed_hosts` and the cross-site check compare against it. Caddy and
+  Traefik do this by default; with nginx add `proxy_set_header Host $host;`.
+* Cross-site form posts are refused, and the page can't be framed by another site.
 
 ### Upgrading from a version without host key checks
 
