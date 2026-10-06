@@ -12,8 +12,11 @@ services:
       - "8080:8080"
     volumes:
       # config.yaml, SSH key, known_hosts, Incus client cert. Must be readable by uid 10001
-      # (`sudo chown -R 10001:10001 config`); the same goes for a ./data volume if you add one.
+      # (`sudo chown -R 10001:10001 config`).
       - ./config:/config:ro
+      # Check results and job history (SQLite), kept across restarts and image updates. Must be
+      # writable by uid 10001: `mkdir -p data && sudo chown 10001:10001 data`.
+      - ./data:/data
     environment:
       HOMELAB_PASSWORD: ${HOMELAB_PASSWORD}
       PVE_TOKEN_SECRET: ${PVE_TOKEN_SECRET}

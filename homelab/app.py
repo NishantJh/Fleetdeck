@@ -15,6 +15,7 @@ from .inventory import Inventory, build_providers
 from .jobs import JobManager
 from .models import CheckResult, Job, JobAction, Target
 from .security import LoginThrottle, make_guard
+from .store import Store
 
 log = logging.getLogger("homelab")
 STATIC = Path(__file__).parent / "static"
@@ -42,7 +43,8 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
             "something in front of the dashboard already handles login."
         )
     inventory = inventory or Inventory(build_providers(cfg))
-    jobs = JobManager(inventory, cfg.max_parallel)
+    store = _open_store(cfg.state_file)
+    jobs = JobManager(inventory, cfg.max_parallel, store)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -51,10 +53,13 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
             if not cfg.allowed_hosts:
                 log.warning("allowed_hosts is not set: without auth, web pages can reach the API via DNS rebinding.")
         yield
+        await jobs.shutdown()
         for provider in inventory.providers:
             client = getattr(provider, "client", None)
             if client is not None:
                 await client.aclose()
+        if store is not None:
+            store.close()
 
     app = FastAPI(title="Homelab Manager", lifespan=lifespan)
     app.state.jobs = jobs
@@ -107,6 +112,17 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     return app
+
+
+def _open_store(path: str | None) -> Store | None:
+    if not path:
+        log.info("No state_file configured: check results and job history are kept in memory only.")
+        return None
+    try:
+        return Store(path)
+    except Exception:  # noqa: BLE001 - a bad volume shouldn't stop the dashboard from starting
+        log.exception("Could not open state file %s; keeping state in memory only.", path)
+        return None
 
 
 def _light(job: Job | None) -> Job | None:

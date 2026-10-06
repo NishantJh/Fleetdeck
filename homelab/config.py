@@ -126,6 +126,9 @@ class AppConfig(BaseModel):
     max_parallel: int = Field(4, ge=1)
     # Adds fake targets so the UI can be tried without real infrastructure.
     demo: bool = False
+    # SQLite file for check results and job history, so a restart doesn't lose them.
+    # Unset keeps everything in memory. HOMELAB_STATE overrides it (the Docker image sets /data/state.db).
+    state_file: str | None = None
     # known_hosts file for every SSH connection that doesn't name its own.
     known_hosts: str | None = None
     # Running without `auth:` against real machines must be asked for explicitly.
@@ -197,7 +200,9 @@ def load_config(path: str | None = None) -> AppConfig:
     p = Path(path)
     if not p.exists():
         log.warning("Config file %s not found; starting with no targets.", p)
-        return AppConfig(demo=os.environ.get("HOMELAB_DEMO", "") == "1")
+        return AppConfig(
+            demo=os.environ.get("HOMELAB_DEMO", "") == "1", state_file=os.environ.get("HOMELAB_STATE") or None
+        )
     if problem := unreadable(str(p)):
         raise ValueError(problem)
     missing: set[str] = set()
@@ -207,6 +212,11 @@ def load_config(path: str | None = None) -> AppConfig:
     cfg = AppConfig.model_validate(data)
     if os.environ.get("HOMELAB_DEMO") == "1":
         cfg.demo = True
+    if os.environ.get("HOMELAB_STATE"):
+        cfg.state_file = os.environ["HOMELAB_STATE"]
+    elif cfg.state_file and not Path(cfg.state_file).is_absolute():
+        # Relative to the config file, like the other paths people put next to it.
+        cfg.state_file = str(p.parent / cfg.state_file)
     for ssh in _ssh_configs(cfg):
         if ssh.insecure_skip_host_key_check:
             log.warning("SSH host key checking is off for %s (insecure_skip_host_key_check).", ssh.host)

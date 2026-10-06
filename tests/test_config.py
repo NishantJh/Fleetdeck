@@ -105,6 +105,13 @@ def test_example_config_is_valid(monkeypatch):
     assert [h.name for h in cfg.hosts] == ["pi4", "vps"]
 
 
+def test_relative_state_file_is_next_to_config(tmp_path, monkeypatch):
+    monkeypatch.delenv("HOMELAB_STATE", raising=False)
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text("state_file: data/state.db\n")
+    assert load_config(str(cfg_file)).state_file == str(tmp_path / "data" / "state.db")
+
+
 def test_unreadable_files_are_reported(tmp_path, monkeypatch, caplog):
     import os
 

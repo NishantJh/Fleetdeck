@@ -7,10 +7,11 @@ COPY pyproject.toml ./
 COPY homelab ./homelab
 RUN pip install --no-cache-dir --no-deps . \
  && groupadd --system --gid 10001 homelab \
- && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin homelab
+ && useradd --system --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin homelab \
+ && mkdir /data && chown 10001:10001 /data
 # The dashboard holds root keys to the lab; it doesn't need to be root itself. Files in /config
 # must be readable by uid 10001 (see README).
 USER 10001:10001
-ENV HOMELAB_CONFIG=/config/config.yaml PORT=8080
+ENV HOMELAB_CONFIG=/config/config.yaml HOMELAB_STATE=/data/state.db PORT=8080
 EXPOSE 8080
 CMD ["python", "-m", "homelab"]

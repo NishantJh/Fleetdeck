@@ -18,6 +18,8 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   whether a reboot is needed.
 * **Update** runs a full upgrade (`apt-get dist-upgrade`, `dnf upgrade`, `apk upgrade`,
   `pacman -Syu`), streams the output to the Activity panel, then re-checks. Nothing is rebooted unless you ask.
+* Check results and the Activity history are saved to `data/state.db` (SQLite), so they survive a
+  restart or an image update. A job that was running when the dashboard stopped shows as interrupted.
 * **Reboot** reboots a machine, waits until it is back (its boot id changes), then re-checks it.
   Tick *Reboot afterwards if a reboot is needed* when updating to do both in one go. A Proxmox node
   that runs a `protect:`ed guest (the dashboard's own LXC) is never rebooted from here.
@@ -40,17 +42,17 @@ mkdir config
 cp config.example.yaml config/config.yaml   # fill in your hosts
 ssh-keygen -t ed25519 -f config/id_ed25519 -N "" -C homelab-manager   # see "Giving the dashboard its own SSH key"
 ssh-keyscan 192.168.1.10 192.168.1.20 192.168.1.30 > config/known_hosts
-sudo chown -R 10001:10001 config && chmod 600 config/id_ed25519   # the container runs as uid 10001
+chmod 600 config/id_ed25519 && mkdir -p data && sudo chown -R 10001:10001 config data   # the container runs as uid 10001
 HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d
 ```
 
 The container runs as an unprivileged user (uid 10001) with a read-only filesystem and no Linux
-capabilities, so the files in `config/` (and `data/`, if you keep state there) must be readable by
+capabilities, so the files in `config/` must be readable, and `data/` writable, by
 that uid. Anything it can't read is logged at start-up with the `chown` to fix it, and shows on the
 affected machine's check.
 
 **Upgrading from an image that ran as root:** before pulling the new image, run
-`sudo chown -R 10001:10001 config` (and `data` if it exists) in the project folder, or the dashboard
+`mkdir -p data && sudo chown -R 10001:10001 config data` in the project folder, or the dashboard
 can't read its config and won't start. To pin a version instead of `latest`, use a
 release tag such as `ghcr.io/nishantjh/homelab-manager:0.2.0`.
 
@@ -58,7 +60,7 @@ release tag such as `ghcr.io/nishantjh/homelab-manager:0.2.0`.
 
 1. Create a new project in Arcane and paste in `docker-compose.yml`.
 2. Put `config.yaml`, the SSH key and `known_hosts` in a `config/` folder inside that project's
-   directory on the Docker host, and set `HOMELAB_PASSWORD` and `PVE_TOKEN_SECRET` in the
+   directory on the Docker host (check results and job history go in `data/` next to it), and set `HOMELAB_PASSWORD` and `PVE_TOKEN_SECRET` in the
    project's `.env`.
 3. While the repo is private, the image is too: add `ghcr.io` as a registry in Arcane with your
    GitHub username and a token that has `read:packages`.

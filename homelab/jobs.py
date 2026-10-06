@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 
 from .inventory import Inventory
 from .models import CheckResult, Job, JobAction, Target
+from .store import Store, mark_interrupted
 from .updates import (
     BOOT_ID_SCRIPT,
     CHECK_SCRIPT,
@@ -67,18 +68,51 @@ class _Slot:
 class JobManager:
     """Runs checks and upgrades in the background, at most ``max_parallel`` at a time.
 
-    Only one job per target runs at once; later ones wait their turn.
+    Only one job per target runs at once; later ones wait their turn. With a ``store``, check
+    results and finished jobs are saved and reloaded on the next start.
     """
 
-    def __init__(self, inventory: Inventory, max_parallel: int = 4):
+    def __init__(self, inventory: Inventory, max_parallel: int = 4, store: Store | None = None):
         self.inventory = inventory
         self.sem = asyncio.Semaphore(max_parallel)
+        self.store = store
         self.jobs: OrderedDict[str, Job] = OrderedDict()
         self.checks: dict[str, CheckResult] = {}
         self._target_locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task] = set()
         # Hosts that are rebooting, or waiting for their guests' jobs so they can reboot.
         self._rebooting: set[str] = set()
+        if store is not None:
+            self.checks = store.load_checks()
+            self.jobs = OrderedDict((j.id, j) for j in store.load_jobs(MAX_JOBS))
+
+    def _set_check(self, target_id: str, check: CheckResult) -> None:
+        self.checks[target_id] = check
+        if self.store is not None:
+            self._persist(self.store.save_check, target_id, check)
+
+    def _save_job(self, job: Job) -> None:
+        if self.store is not None:
+            self._persist(self.store.save_job, job)
+
+    @staticmethod
+    def _persist(fn, *args) -> None:
+        # A full disk or read-only volume must not break checks and upgrades themselves.
+        try:
+            fn(*args)
+        except Exception:  # noqa: BLE001
+            log.exception("could not save state")
+
+    async def shutdown(self) -> None:
+        """Stop running jobs and record them as interrupted, before the store is closed."""
+        tasks = list(self._tasks)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        for job in self.jobs.values():
+            if job.status in ("queued", "running"):
+                mark_interrupted(job)
+                self._save_job(job)
 
     def active_job(self, target_id: str) -> Job | None:
         for job in reversed(self.jobs.values()):
@@ -107,6 +141,7 @@ class JobManager:
             created_at=_now(),
         )
         self.jobs[job.id] = job
+        self._save_job(job)
         self._evict()
         task = asyncio.create_task(self._run(job))
         self._tasks.add(task)
@@ -121,11 +156,14 @@ class JobManager:
         done = [jid for jid, j in self.jobs.items() if j.status in ("succeeded", "failed")]
         for jid in done[:excess]:
             del self.jobs[jid]
+        if self.store is not None:
+            self._persist(self.store.delete_jobs, done[:excess])
 
     async def _run(self, job: Job) -> None:
         lock = self._target_locks.setdefault(job.target_id, asyncio.Lock())
         async with lock, _Slot(self.sem) as slot:
             job.status, job.started_at = "running", _now()
+            self._save_job(job)
 
             def on_line(stream: str, line: str) -> None:
                 # Stop recording (rather than trim, which would shift the offsets the UI pages by). The
@@ -145,7 +183,7 @@ class JobManager:
                 _ensure_runnable(target, executor, job.action)
                 if job.action == "check":
                     check = await _check(executor, on_line)
-                    self.checks[job.target_id] = check
+                    self._set_check(job.target_id, check)
                     if check.error:
                         raise RuntimeError(check.error)
                     job.log.append(f"== {len(check.packages)} update(s) available")
@@ -164,7 +202,7 @@ class JobManager:
                         check = await _check(executor)
                     except Exception as e:  # noqa: BLE001
                         check = CheckResult(checked_at=_now(), error=str(e) or type(e).__name__)
-                    self.checks[job.target_id] = check
+                    self._set_check(job.target_id, check)
                     if check.error:
                         job.log.append(f"! re-check failed: {check.error}")
                     else:
@@ -187,6 +225,7 @@ class JobManager:
                     self._record_check_error(job.target_id, job.error)
             finally:
                 job.finished_at = _now()
+                self._save_job(job)
 
     def _host_id(self, target: Target) -> str | None:
         """The id of the host a guest runs on, if it is in the inventory."""
@@ -256,7 +295,7 @@ class JobManager:
                 check = CheckResult(checked_at=_now(), error=str(e) or type(e).__name__)
             if not check.error:
                 break
-        self.checks[job.target_id] = check
+        self._set_check(job.target_id, check)
         if check.error:
             job.log.append(f"! re-check failed: {check.error}")
         elif check.reboot_required:
@@ -269,11 +308,14 @@ class JobManager:
         prev = self.checks.get(target_id)
         if prev is not None and prev.error == error:
             return
-        self.checks[target_id] = CheckResult(
-            os=prev.os if prev else None,
-            package_manager=prev.package_manager if prev else None,
-            checked_at=_now(),
-            error=error,
+        self._set_check(
+            target_id,
+            CheckResult(
+                os=prev.os if prev else None,
+                package_manager=prev.package_manager if prev else None,
+                checked_at=_now(),
+                error=error,
+            ),
         )
 
 

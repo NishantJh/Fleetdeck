@@ -23,7 +23,7 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 - [x] Basic auth, Docker image on GHCR (amd64/arm64), Arcane-ready compose, demo mode, CI
 
 ### 2. Make updates safe and hands-off
-- [ ] Persist check results and job history (SQLite) so restarts don't lose state
+- [x] Persist check results and job history (SQLite) so restarts don't lose state
 - [ ] Snapshot before upgrade (Proxmox `vzdump`/snapshot, `incus snapshot create`), with rollback button
 - [x] Reboot action, and "reboot if required" option after upgrade
 - [ ] Scheduled checks plus notifications (ntfy, Discord, email) when updates are pending
