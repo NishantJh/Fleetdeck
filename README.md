@@ -23,6 +23,10 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
 * **Reboot** reboots a machine, waits until it is back (its boot id changes), then re-checks it.
   Tick *Reboot afterwards if a reboot is needed* when updating to do both in one go. A Proxmox node
   that runs a `protect:`ed guest (the dashboard's own LXC) is never rebooted from here.
+* **Scheduled checks:** set `schedule.check_every` (e.g. `6h`) and the dashboard checks everything on
+  its own, then notifies you through ntfy, Gotify, Discord, Telegram or a JSON webhook when something
+  new is pending (a new update, a new pending reboot, or a check that started failing). It never
+  upgrades on its own. *Test notification* in the toolbar sends a test message.
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,
   never two jobs on the same machine at once).
 

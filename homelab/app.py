@@ -14,6 +14,8 @@ from .config import AppConfig, load_config
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
 from .models import CheckResult, Job, JobAction, Target
+from .notify import Notifier
+from .scheduler import Scheduler
 from .security import LoginThrottle, make_guard
 from .store import Store
 
@@ -45,6 +47,8 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
     inventory = inventory or Inventory(build_providers(cfg))
     store = _open_store(cfg.state_file)
     jobs = JobManager(inventory, cfg.max_parallel, store)
+    notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
+    scheduler = Scheduler(cfg.schedule.check_every, inventory, jobs, notifier)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -52,8 +56,14 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
             log.warning("No auth configured: anyone who can reach this dashboard can update your machines.")
             if not cfg.allowed_hosts:
                 log.warning("allowed_hosts is not set: without auth, web pages can reach the API via DNS rebinding.")
+        if notifier is not None and not scheduler.interval:
+            log.warning("Notifications are set up but schedule.check_every isn't, so nothing will be sent.")
+        scheduler.start()
         yield
+        await scheduler.stop()  # first, so it can't queue checks during shutdown
         await jobs.shutdown()
+        if notifier is not None:
+            await notifier.aclose()
         for provider in inventory.providers:
             client = getattr(provider, "client", None)
             if client is not None:
@@ -64,6 +74,7 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
     app = FastAPI(title="Homelab Manager", lifespan=lifespan)
     app.state.jobs = jobs
     app.state.inventory = inventory
+    app.state.scheduler = scheduler
 
     app.middleware("http")(make_guard(cfg.auth, LoginThrottle()))
     if cfg.allowed_hosts:
@@ -105,6 +116,23 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
         data["log"] = job.log[since:]
         data["log_offset"] = since
         return data
+
+    @app.get("/api/schedule")
+    async def schedule():
+        return {
+            "check_every": scheduler.interval,
+            "next_run": scheduler.next_run,
+            "last_run": scheduler.last_run,
+            "last_notified": scheduler.last_notified,
+            "notify_targets": len(cfg.notify),
+        }
+
+    @app.post("/api/notify/test")
+    async def notify_test():
+        if notifier is None:
+            raise HTTPException(400, "no notify targets configured")
+        errors = await notifier.send("Homelab Manager test", "Notifications from your homelab dashboard work.")
+        return {"sent": len(cfg.notify) - len(errors), "errors": errors}
 
     @app.get("/")
     async def index():

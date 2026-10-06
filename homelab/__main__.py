@@ -7,6 +7,12 @@ from .app import create_app
 from .config import AppConfig, load_config
 
 
+def configure_logging() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    # httpx logs every request URL at INFO, and a Telegram URL carries the bot token.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
 def server_options(cfg: AppConfig) -> dict:
     opts: dict = {
         "host": os.environ.get("HOST", "0.0.0.0"),
@@ -22,7 +28,7 @@ def server_options(cfg: AppConfig) -> dict:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+    configure_logging()
     cfg = load_config()
     uvicorn.run(create_app(cfg), **server_options(cfg))
 
