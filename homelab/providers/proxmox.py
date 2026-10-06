@@ -192,6 +192,8 @@ class ProxmoxProvider:
             found.append((host, PveNodeExecutor(self.client, nname, ssh)))
             if not online:
                 continue
+            # Rebooting the node would take down the protected guest, i.e. this dashboard.
+            protected_here: list[str] = []
 
             for ct in await self._get(f"/nodes/{nname}/lxc"):
                 vmid = int(ct["vmid"])
@@ -202,6 +204,8 @@ class ProxmoxProvider:
                 note = (None if ssh else ssh_problem or "needs node ssh for pct exec") if running else "not running"
                 if vmid in self.cfg.protect:
                     updatable, note = False, PROTECTED_NOTE
+                    if running:
+                        protected_here.append(ct.get("name") or f"ct{vmid}")
                 t = Target(
                     id=f"{prefix}:lxc:{vmid}",
                     name=ct.get("name") or f"ct{vmid}",
@@ -224,6 +228,8 @@ class ProxmoxProvider:
                 updatable = running
                 if vmid in self.cfg.protect:
                     updatable, note = False, PROTECTED_NOTE
+                    if running:
+                        protected_here.append(vm.get("name") or f"vm{vmid}")
                 elif running:
                     note = await self._vm_blocker(nname, vmid)
                     updatable = note is None
@@ -239,4 +245,6 @@ class ProxmoxProvider:
                     note=note,
                 )
                 found.append((t, PveAgentExecutor(self.client, nname, vmid)))
+            if protected_here:
+                host.no_reboot = f"runs protected guest {', '.join(protected_here)}; reboot it from the Proxmox UI"
         return found

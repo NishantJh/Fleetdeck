@@ -48,6 +48,7 @@ async def test_proxmox_discovery():
     assert not found["broken"].updatable and "VM config" in found["broken"].note
     assert found["pihole"].updatable and not found["old"].updatable
     assert not found["arcane"].updatable and "protected" in found["arcane"].note
+    assert "arcane" in found["pve"].no_reboot
     assert found["docker"].updatable
     assert not found["win11"].updatable and "Windows" in found["win11"].note
     assert not found["noagent"].updatable and "agent" in found["noagent"].note

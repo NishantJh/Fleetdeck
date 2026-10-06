@@ -18,6 +18,11 @@ auth:
 # How many machines may be checked/updated at once.
 max_parallel: 4
 
+# Where check results and job history are saved, so a restart doesn't lose them.
+# The Docker image already sets this to /data/state.db (HOMELAB_STATE); omit to keep state in memory.
+# A relative path is relative to this file.
+# state_file: ./data/state.db
+
 # SSH host keys of every machine (`ssh-keyscan host1 host2 ... > config/known_hosts`). Every SSH entry
 # uses this unless it names its own; a machine with neither is refused. A Proxmox cluster already
 # keeps all its nodes' keys in /etc/pve/priv/known_hosts. Include each node's cluster IP (the address
