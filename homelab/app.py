@@ -34,6 +34,8 @@ class ActionRequest(BaseModel):
     target_ids: list[str] = Field(max_length=1000)
     # Upgrade only: reboot afterwards when the upgrade leaves a reboot pending.
     reboot_if_required: bool = False
+    # Upgrade only: snapshot guests first.
+    snapshot_first: bool = False
 
 
 def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None) -> FastAPI:
@@ -46,7 +48,7 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
         )
     inventory = inventory or Inventory(build_providers(cfg))
     store = _open_store(cfg.state_file)
-    jobs = JobManager(inventory, cfg.max_parallel, store)
+    jobs = JobManager(inventory, cfg.max_parallel, store, cfg.snapshot_keep)
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
     scheduler = Scheduler(cfg.schedule.check_every, inventory, jobs, notifier)
 
@@ -88,15 +90,23 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
             TargetView(target=t, check=jobs.checks.get(t.id), active_job=_light(jobs.active_job(t.id)))
             for t, _ in inventory.targets.values()
         ]
-        return {"targets": views, "errors": inventory.errors}
+        return {
+            "targets": views,
+            "errors": inventory.errors,
+            "settings": {"snapshot_before_upgrade": cfg.snapshot_before_upgrade},
+        }
 
     @app.post("/api/actions")
     async def run_action(req: ActionRequest):
+        if req.action == "rollback":
+            raise HTTPException(400, "roll back from the upgrade job: POST /api/jobs/{id}/rollback")
         await inventory.refresh()
         submitted, rejected = [], {}
         for tid in req.target_ids:
             try:
-                submitted.append(_light(jobs.submit(tid, req.action, req.reboot_if_required)))
+                submitted.append(
+                    _light(jobs.submit(tid, req.action, req.reboot_if_required, snapshot_first=req.snapshot_first))
+                )
             except KeyError:
                 rejected[tid] = "unknown target"
             except ValueError as e:
@@ -133,6 +143,34 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
             raise HTTPException(400, "no notify targets configured")
         errors = await notifier.send("Homelab Manager test", "Notifications from your homelab dashboard work.")
         return {"sent": len(cfg.notify) - len(errors), "errors": errors}
+
+    @app.post("/api/jobs/{job_id}/rollback")
+    async def rollback(job_id: str):
+        """Restore the snapshot an upgrade job took before it ran."""
+        job = jobs.jobs.get(job_id)
+        if job is None:
+            raise HTTPException(404, "job not found")
+        if job.action != "upgrade" or not job.snapshot:
+            raise HTTPException(400, "this job took no snapshot")
+        await inventory.refresh()
+        snaps = inventory.snapshots.get(job.target_id)
+        if snaps is not None:
+            try:
+                exists = job.snapshot in await snaps.list_ours()
+            except Exception:  # noqa: BLE001 - let the job itself report what is wrong
+                exists = True
+            if not exists:
+                raise HTTPException(
+                    400,
+                    f"snapshot {job.snapshot} no longer exists (only the newest {cfg.snapshot_keep} are kept); "
+                    "roll back to an older one in Proxmox or Incus",
+                )
+        try:
+            return _light(jobs.submit(job.target_id, "rollback", snapshot=job.snapshot))
+        except KeyError:
+            raise HTTPException(404, "target no longer exists") from None
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
 
     @app.get("/")
     async def index():

@@ -11,6 +11,7 @@ import httpx
 from ..config import ProxmoxConfig, SSHConfig
 from ..executors import DEFAULT_TIMEOUT, LineCallback, PctExecutor, PveAgentExecutor, SSHExecutor
 from ..models import BackupInfo, CheckResult, ExecResult, Package, Target
+from ..snapshots import PveSnapshots
 from ..tls import PinnedTransport
 from ..updates import REBOOT_SCRIPT, parse_apt, parse_reboot
 from . import Discovered
@@ -146,6 +147,7 @@ class ProxmoxProvider:
         self.name = cfg.name
         self._backups: BackupIndex | None = None
         self._backups_at = 0.0
+        self.snapshots: dict[str, PveSnapshots] = {}
         self.client = httpx.AsyncClient(
             base_url=cfg.api_url.rstrip("/") + "/api2/json",
             headers={"Authorization": f"PVEAPIToken={cfg.token_id}={cfg.token_secret}"},
@@ -280,6 +282,7 @@ class ProxmoxProvider:
 
     async def discover(self) -> Discovered:
         found: Discovered = []
+        snapshots: dict[str, PveSnapshots] = {}
         node_ips = await self._node_ips()
         nodes = await self._get("/nodes")
         backups = None
@@ -338,7 +341,10 @@ class ProxmoxProvider:
                     updatable=updatable,
                     note=note,
                     backup=self._backup_for(vmid, backups),
+                    can_snapshot=vmid not in self.cfg.protect,
                 )
+                if t.can_snapshot:
+                    snapshots[t.id] = PveSnapshots(self.client, nname, "lxc", vmid)
                 found.append((t, PctExecutor(ssh, vmid) if ssh else None))  # type: ignore[arg-type]
 
             for vm in await self._get(f"/nodes/{nname}/qemu"):
@@ -366,8 +372,12 @@ class ProxmoxProvider:
                     updatable=updatable,
                     note=note,
                     backup=self._backup_for(vmid, backups),
+                    can_snapshot=vmid not in self.cfg.protect,
                 )
+                if t.can_snapshot:
+                    snapshots[t.id] = PveSnapshots(self.client, nname, "qemu", vmid)
                 found.append((t, PveAgentExecutor(self.client, nname, vmid)))
             if protected_here:
                 host.no_reboot = f"runs protected guest {', '.join(protected_here)}; reboot it from the Proxmox UI"
+        self.snapshots = snapshots
         return found

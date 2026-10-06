@@ -36,6 +36,14 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   API token most likely lacks it, so add the read-only `PVEAuditor` role on `/storage`
   (`pveum acl modify /storage --tokens 'root@pam!homelab' --roles PVEAuditor`, with your token id),
   or set `backup_max_age_hours: 0` to turn the column off.
+* **Snapshot first:** the Update dialog can snapshot Proxmox LXCs/VMs and Incus instances before
+  upgrading (on by default, `snapshot_before_upgrade`). A guest whose storage can't snapshot at all
+  (a raw disk on dir/NFS storage) is upgraded without one and the log says so; any other snapshot
+  failure stops the upgrade. The job's log then has a **Roll back to snapshot** button, which also
+  works when the guest no longer boots or its agent stopped answering. The dashboard keeps its last
+  `snapshot_keep` (3) snapshots per guest, named `homelab_<date>_<time>`, and never touches
+  snapshots it didn't make. The button only covers the job's own snapshot while it is still kept
+  and the job is still in Activity; roll back to anything older in Proxmox or Incus.
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,
   never two jobs on the same machine at once).
 
@@ -71,120 +79,21 @@ release tag such as `ghcr.io/nishantjh/homelab-manager:0.2.0`.
 
 ### With Arcane
 
-Run these on the Docker host (the machine or LXC that runs Arcane), in the folder Arcane created for
-the project. It needs `ssh-keygen`, `ssh-copy-id` and `ssh-keyscan` (`apt install openssh-client`).
-
-**1. Create the project.** Make a new project in Arcane and paste in `docker-compose.yml`. Then, in
-the project's folder:
-
-```bash
-mkdir -p config data
-cp config.example.yaml config/config.yaml   # or download it from this repo; fill it in in step 6
-```
-
-`config/` holds the settings and keys; check results and job history are saved in `data/`.
-
-**2. Generate the dashboard's SSH key.** It gets a key of its own, so you can revoke it without
-touching yours. No passphrase, because nobody is there to type it:
-
-```bash
-ssh-keygen -t ed25519 -f config/id_ed25519 -N "" -C homelab-manager
-```
-
-This creates `config/id_ed25519` (private, never leaves this folder) and `config/id_ed25519.pub`
-(the public half you put on each machine).
-
-**3. Install the public key on every machine the dashboard manages.** `ssh-copy-id` logs in once
-with your password or existing key and appends the key to that user's `~/.ssh/authorized_keys`:
-
-```bash
-ssh-copy-id -i config/id_ed25519.pub root@192.168.1.10   # Proxmox node (once per cluster node)
-ssh-copy-id -i config/id_ed25519.pub root@192.168.1.20   # Incus host
-ssh-copy-id -i config/id_ed25519.pub pi@192.168.1.30     # Raspberry Pi (user with passwordless sudo)
-ssh-copy-id -i config/id_ed25519.pub ubuntu@my-vps.example.com   # VPS
-```
-
-If a machine has password login turned off, open its console instead (on Proxmox:
-*Node → Shell*), and append the line from `config/id_ed25519.pub` by hand:
-
-```bash
-echo 'ssh-ed25519 AAAA...your key... homelab-manager' >> ~/.ssh/authorized_keys
-```
-
-On the VPS, also restrict where the key can be used (see "For a VPS" below).
-
-**4. Record each machine's host key.** The dashboard refuses to connect to a machine whose host key
-isn't in `known_hosts`, so a machine pretending to be yours can't get your commands. List every
-machine from step 3; for a Proxmox cluster, every node's cluster IP as well. Add `-p <port>` if SSH
-isn't on port 22. Scan each machine by the same address you put under `host:` in step 6: an IP
-and a hostname are separate entries in `known_hosts`, so scanning one doesn't cover the other.
-
-```bash
-ssh-keyscan 192.168.1.10 192.168.1.11 192.168.1.20 192.168.1.30 my-vps.example.com > config/known_hosts
-ssh-keygen -lf config/known_hosts   # the fingerprints you just trusted
-```
-
-For the VPS, compare its fingerprint with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` run
-on the VPS itself through your provider's web console.
-
-**5. Test the key** before the dashboard does. Each of these should print `ok` without asking for a
-password or about an unknown host:
-
-```bash
-ssh -i config/id_ed25519 -o UserKnownHostsFile=config/known_hosts -o StrictHostKeyChecking=yes root@192.168.1.10 echo ok
-```
-
-After step 7 the key belongs to uid 10001, so run the test again with `sudo ssh ...`.
-
-**6. Point `config.yaml` at both files.** The container sees the project's `config/` folder as
-`/config`, so use those paths, not the host's:
-
-```yaml
-known_hosts: /config/known_hosts   # top level: used by every SSH entry
-
-proxmox:
-  - name: pve
-    # ...
-    ssh:
-      host: 192.168.1.10
-      user: root
-      key_file: /config/id_ed25519
-
-hosts:
-  - name: pi4
-    host: 192.168.1.30
-    user: pi
-    key_file: /config/id_ed25519
-    sudo: true
-```
-
-**7. Hand the files to the container's user.** The container runs as uid 10001, not root, so it
-must own them. Run this again whenever you add or replace a file in `config/`:
-
-```bash
-chmod 600 config/id_ed25519
-sudo chown -R 10001:10001 config data
-```
-
-**8. Finish the project settings.**
-- Set `HOMELAB_PASSWORD` and `PVE_TOKEN_SECRET` in the project's `.env`.
-- While the repo is private, the image is too: add `ghcr.io` as a registry in Arcane with your
-  GitHub username and a token that has `read:packages`.
-- Add the VMID of the LXC that runs Docker/Arcane to `protect:` under your Proxmox entry. It still
-  shows on the dashboard, but can't be updated from it, because upgrading Docker in that LXC would
-  restart the dashboard halfway through. Update that one LXC from its own console.
-
-**9. Deploy** the project in Arcane, open the dashboard and press **Check all**. If a machine shows
-an error:
-- "SSH host key unknown": the top-level `known_hosts:` line is missing from `config.yaml` (step 6).
-- "Host key is not trusted for host …": that machine, at that exact address, is missing from
-  `config/known_hosts` (step 4).
-- "can't read …": step 7 needs running again.
+1. Create a new project in Arcane and paste in `docker-compose.yml`.
+2. Put `config.yaml`, the SSH key and `known_hosts` in a `config/` folder inside that project's
+   directory on the Docker host (check results and job history go in `data/` next to it), and set `HOMELAB_PASSWORD` and `PVE_TOKEN_SECRET` in the
+   project's `.env`.
+3. While the repo is private, the image is too: add `ghcr.io` as a registry in Arcane with your
+   GitHub username and a token that has `read:packages`.
+4. Add the VMID of the LXC that runs Docker/Arcane to `protect:` under your Proxmox entry. It still
+   shows on the dashboard, but can't be updated from it, because upgrading Docker in that LXC would
+   restart the dashboard halfway through. Update that one LXC from its own console.
 
 ### What each platform needs
 
 * **Proxmox:** an API token (Datacenter → Permissions → API Tokens) with `VM.Audit`/`Sys.Audit` to
-  list guests, `Datastore.Audit` on `/storage` to see backups, `Sys.Modify` on `/nodes` so the host check can refresh package lists, and
+  list guests, `Datastore.Audit` on `/storage` to see backups,
+  `VM.Snapshot` and `VM.Snapshot.Rollback` for snapshots, `Sys.Modify` on `/nodes` so the host check can refresh package lists, and
   guest-agent exec rights to update VMs (`VM.GuestAgent.Unrestricted` on PVE 9, `VM.Monitor` on
   PVE 8). VMs need the *QEMU Guest Agent* option on and `qemu-guest-agent` installed inside.
 * **Proxmox host updates** are checked through PVE itself, the same as *Updates → Refresh* in the
@@ -201,10 +110,8 @@ an error:
 
 ### Giving the dashboard its own SSH key
 
-The Arcane steps above walk through this end to end; this section adds the Windows-only route and
-the VPS hardening. The dashboard runs in Docker, so it can't use the key on your own PC. Give it a
-key of its own; that way you can revoke it without touching yours. Inside the `config/` folder on
-the Docker host:
+The dashboard runs in Docker, so it can't use the key on your own PC. Give it a key of its own;
+that way you can revoke it without touching yours. Inside the `config/` folder on the Docker host:
 
 ```bash
 ssh-keygen -t ed25519 -f id_ed25519 -N "" -C homelab-manager
@@ -243,13 +150,14 @@ has only what the dashboard needs:
 
 ```bash
 pveum user add homelab@pve
-pveum role add HomelabManager -privs "VM.Audit Sys.Audit Sys.Modify VM.GuestAgent.Unrestricted"  # PVE 8: VM.Monitor
+pveum role add HomelabManager -privs "VM.Audit Sys.Audit Sys.Modify VM.GuestAgent.Unrestricted Datastore.Audit VM.Snapshot VM.Snapshot.Rollback"  # PVE 8: VM.Monitor
 pveum aclmod / -user homelab@pve -role HomelabManager
 pveum user token add homelab@pve dashboard --privsep 0
 ```
 
 The dashboard also has root SSH to the node, so this mainly limits the damage if the token alone
-leaks. `Sys.Modify` is only needed for refreshing package lists through the API.
+leaks. `Sys.Modify` is only needed for refreshing package lists through the API, `Datastore.Audit` for the
+backup column and `VM.Snapshot`/`VM.Snapshot.Rollback` for snapshots before upgrades.
 
 **Restrict the SSH key** on every machine, not just the VPS: in `~/.ssh/authorized_keys`, prefix the
 dashboard's key with `from="<dashboard IP>",restrict` (`restrict` turns off port, agent and X11

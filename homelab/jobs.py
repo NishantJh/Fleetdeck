@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 
 from .inventory import Inventory
 from .models import CheckResult, Job, JobAction, Target
+from .snapshots import Snapshots, prune, snapshot_name, unsupported
 from .store import Store, mark_interrupted
 from .updates import (
     BOOT_ID_SCRIPT,
@@ -72,8 +73,9 @@ class JobManager:
     results and finished jobs are saved and reloaded on the next start.
     """
 
-    def __init__(self, inventory: Inventory, max_parallel: int = 4, store: Store | None = None):
+    def __init__(self, inventory: Inventory, max_parallel: int = 4, store: Store | None = None, snapshot_keep: int = 3):
         self.inventory = inventory
+        self.snapshot_keep = snapshot_keep
         self.sem = asyncio.Semaphore(max_parallel)
         self.store = store
         self.jobs: OrderedDict[str, Job] = OrderedDict()
@@ -120,9 +122,21 @@ class JobManager:
                 return job
         return None
 
-    def submit(self, target_id: str, action: JobAction, reboot_if_required: bool = False) -> Job:
+    def submit(
+        self,
+        target_id: str,
+        action: JobAction,
+        reboot_if_required: bool = False,
+        snapshot_first: bool = False,
+        snapshot: str | None = None,
+    ) -> Job:
         target, executor = self.inventory.get(target_id)
-        _ensure_runnable(target, executor, action)
+        if action == "rollback":
+            _ensure_can_roll_back(target, self.inventory.snapshots.get(target_id))
+            if not snapshot:
+                raise ValueError(f"{target.name}: no snapshot to roll back to")
+        else:
+            _ensure_runnable(target, executor, action)
         host_id = self._host_id(target)
         if host_id in self._rebooting:
             raise ValueError(f"{target.name}: its host {target.parent} is rebooting")
@@ -138,6 +152,8 @@ class JobManager:
             target_name=target.name,
             action=action,
             reboot_if_required=reboot_if_required and action == "upgrade",
+            snapshot_first=snapshot_first and action == "upgrade",
+            snapshot=snapshot if action == "rollback" else None,
             created_at=_now(),
         )
         self.jobs[job.id] = job
@@ -180,7 +196,10 @@ class JobManager:
                     target, executor = self.inventory.get(job.target_id)
                 except KeyError:
                     raise RuntimeError("target no longer exists") from None
-                _ensure_runnable(target, executor, job.action)
+                if job.action == "rollback":
+                    _ensure_can_roll_back(target, self.inventory.snapshots.get(job.target_id))
+                else:
+                    _ensure_runnable(target, executor, job.action)
                 if job.action == "check":
                     check = await _check(executor, on_line)
                     self._set_check(job.target_id, check)
@@ -189,7 +208,23 @@ class JobManager:
                     job.log.append(f"== {len(check.packages)} update(s) available")
                 elif job.action == "reboot":
                     await self._reboot(job, target, executor, on_line, slot)
+                elif job.action == "rollback":
+                    job.log.append(f"== Rolling back to snapshot {job.snapshot}")
+                    warning = await self.inventory.snapshots[job.target_id].rollback(job.snapshot)
+                    if warning:
+                        job.log.append(f"! {warning}")
+                    if executor is None:
+                        # E.g. an LXC whose node has no SSH: nothing to re-check with.
+                        job.log.append("== Rolled back")
+                    else:
+                        job.log.append("== Rolled back; re-checking")
+                        try:
+                            self._set_check(job.target_id, await _check(executor))
+                        except Exception as e:  # noqa: BLE001 - the rollback itself worked
+                            job.log.append(f"! re-check failed: {e}")
                 else:
+                    if job.snapshot_first:
+                        await self._snapshot(job)
                     job.log.append("== Running OS upgrade")
                     res = await executor.run(UPGRADE_SCRIPT, on_line)
                     if res.rc != 0:
@@ -303,6 +338,32 @@ class JobManager:
         else:
             job.log.append("== Reboot finished")
 
+    async def _snapshot(self, job: Job) -> None:
+        snaps = self.inventory.snapshots.get(job.target_id)
+        if snaps is None:
+            job.log.append("== No snapshot: only Proxmox and Incus guests can be snapshotted")
+            return
+        name = snapshot_name()
+        job.log.append(f"== Taking snapshot {name}")
+        try:
+            warning = await snaps.create(name, f"Before OS upgrade by Homelab Manager (job {job.id})")
+        except Exception as e:
+            if unsupported(e):
+                # "Snapshot first" is on for everything by default; a guest that can never have one
+                # is upgraded like before rather than failing every time.
+                job.log.append("! this guest's storage can't take snapshots, so it is upgraded without one")
+                return
+            # The user asked for a safety net; don't upgrade without one.
+            raise RuntimeError(f"snapshot failed, so the upgrade was not started: {e}") from e
+        if warning:
+            job.log.append(f"! {warning}")
+        job.snapshot = name
+        try:
+            for old in await prune(snaps, self.snapshot_keep):
+                job.log.append(f"== Deleted old snapshot {old}")
+        except Exception as e:  # noqa: BLE001 - housekeeping only
+            job.log.append(f"! could not delete old snapshots: {e}")
+
     def _record_check_error(self, target_id: str, error: str) -> None:
         """Show a failed check as an error, keeping the OS name from the last good check."""
         prev = self.checks.get(target_id)
@@ -326,6 +387,13 @@ def _ensure_runnable(target: Target, executor, action: JobAction) -> None:
         raise ValueError(f"{target.name}: {target.note or 'can only be checked'}")
     if action == "reboot" and target.no_reboot:
         raise ValueError(f"{target.name}: {target.no_reboot}")
+
+
+def _ensure_can_roll_back(target: Target, snaps: Snapshots | None) -> None:
+    # Unlike other jobs this doesn't need the guest running or reachable: it goes through the
+    # Proxmox/Incus API, and a guest that won't boot after an upgrade is exactly when it's needed.
+    if snaps is None:
+        raise ValueError(f"{target.name}: snapshots are only supported for Proxmox and Incus guests")
 
 
 async def _check(executor, on_line=None) -> CheckResult:

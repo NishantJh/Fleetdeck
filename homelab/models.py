@@ -42,6 +42,8 @@ class Target(BaseModel):
     backup: BackupInfo | None = None
     # Why this target must not be rebooted from here (e.g. the node that runs this dashboard).
     no_reboot: str | None = None
+    # A Proxmox/Incus guest that can be snapshotted and rolled back.
+    can_snapshot: bool = False
 
 
 class Package(BaseModel):
@@ -69,7 +71,7 @@ class ExecResult(BaseModel):
     stderr: str = ""
 
 
-JobAction = Literal["check", "upgrade", "reboot"]
+JobAction = Literal["check", "upgrade", "reboot", "rollback"]
 JobStatus = Literal["queued", "running", "succeeded", "failed"]
 
 
@@ -80,6 +82,9 @@ class Job(BaseModel):
     action: JobAction
     # Upgrade only: reboot afterwards if the upgrade left a reboot pending.
     reboot_if_required: bool = False
+    # Upgrade: take a snapshot first (guests only). Upgrade/rollback: the snapshot taken / restored.
+    snapshot_first: bool = False
+    snapshot: str | None = None
     status: JobStatus = "queued"
     created_at: datetime
     started_at: datetime | None = None

@@ -24,7 +24,7 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 
 ### 2. Make updates safe and hands-off
 - [x] Persist check results and job history (SQLite) so restarts don't lose state
-- [ ] Snapshot before upgrade (Proxmox `vzdump`/snapshot, `incus snapshot create`), with rollback button
+- [x] Snapshot before upgrade (Proxmox snapshot, Incus snapshot), with rollback button
 - [x] Reboot action, and "reboot if required" option after upgrade
 - [x] Scheduled checks plus notifications (ntfy, Gotify, Discord, Telegram, webhook) when updates are pending
 - [ ] Per-target holds (skip kernel / Proxmox major upgrades)

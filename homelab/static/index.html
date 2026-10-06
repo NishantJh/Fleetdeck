@@ -27,7 +27,10 @@
       <div class="activity-body">
         <ul id="jobs"></ul>
         <div class="log-pane">
-          <div id="log-title" class="log-title">Select a job to see its output</div>
+          <div class="log-head">
+            <div id="log-title" class="log-title">Select a job to see its output</div>
+            <button id="rollback" class="small" hidden>Roll back to snapshot</button>
+          </div>
           <pre id="log"></pre>
         </div>
       </div>
@@ -40,6 +43,7 @@
       <p id="confirm-text" class="muted"></p>
       <ul id="confirm-list"></ul>
       <label id="confirm-reboot-row" class="check-row"><input type="checkbox" id="confirm-reboot"> Reboot afterwards if a reboot is needed</label>
+      <label id="confirm-snapshot-row" class="check-row"><input type="checkbox" id="confirm-snapshot"> Snapshot Proxmox/Incus guests first, so the upgrade can be rolled back</label>
       <menu>
         <button value="cancel">Cancel</button>
         <button value="ok" id="confirm-ok" class="primary">Update</button>

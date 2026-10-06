@@ -184,6 +184,10 @@ class AppConfig(BaseModel):
     max_parallel: int = Field(4, ge=1)
     # Adds fake targets so the UI can be tried without real infrastructure.
     demo: bool = False
+    # Snapshot Proxmox/Incus guests before upgrading them (the default of the checkbox in the
+    # Update dialog), and how many of the dashboard's own snapshots to keep per guest.
+    snapshot_before_upgrade: bool = True
+    snapshot_keep: int = Field(3, ge=1)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     notify: list[NotifyConfig] = Field(default_factory=list)
     # The dashboard's address, linked from notifications (e.g. http://192.168.1.50:8080).

@@ -5,6 +5,7 @@ import httpx
 from ..config import IncusConfig
 from ..executors import IncusExecutor, SSHExecutor
 from ..models import Target
+from ..snapshots import IncusSnapshots
 from ..tls import PinnedTransport
 from . import Discovered
 
@@ -15,6 +16,7 @@ class IncusProvider:
     def __init__(self, cfg: IncusConfig):
         self.cfg = cfg
         self.name = cfg.name
+        self.snapshots: dict[str, IncusSnapshots] = {}
         if cfg.socket:
             self.client = httpx.AsyncClient(
                 transport=httpx.AsyncHTTPTransport(uds=cfg.socket), base_url="http://incus", timeout=30
@@ -45,6 +47,7 @@ class IncusProvider:
 
     async def discover(self) -> Discovered:
         found: Discovered = []
+        snapshots: dict[str, IncusSnapshots] = {}
         ssh_problem = self.cfg.ssh.host_key_problem if self.cfg.ssh else None
         ssh = SSHExecutor(self.cfg.ssh) if self.cfg.ssh and not ssh_problem else None
         prefix = f"incus:{self.name}"
@@ -81,6 +84,9 @@ class IncusProvider:
                 status=inst.get("status", "unknown").lower(),
                 updatable=running,
                 note=None if running else "not running",
+                can_snapshot=True,
             )
+            snapshots[t.id] = IncusSnapshots(self.client, name, project)
             found.append((t, IncusExecutor(self.client, name, project)))
+        self.snapshots = snapshots
         return found

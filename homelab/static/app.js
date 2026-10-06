@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { targets: [], errors: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), logJob: null, logLines: [] };
+const state = { targets: [], errors: {}, settings: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), logJob: null, logLines: [] };
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const PLATFORM = { proxmox: "Proxmox", incus: "Incus", ssh: "Standalone", demo: "Demo" };
@@ -61,7 +61,7 @@ function groups() {
 
 const canUpgrade = (t) => t.updatable && !t.check_only;
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
-const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting" };
+const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back" };
 
 function updatesCell(v) {
   const t = v.target;
@@ -178,6 +178,7 @@ async function load(refresh = false) {
     const data = await api(`/api/targets${refresh ? "?refresh=true" : ""}`);
     state.targets = data.targets;
     state.errors = data.errors;
+    state.settings = data.settings || {};
     state.jobs = await api("/api/jobs");
     state.schedule = await api("/api/schedule");
     // Drop selections for targets that disappeared or can no longer be upgraded.
@@ -189,11 +190,11 @@ async function load(refresh = false) {
   render();
 }
 
-async function act(action, ids, rebootIfRequired = false) {
+async function act(action, ids, { rebootIfRequired = false, snapshotFirst = false } = {}) {
   if (!ids.length) return;
   let res;
   try {
-    const body = { action, target_ids: ids, reboot_if_required: rebootIfRequired };
+    const body = { action, target_ids: ids, reboot_if_required: rebootIfRequired, snapshot_first: snapshotFirst };
     res = await api("/api/actions", { method: "POST", body: JSON.stringify(body) });
   } catch (e) {
     alert(`Could not start ${action}: ${e.message}`);
@@ -245,13 +246,20 @@ function confirmAction(action, ids) {
     if (action === "upgrade" && v?.target.no_reboot) detail += ` · won't reboot: ${v.target.no_reboot}`;
     return `<li>${esc(v?.target.name || id)} <span class="muted">${esc(detail)}</span></li>`;
   }).join("");
+  const snapshottable = action === "upgrade" && ids.some((id) => byId.get(id)?.target.can_snapshot);
+  $("#confirm-snapshot-row").hidden = !snapshottable;
+  $("#confirm-snapshot").checked = snapshottable && !!state.settings.snapshot_before_upgrade;
   const dlg = $("#confirm");
   dlg.returnValue = "";
   dlg.showModal();
   dlg.addEventListener("close", () => {
     if (dlg.returnValue !== "ok") return;
     if (action === "upgrade") state.selected.clear();
-    act(action, ids, action === "upgrade" && $("#confirm-reboot").checked);
+    const upgrade = action === "upgrade";
+    act(action, ids, {
+      rebootIfRequired: upgrade && $("#confirm-reboot").checked,
+      snapshotFirst: upgrade && $("#confirm-snapshot").checked,
+    });
   }, { once: true });
 }
 
@@ -269,6 +277,13 @@ async function showLog(jobId) {
   if (state.logJob !== jobId) return;
   state.logLines.splice(job.log_offset, Infinity, ...job.log);
   $("#log-title").textContent = `${job.target_name} · ${job.action} · ${job.status}`;
+  const rb = $("#rollback");
+  rb.hidden = !(job.action === "upgrade" && job.snapshot && (job.status === "succeeded" || job.status === "failed"));
+  // Not while the machine has a job queued or running (e.g. the rollback just started).
+  rb.disabled = state.targets.some((v) => v.target.id === job.target_id && v.active_job);
+  rb.dataset.rollbackJob = job.id;
+  rb.dataset.snapshot = job.snapshot || "";
+  rb.dataset.name = job.target_name;
   const pre = $("#log");
   const stick = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 20;
   pre.textContent = state.logLines.join("\n");
@@ -307,6 +322,18 @@ $("#test-notify").onclick = async () => {
     alert(failed.length ? `Sent to ${r.sent}. Failed:\n${failed.map(([n, e]) => `${n}: ${e}`).join("\n")}` : `Sent to ${r.sent} target(s).`);
   } catch (e) {
     alert(`Could not send: ${e.message}`);
+  }
+};
+$("#rollback").onclick = async (e) => {
+  const { rollbackJob: job, snapshot, name } = e.currentTarget.dataset;
+  if (!confirm(`Roll ${name} back to snapshot ${snapshot}? Everything changed on it since the snapshot is lost.`)) return;
+  try {
+    const j = await api(`/api/jobs/${job}/rollback`, { method: "POST" });
+    state.logJob = j.id;
+    state.logLines = [];
+    schedule(200);
+  } catch (err) {
+    alert(`Could not roll back: ${err.message}`);
   }
 };
 $("#check-all").onclick = () => act("check", state.targets.filter((v) => v.target.updatable).map((v) => v.target.id));
