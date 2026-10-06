@@ -34,7 +34,7 @@ async def ssh_server(tmp_path):
         "127.0.0.1", 0, server_host_keys=[key], server_factory=_AllowAll, process_factory=_shell_process
     )
     port = server.sockets[0].getsockname()[1]
-    yield SSHConfig(host="127.0.0.1", port=port, user="tester")
+    yield SSHConfig(host="127.0.0.1", port=port, user="tester", insecure_skip_host_key_check=True)
     server.close()
     await server.wait_closed()
 
@@ -131,3 +131,10 @@ _real_sleep = asyncio.sleep
 
 async def _no_sleep(_):
     await _real_sleep(0)
+
+
+async def test_ssh_refuses_without_known_hosts():
+    import pytest
+
+    with pytest.raises(RuntimeError, match="no known_hosts for pi.lan"):
+        await SSHExecutor(SSHConfig(host="pi.lan")).run("true")

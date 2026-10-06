@@ -97,3 +97,183 @@ async def test_eviction_keeps_active_jobs(monkeypatch):
     jobs.submit("t0", "upgrade")
     assert len(jobs.jobs) == 2
     await _finish(jobs)
+
+
+class RebootingExecutor:
+    """Fakes a machine that is unreachable for one poll after a reboot, then has a new boot id."""
+
+    def __init__(self, kernel_pending=True):
+        self.boot = "boot-1"
+        self.down_polls = 0
+        self.reboots = 0
+        self.kernel_pending = kernel_pending
+
+    async def run(self, script, on_line=None, timeout=0):
+        from homelab.updates import BOOT_ID_SCRIPT, REBOOT_NOW_SCRIPT
+
+        if script == REBOOT_NOW_SCRIPT:
+            self.reboots += 1
+            self.down_polls = 1
+            self.boot = f"boot-{self.reboots + 1}"
+            self.kernel_pending = False
+            return ExecResult(rc=0)
+        if self.down_polls:
+            self.down_polls -= 1
+            raise ConnectionRefusedError("connection refused")
+        if script == BOOT_ID_SCRIPT:
+            return ExecResult(rc=0, stdout=f"__BOOT__={self.boot}\n")
+        reboot = "yes" if self.kernel_pending else "no"
+        return ExecResult(rc=0, stdout=f"__PM__=apt\n__OS__=Debian\n__BEGIN__\n__END__\n__REBOOT__={reboot}\n")
+
+
+@pytest.fixture
+def fast_reboot(monkeypatch):
+    import homelab.jobs
+
+    monkeypatch.setattr(homelab.jobs, "REBOOT_POLL", 0)
+
+
+async def test_reboot_waits_for_new_boot_and_rechecks(fast_reboot):
+    ex = RebootingExecutor()
+    jobs = JobManager(_inventory((_target(), ex)))
+    job = jobs.submit("t1", "reboot")
+    await _finish(jobs)
+    assert job.status == "succeeded", job.log
+    assert ex.reboots == 1
+    assert jobs.checks["t1"].reboot_required is False
+    assert "== Reboot finished" in job.log
+
+
+async def test_reboot_times_out_when_machine_does_not_come_back(fast_reboot, monkeypatch):
+    import homelab.jobs
+
+    monkeypatch.setattr(homelab.jobs, "REBOOT_TIMEOUT", 0)
+
+    class Stuck(RebootingExecutor):
+        async def run(self, script, on_line=None, timeout=0):
+            from homelab.updates import REBOOT_NOW_SCRIPT
+
+            if script == REBOOT_NOW_SCRIPT:
+                self.reboots += 1  # boot id never changes
+                return ExecResult(rc=0)
+            return await super().run(script, on_line, timeout)
+
+    jobs = JobManager(_inventory((_target(), Stuck())))
+    job = jobs.submit("t1", "reboot")
+    await _finish(jobs)
+    assert job.status == "failed" and "not back" in job.error
+
+
+async def test_upgrade_reboots_only_when_required(fast_reboot):
+    needs, clean = RebootingExecutor(kernel_pending=True), RebootingExecutor(kernel_pending=False)
+    jobs = JobManager(_inventory((_target("a"), needs), (_target("b"), clean)))
+    ja = jobs.submit("a", "upgrade", reboot_if_required=True)
+    jb = jobs.submit("b", "upgrade", reboot_if_required=True)
+    await _finish(jobs)
+    assert ja.status == jb.status == "succeeded"
+    assert needs.reboots == 1 and clean.reboots == 0
+    assert "== No reboot needed" in jb.log
+
+
+async def test_no_reboot_target(fast_reboot):
+    ex = RebootingExecutor()
+    jobs = JobManager(_inventory((_target(no_reboot="runs protected guest arcane"), ex)))
+    with pytest.raises(ValueError, match="arcane"):
+        jobs.submit("t1", "reboot")
+    job = jobs.submit("t1", "upgrade", reboot_if_required=True)
+    await _finish(jobs)
+    assert job.status == "succeeded" and ex.reboots == 0
+    assert any("Not rebooting" in line for line in job.log)
+
+
+async def test_check_only_target_rejects_reboot():
+    jobs = JobManager(_inventory((_target(check_only=True, note="check only"), FakeExecutor())))
+    with pytest.raises(ValueError, match="check only"):
+        jobs.submit("t1", "reboot")
+
+
+def _guest(tid, parent="t1", **kw) -> Target:
+    return Target(id=tid, name=tid, platform="ssh", source="hosts", kind="lxc", parent=parent, **kw)
+
+
+async def test_host_reboot_waits_for_guest_jobs(fast_reboot):
+    gate = asyncio.Event()
+    host = RebootingExecutor()
+    jobs = JobManager(_inventory((_target(), host), (_guest("g1"), FakeExecutor(gate=gate))), max_parallel=2)
+    guest_job = jobs.submit("g1", "upgrade")
+    reboot = jobs.submit("t1", "reboot")
+    for _ in range(20):
+        await asyncio.sleep(0)
+    assert "== Waiting for 1 guest job(s) to finish" in reboot.log
+    assert host.reboots == 0 and guest_job.status == "running"
+    gate.set()
+    await _finish(jobs)
+    assert reboot.status == "succeeded" and host.reboots == 1
+    assert guest_job.finished_at <= reboot.finished_at
+
+
+async def test_host_reboot_holds_slot_free_and_rejects_new_guest_jobs(fast_reboot, monkeypatch):
+    import homelab.jobs
+
+    # Keep the host "rebooting" until the test lets it come back.
+    back = asyncio.Event()
+    real_sleep = asyncio.sleep
+
+    async def sleep(delay):
+        if delay == homelab.jobs.REBOOT_POLL:
+            await back.wait()
+        await real_sleep(0)
+
+    monkeypatch.setattr(homelab.jobs.asyncio, "sleep", sleep)
+    jobs = JobManager(
+        _inventory(
+            (_target(), RebootingExecutor()), (_guest("g1"), FakeExecutor()), (_target("other"), FakeExecutor())
+        ),
+        max_parallel=1,
+    )
+    reboot = jobs.submit("t1", "reboot")
+    for _ in range(20):
+        await real_sleep(0)
+    assert "== Waiting for it to come back" in reboot.log
+    with pytest.raises(ValueError, match="rebooting"):
+        jobs.submit("g1", "check")
+    # The rebooting host doesn't hold the only slot while it waits.
+    other = jobs.submit("other", "check")
+    for _ in range(20):
+        await real_sleep(0)
+    assert other.status == "succeeded"
+    back.set()
+    await _finish(jobs)
+    assert reboot.status == "succeeded"
+    jobs.submit("g1", "check")
+    await _finish(jobs)
+
+
+async def test_resubmitting_upgrade_keeps_reboot_request():
+    gate = asyncio.Event()
+    jobs = JobManager(_inventory((_target(), FakeExecutor(gate=gate))))
+    first = jobs.submit("t1", "upgrade")
+    again = jobs.submit("t1", "upgrade", reboot_if_required=True)
+    assert again is first and first.reboot_if_required
+    gate.set()
+    await _finish(jobs)
+
+
+async def test_recheck_after_reboot_is_retried(fast_reboot):
+    class SlowServices(RebootingExecutor):
+        def __init__(self):
+            super().__init__()
+            self.failed_checks = 0
+
+        async def run(self, script, on_line=None, timeout=0):
+            if script == CHECK_SCRIPT and self.reboots and self.failed_checks < 2:
+                self.failed_checks += 1
+                raise ConnectionRefusedError("api not up yet")
+            return await super().run(script, on_line, timeout)
+
+    ex = SlowServices()
+    jobs = JobManager(_inventory((_target(), ex)))
+    job = jobs.submit("t1", "reboot")
+    await _finish(jobs)
+    assert job.status == "succeeded" and ex.failed_checks == 2
+    assert jobs.checks["t1"].error is None

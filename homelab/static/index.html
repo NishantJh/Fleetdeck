@@ -36,12 +36,13 @@
 
   <dialog id="confirm">
     <form method="dialog">
-      <h3>Update these machines?</h3>
-      <p class="muted">Runs a full OS upgrade (apt dist-upgrade, dnf upgrade, apk upgrade or pacman -Syu). Nothing is rebooted.</p>
+      <h3 id="confirm-title">Update these machines?</h3>
+      <p id="confirm-text" class="muted"></p>
       <ul id="confirm-list"></ul>
+      <label id="confirm-reboot-row" class="check-row"><input type="checkbox" id="confirm-reboot"> Reboot afterwards if a reboot is needed</label>
       <menu>
         <button value="cancel">Cancel</button>
-        <button value="ok" class="primary">Update</button>
+        <button value="ok" id="confirm-ok" class="primary">Update</button>
       </menu>
     </form>
   </dialog>
