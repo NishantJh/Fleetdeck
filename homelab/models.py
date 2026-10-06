@@ -40,12 +40,16 @@ class Target(BaseModel):
     check_only: bool = False
     note: str | None = None
     backup: BackupInfo | None = None
+    # Why this target must not be rebooted from here (e.g. the node that runs this dashboard).
+    no_reboot: str | None = None
 
 
 class Package(BaseModel):
     name: str
     available: str
     current: str | None = None
+    # Comes from a security repository (apt only: e.g. bookworm-security, jammy-security).
+    security: bool = False
 
 
 class CheckResult(BaseModel):
@@ -65,7 +69,7 @@ class ExecResult(BaseModel):
     stderr: str = ""
 
 
-JobAction = Literal["check", "upgrade"]
+JobAction = Literal["check", "upgrade", "reboot"]
 JobStatus = Literal["queued", "running", "succeeded", "failed"]
 
 
@@ -74,6 +78,8 @@ class Job(BaseModel):
     target_id: str
     target_name: str
     action: JobAction
+    # Upgrade only: reboot afterwards if the upgrade left a reboot pending.
+    reboot_if_required: bool = False
     status: JobStatus = "queued"
     created_at: datetime
     started_at: datetime | None = None

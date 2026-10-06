@@ -124,6 +124,33 @@ esac
 )
 
 
+# Identifies one boot of the target, so a reboot can be confirmed: the kernel's boot_id changes
+# when a host or VM reboots, and PID 1's start time (field 22 of /proc/1/stat, counted after the
+# command name, which may contain spaces) changes when a container restarts on a running kernel.
+BOOT_ID_SCRIPT = r"""
+b=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
+s=$(sed 's/.*) //' /proc/1/stat 2>/dev/null | cut -d' ' -f20)
+echo "__BOOT__=$b-$s"
+"""
+
+# Reboots in the background after a short delay, so the command returns (and the SSH session or
+# exec call closes cleanly) before the machine goes down.
+REBOOT_NOW_SCRIPT = r"""
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
+if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then cmd="systemctl reboot"
+else cmd="reboot"; fi
+if command -v setsid >/dev/null 2>&1; then detach=setsid; else detach=""; fi
+$detach nohup sh -c "sleep 2; $cmd" >/dev/null 2>&1 </dev/null &
+echo "== Reboot scheduled ($cmd)"
+"""
+
+
+def parse_boot_id(stdout: str) -> str | None:
+    meta, _ = _markers(stdout)
+    boot = meta.get("BOOT", "").strip("-")
+    return boot or None
+
+
 def _markers(stdout: str) -> tuple[dict[str, str], list[str]]:
     meta: dict[str, str] = {}
     body: list[str] = []
@@ -142,7 +169,9 @@ def _markers(stdout: str) -> tuple[dict[str, str], list[str]]:
     return meta, body
 
 
-_APT = re.compile(r"^(?P<name>[^/\s]+)/\S+\s+(?P<new>\S+)\s+\S+(?:\s+\[upgradable from: (?P<old>[^\]]+)\])?")
+_APT = re.compile(
+    r"^(?P<name>[^/\s]+)/(?P<suites>\S+)\s+(?P<new>\S+)\s+\S+(?:\s+\[upgradable from: (?P<old>[^\]]+)\])?"
+)
 _APK = re.compile(r"^(?P<pkg>\S+)\s.*?(?:\[upgradable from: (?P<old>[^\]]+)\])?$")
 _APK_VER = re.compile(r"^(?P<name>.+?)-(?P<ver>\d[^-]*-r\d+)$")
 
@@ -152,7 +181,9 @@ def parse_apt(lines: list[str]) -> list[Package]:
     for line in lines:
         m = _APT.match(line)
         if m:
-            out.append(Package(name=m["name"], available=m["new"], current=m["old"]))
+            # The suites the new version comes from, e.g. "bookworm-security" or "jammy-updates,jammy-security".
+            security = any(s.endswith("-security") for s in m["suites"].split(","))
+            out.append(Package(name=m["name"], available=m["new"], current=m["old"], security=security))
     return out
 
 

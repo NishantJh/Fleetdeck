@@ -1,6 +1,7 @@
 import httpx
 
 from homelab.config import IncusConfig, ProxmoxConfig, SSHConfig
+from homelab.models import ExecResult
 from homelab.providers.incus import IncusProvider
 from homelab.providers.proxmox import ProxmoxProvider
 
@@ -29,7 +30,7 @@ PVE["/api2/json/nodes/pve/qemu"].append({"vmid": 203, "name": "broken", "status"
 async def test_proxmox_discovery():
     cfg = ProxmoxConfig(
         name="lab", api_url="https://pve:8006", token_id="root@pam!t", token_secret="x",
-        ssh=SSHConfig(host="pve"), exclude=[199], protect=[103],
+        ssh=SSHConfig(host="pve", known_hosts="/kh"), exclude=[199], protect=[103],
     )  # fmt: skip
     p = ProxmoxProvider(cfg)
 
@@ -48,6 +49,7 @@ async def test_proxmox_discovery():
     assert not found["broken"].updatable and "VM config" in found["broken"].note
     assert found["pihole"].updatable and not found["old"].updatable
     assert not found["arcane"].updatable and "protected" in found["arcane"].note
+    assert "arcane" in found["pve"].no_reboot
     assert found["docker"].updatable
     assert not found["win11"].updatable and "Windows" in found["win11"].note
     assert not found["noagent"].updatable and "agent" in found["noagent"].note
@@ -161,8 +163,8 @@ async def test_proxmox_cluster_uses_each_nodes_address():
     }
     cfg = ProxmoxConfig(
         name="lab", api_url="https://pve1:8006", token_id="t", token_secret="x",
-        ssh=SSHConfig(host="10.0.0.1", key_file="/k"),
-        node_ssh={"pve1": SSHConfig(host="pve1.lan")},
+        ssh=SSHConfig(host="10.0.0.1", key_file="/k", known_hosts="/kh"),
+        node_ssh={"pve1": SSHConfig(host="pve1.lan", known_hosts="/kh")},
     )  # fmt: skip
     data["/api2/json/nodes"].append({"node": "pve3", "status": "online"})
     data["/api2/json/cluster/status"].append({"type": "node", "name": "pve3", "ip": "10.0.0.3"})
@@ -334,3 +336,86 @@ async def test_shared_storage_inactive_on_one_node_is_read_from_another():
     p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
     found = {t.name: t for t, _ in await p.discover()}
     assert found["ct"].backup.count == 1 and found["ct"].backup.note is None
+
+
+async def test_incus_restricted_certificate_lists_per_project():
+    p = IncusProvider(IncusConfig(name="incus01", socket="/nonexistent"))
+
+    def handler(req):
+        if req.url.path == "/1.0/projects":
+            return httpx.Response(200, json={"metadata": ["/1.0/projects/default", "/1.0/projects/lab"]})
+        if req.url.params.get("all-projects") == "true":
+            return httpx.Response(403, json={"error": "Forbidden"})
+        project = req.url.params["project"]
+        return httpx.Response(
+            200, json={"metadata": [{"name": f"{project}-ct", "type": "container", "status": "Running"}]}
+        )
+
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://incus")
+    names = {t.name for t, _ in await p.discover()}
+    assert names == {"incus01", "default-ct", "lab/lab-ct"}
+
+
+async def test_unknown_ssh_host_key_is_shown_on_the_dashboard():
+    from homelab.config import HostConfig
+    from homelab.providers.ssh_hosts import SSHHostsProvider
+
+    cfg = ProxmoxConfig(
+        name="lab", api_url="https://pve:8006", token_id="t", token_secret="x", ssh=SSHConfig(host="10.0.0.1")
+    )
+    p = ProxmoxProvider(cfg)
+    data = {"/api2/json/nodes": [{"node": "pve", "status": "online"}], "/api2/json/cluster/status": []}
+    data["/api2/json/nodes/pve/lxc"] = [{"vmid": 101, "name": "ct", "status": "running"}]
+    data["/api2/json/nodes/pve/qemu"] = []
+    p.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": data[req.url.path]})),
+        base_url=p.client.base_url,
+    )
+    found = {t.name: (t, ex) for t, ex in await p.discover()}
+    host, ct = found["pve"][0], found["ct"][0]
+    assert host.check_only and "known_hosts" in host.note
+    assert not ct.updatable and "known_hosts" in ct.note and found["ct"][1] is None
+
+    ((pi, _),) = await SSHHostsProvider([HostConfig(name="pi", host="10.0.0.2")]).discover()
+    assert not pi.updatable and "add 10.0.0.2 to known_hosts" in pi.note
+    ((ok, _),) = await SSHHostsProvider([HostConfig(name="pi", host="10.0.0.2", known_hosts="/kh")]).discover()
+    assert ok.updatable and ok.note is None
+
+
+async def test_pve_node_check_flags_security_updates_over_ssh():
+    from homelab.providers.proxmox import APT_LIST_SCRIPT, PveNodeExecutor
+
+    def handler(req):
+        path = req.url.path.removeprefix("/api2/json/nodes/pve")
+        if req.method == "POST":
+            return httpx.Response(200, json={"data": "UPID:x"})
+        if path == "/version":
+            return httpx.Response(200, json={"data": {"version": "8.3.0"}})
+        if path == "/apt/repositories":
+            return httpx.Response(200, json={"data": {"standard-repos": [], "errors": []}})
+        if path == "/tasks/UPID:x/status":
+            return httpx.Response(200, json={"data": {"status": "stopped", "exitstatus": "OK"}})
+        if path == "/tasks/UPID:x/log":
+            return httpx.Response(200, json={"data": []})
+        if path == "/apt/update":
+            pkgs = [
+                {"Package": "openssl", "OldVersion": "3.0.14-1", "Version": "3.0.15-1"},
+                {"Package": "pve-manager", "OldVersion": "8.3.0", "Version": "8.3.1"},
+            ]
+            return httpx.Response(200, json={"data": pkgs})
+        raise AssertionError(path)
+
+    class FakeSSH:
+        async def run(self, script, on_line=None, timeout=0):
+            if script == APT_LIST_SCRIPT:
+                return ExecResult(
+                    rc=0,
+                    stdout="Listing...\n"
+                    "openssl/stable-security 3.0.15-1 amd64 [upgradable from: 3.0.14-1]\n"
+                    "pve-manager/stable 8.3.1 all [upgradable from: 8.3.0]\n",
+                )
+            return ExecResult(rc=0, stdout="__REBOOT__=no\n")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://pve:8006/api2/json")
+    res = await PveNodeExecutor(client, "pve", FakeSSH()).check()
+    assert {p.name: p.security for p in res.packages} == {"openssl": True, "pve-manager": False}

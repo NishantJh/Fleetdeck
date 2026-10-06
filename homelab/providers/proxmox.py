@@ -11,10 +11,13 @@ import httpx
 from ..config import ProxmoxConfig, SSHConfig
 from ..executors import DEFAULT_TIMEOUT, LineCallback, PctExecutor, PveAgentExecutor, SSHExecutor
 from ..models import BackupInfo, CheckResult, ExecResult, Package, Target
-from ..updates import REBOOT_SCRIPT, parse_reboot
+from ..tls import PinnedTransport
+from ..updates import REBOOT_SCRIPT, parse_apt, parse_reboot
 from . import Discovered
 
 log = logging.getLogger(__name__)
+# The PVE API doesn't say which suite an update comes from; apt does, after the API's refresh.
+APT_LIST_SCRIPT = "LC_ALL=C apt list --upgradable 2>/dev/null"
 PROTECTED_NOTE = "protected: runs this dashboard, update it from its own console"
 # Listing backup storages (PBS in particular) is slow, so it is done less often than discovery.
 BACKUP_TTL = 300.0
@@ -113,6 +116,12 @@ class PveNodeExecutor:
                 reboot = parse_reboot((await self.ssh.run(REBOOT_SCRIPT, timeout=60)).stdout)
             except Exception as e:  # informational only; don't fail the check
                 say(f"! could not check for a pending reboot: {e}")
+            try:
+                res = await self.ssh.run(APT_LIST_SCRIPT, timeout=60)
+                security = {p.name for p in parse_apt(res.stdout.splitlines()) if p.security}
+                packages = [p.model_copy(update={"security": p.name in security}) for p in packages]
+            except Exception as e:  # noqa: BLE001 - informational only
+                say(f"! could not tell which updates are security updates: {e}")
         return CheckResult(
             package_manager="apt (via PVE)",
             os=os_name,
@@ -141,6 +150,7 @@ class ProxmoxProvider:
             base_url=cfg.api_url.rstrip("/") + "/api2/json",
             headers={"Authorization": f"PVEAPIToken={cfg.token_id}={cfg.token_secret}"},
             verify=cfg.verify_ssl,
+            transport=PinnedTransport(cfg.api_url, cfg.tls_fingerprint) if cfg.tls_fingerprint else None,
             timeout=30,
         )
 
@@ -283,7 +293,9 @@ class ProxmoxProvider:
             nname = node["node"]
             online = node.get("status") == "online"
             ssh_cfg = self._node_ssh(nname, node_ips)
-            ssh = SSHExecutor(ssh_cfg) if ssh_cfg else None
+            # Without a verifiable host key the node is used as if it had no SSH settings, and says why.
+            ssh_problem = ssh_cfg.host_key_problem if ssh_cfg else None
+            ssh = SSHExecutor(ssh_cfg) if ssh_cfg and not ssh_problem else None
             prefix = f"proxmox:{self.name}:{nname}"
             host = Target(
                 id=prefix,
@@ -294,11 +306,15 @@ class ProxmoxProvider:
                 status=node.get("status", "unknown"),
                 updatable=online,
                 check_only=ssh is None,
-                note=(None if ssh else "check only: add ssh settings to upgrade this node") if online else "offline",
+                note=(None if ssh else ssh_problem or "check only: add ssh settings to upgrade this node")
+                if online
+                else "offline",
             )
             found.append((host, PveNodeExecutor(self.client, nname, ssh)))
             if not online:
                 continue
+            # Rebooting the node would take down the protected guest, i.e. this dashboard.
+            protected_here: list[str] = []
 
             for ct in await self._get(f"/nodes/{nname}/lxc"):
                 vmid = int(ct["vmid"])
@@ -306,9 +322,11 @@ class ProxmoxProvider:
                     continue
                 running = ct.get("status") == "running"
                 updatable = running and ssh is not None
-                note = (None if ssh else "needs node ssh for pct exec") if running else "not running"
+                note = (None if ssh else ssh_problem or "needs node ssh for pct exec") if running else "not running"
                 if vmid in self.cfg.protect:
                     updatable, note = False, PROTECTED_NOTE
+                    if running:
+                        protected_here.append(ct.get("name") or f"ct{vmid}")
                 t = Target(
                     id=f"{prefix}:lxc:{vmid}",
                     name=ct.get("name") or f"ct{vmid}",
@@ -332,6 +350,8 @@ class ProxmoxProvider:
                 updatable = running
                 if vmid in self.cfg.protect:
                     updatable, note = False, PROTECTED_NOTE
+                    if running:
+                        protected_here.append(vm.get("name") or f"vm{vmid}")
                 elif running:
                     note = await self._vm_blocker(nname, vmid)
                     updatable = note is None
@@ -348,4 +368,6 @@ class ProxmoxProvider:
                     backup=self._backup_for(vmid, backups),
                 )
                 found.append((t, PveAgentExecutor(self.client, nname, vmid)))
+            if protected_here:
+                host.no_reboot = f"runs protected guest {', '.join(protected_here)}; reboot it from the Proxmox UI"
         return found
