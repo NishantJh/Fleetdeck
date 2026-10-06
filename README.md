@@ -44,7 +44,7 @@ Every push to `main` publishes `ghcr.io/nishantjh/homelab-manager:latest` (amd64
 ```bash
 mkdir config
 cp config.example.yaml config/config.yaml   # fill in your hosts
-ssh-keygen -t ed25519 -f config/id_ed25519 -N "" -C homelab-manager   # see "Giving the dashboard its own SSH key"
+ssh-keygen -t ed25519 -f config/id_ed25519 -N "" -C homelab-manager   # see "SSH key and known_hosts"
 ssh-keyscan 192.168.1.10 192.168.1.20 192.168.1.30 > config/known_hosts
 chmod 600 config/id_ed25519 && mkdir -p data && sudo chown -R 10001:10001 config data   # the container runs as uid 10001
 HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d
@@ -63,12 +63,13 @@ release tag such as `ghcr.io/nishantjh/homelab-manager:0.2.0`.
 ### With Arcane
 
 1. Create a new project in Arcane and paste in `docker-compose.yml`.
-2. Put `config.yaml`, the SSH key and `known_hosts` in a `config/` folder inside that project's
-   directory on the Docker host (check results and job history go in `data/` next to it), and set `HOMELAB_PASSWORD` and `PVE_TOKEN_SECRET` in the
-   project's `.env`.
-3. While the repo is private, the image is too: add `ghcr.io` as a registry in Arcane with your
+2. Set `HOMELAB_PASSWORD` and `PVE_TOKEN_SECRET` in the project's `.env`.
+3. Put `config.yaml`, the SSH key and `known_hosts` in a `config/` folder inside the project's
+   directory on the Docker host (results and history go in `data/` next to it). Creating the key
+   is covered in [Arcane: SSH key and known_hosts](#arcane-ssh-key-and-known_hosts-step-by-step).
+4. While the repo is private, the image is too: add `ghcr.io` as a registry in Arcane with your
    GitHub username and a token that has `read:packages`.
-4. Add the VMID of the LXC that runs Docker/Arcane to `protect:` under your Proxmox entry. It still
+5. Add the VMID of the LXC that runs Docker/Arcane to `protect:` under your Proxmox entry. It still
    shows on the dashboard, but can't be updated from it, because upgrading Docker in that LXC would
    restart the dashboard halfway through. Update that one LXC from its own console.
 
@@ -90,7 +91,83 @@ release tag such as `ghcr.io/nishantjh/homelab-manager:0.2.0`.
   certificate is a full Incus admin, which is root on the Incus host. SSH is used for the host itself.
 * **Raspberry Pi, VPS and other hosts:** SSH. Non-root users need passwordless sudo and `sudo: true`.
 
-### Giving the dashboard its own SSH key
+### Arcane: SSH key and `known_hosts`, step by step
+
+Run these on the machine that runs Docker/Arcane (for you, the LXC), in the project directory
+that holds `docker-compose.yml`. Replace the addresses and users with yours.
+
+1. **Generate the key.** One key for all machines, no passphrase (the dashboard can't type one):
+
+   ```bash
+   mkdir -p config data && cd config
+   ssh-keygen -t ed25519 -f id_ed25519 -N "" -C homelab-manager
+   ```
+
+   This creates `id_ed25519` (private, never share it) and `id_ed25519.pub` (public).
+
+2. **Install the public key on each machine** the dashboard updates: the Proxmox host, the Incus
+   host, the Pi 4 and the VPS. The user must match `user:` in `config.yaml` (`root` for the
+   Proxmox and Incus hosts, or a user with passwordless sudo and `sudo: true`):
+
+   ```bash
+   ssh-copy-id -i id_ed25519.pub root@192.168.1.10        # Proxmox
+   ssh-copy-id -i id_ed25519.pub root@192.168.1.20        # Incus
+   ssh-copy-id -i id_ed25519.pub pi@192.168.1.30          # Pi 4
+   ssh-copy-id -i id_ed25519.pub admin@my-vps.example.com # VPS
+   ```
+
+   Each asks for that machine's password once. If it refuses (root password login is off by
+   default on Debian/Ubuntu), paste the one line from `id_ed25519.pub` into
+   `~/.ssh/authorized_keys` of the target user from a console you can already use, such as the
+   Proxmox web shell. In a Proxmox cluster, root's authorized keys are shared through `/etc/pve`,
+   so one node is enough.
+
+3. **Check that key login works** before going further:
+
+   ```bash
+   ssh -i id_ed25519 -o IdentitiesOnly=yes root@192.168.1.10 true && echo ok
+   ```
+
+   (The host-key prompt you may see here is fine; step 4 is what the dashboard actually uses.)
+
+4. **Build `known_hosts`.** Required: without it every SSH machine is refused. List each machine
+   the way you write it in `host:` (add `-p <port>` for a non-standard port):
+
+   ```bash
+   ssh-keyscan 192.168.1.10 192.168.1.20 192.168.1.30 my-vps.example.com > known_hosts
+   ssh-keygen -lf known_hosts   # compare with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on each machine
+   ```
+
+   For a Proxmox cluster, add every node's cluster IP too.
+
+5. **Hand the files to the container.** It runs as uid 10001, so that user must own them, and
+   the private key must not be readable by anyone else (ssh refuses it otherwise):
+
+   ```bash
+   cd ..
+   chmod 600 config/id_ed25519
+   sudo chown -R 10001:10001 config data
+   ```
+
+   Anything wrong here is logged at start-up with the fix, and shows on the machine's check.
+
+6. **Point `config.yaml` at them.** `config/` is mounted at `/config` in the container:
+
+   ```yaml
+   known_hosts: /config/known_hosts   # top level
+
+   proxmox:
+     - name: pve
+       ssh:
+         host: 192.168.1.10
+         user: root
+         key_file: /config/id_ed25519
+   ```
+
+   Use the same `key_file:` in the Incus `ssh:` block and in each entry under `hosts:` (see
+   `config.example.yaml`), then restart the project in Arcane.
+
+### More on the SSH key
 
 The dashboard runs in Docker, so it can't use the key on your own PC. Give it a key of its own;
 that way you can revoke it without touching yours. Inside the `config/` folder on the Docker host:
