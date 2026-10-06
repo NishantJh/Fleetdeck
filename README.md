@@ -96,7 +96,8 @@ On the VPS, also restrict where the key can be used (see "For a VPS" below).
 **4. Record each machine's host key.** The dashboard refuses to connect to a machine whose host key
 isn't in `known_hosts`, so a machine pretending to be yours can't get your commands. List every
 machine from step 3; for a Proxmox cluster, every node's cluster IP as well. Add `-p <port>` if SSH
-isn't on port 22:
+isn't on port 22. Scan each machine by the same address you put under `host:` in step 6: an IP
+and a hostname are separate entries in `known_hosts`, so scanning one doesn't cover the other.
 
 ```bash
 ssh-keyscan 192.168.1.10 192.168.1.11 192.168.1.20 192.168.1.30 my-vps.example.com > config/known_hosts
@@ -112,6 +113,8 @@ password or about an unknown host:
 ```bash
 ssh -i config/id_ed25519 -o UserKnownHostsFile=config/known_hosts -o StrictHostKeyChecking=yes root@192.168.1.10 echo ok
 ```
+
+After step 7 the key belongs to uid 10001, so run the test again with `sudo ssh ...`.
 
 **6. Point `config.yaml` at both files.** The container sees the project's `config/` folder as
 `/config`, so use those paths, not the host's:
@@ -151,9 +154,12 @@ sudo chown -R 10001:10001 config data
   shows on the dashboard, but can't be updated from it, because upgrading Docker in that LXC would
   restart the dashboard halfway through. Update that one LXC from its own console.
 
-**9. Deploy** the project in Arcane, open the dashboard and press **Check all**. A machine that
-says "SSH host key unknown" is missing from `known_hosts` (step 4); "can't read …" means step 7
-needs running again.
+**9. Deploy** the project in Arcane, open the dashboard and press **Check all**. If a machine shows
+an error:
+- "SSH host key unknown": the top-level `known_hosts:` line is missing from `config.yaml` (step 6).
+- "Host key is not trusted for host …": that machine, at that exact address, is missing from
+  `config/known_hosts` (step 4).
+- "can't read …": step 7 needs running again.
 
 ### What each platform needs
 
