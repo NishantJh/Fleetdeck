@@ -17,7 +17,15 @@ class SSHHostsProvider:
     async def discover(self) -> Discovered:
         return [
             (
-                Target(id=f"ssh:{h.name}", name=h.name, platform="ssh", source="hosts", kind="host"),
+                Target(
+                    id=f"ssh:{h.name}",
+                    name=h.name,
+                    platform="ssh",
+                    source="hosts",
+                    kind="host",
+                    updatable=h.host_key_problem is None,
+                    note=h.host_key_problem,
+                ),
                 SSHExecutor(h),
             )
             for h in self.hosts

@@ -1,12 +1,28 @@
 # Copy to config.yaml and fill in. ${VARS} are read from the environment.
 
-# Basic auth for the dashboard. Leave it on: this app can run commands as root on your lab.
+# Basic auth for the dashboard. Required: this app can run commands as root on your lab. (If a
+# proxy in front already does the login, `allow_no_auth: true` lets it start without.)
+# 10 wrong passwords from one IP within 5 minutes lock that IP out for 5 minutes.
 auth:
   username: admin
   password: ${HOMELAB_PASSWORD}
 
+# The names/IPs you open the dashboard by. Anything else is refused (stops DNS rebinding).
+# Keep localhost in the list if you open it on the machine itself or a health check does.
+# allowed_hosts: ["192.168.1.50", "homelab.lan", "localhost", "127.0.0.1"]
+
+# Behind a reverse proxy (Caddy, Traefik, nginx)? List its address so the login lockout sees each
+# visitor's own IP instead of the proxy's. The proxy must also pass the original Host header.
+# trusted_proxies: ["172.18.0.0/16"]
+
 # How many machines may be checked/updated at once.
 max_parallel: 4
+
+# SSH host keys of every machine (`ssh-keyscan host1 host2 ... > config/known_hosts`). Every SSH entry
+# uses this unless it names its own; a machine with neither is refused. A Proxmox cluster already
+# keeps all its nodes' keys in /etc/pve/priv/known_hosts. Include each node's cluster IP (the address
+# in Datacenter > Cluster), since that is what other nodes are reached by.
+known_hosts: /config/known_hosts
 
 proxmox:
   - name: pve
@@ -17,13 +33,16 @@ proxmox:
     # Use a dedicated user rather than root (README, "Least privilege for the Proxmox token").
     token_id: homelab@pve!dashboard
     token_secret: ${PVE_TOKEN_SECRET}
-    verify_ssl: false # or a path to your CA bundle
+    # Pins the node's TLS certificate. On the node, run
+    #   openssl x509 -in /etc/pve/local/pve-ssl.pem -noout -fingerprint -sha256
+    # (use pveproxy-ssl.pem instead if you uploaded your own certificate), or copy it from
+    # Node > System > Certificates, and put yours here.
+    # tls_fingerprint: "00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF"
     # SSH to the node: upgrades the host itself and runs `pct exec` inside LXCs.
     ssh:
       host: 192.168.1.10
       user: root
       key_file: /config/id_ed25519
-      known_hosts: /config/known_hosts # omit to skip host key checks
     # Cluster? Other nodes are reached at their cluster IP (from /cluster/status) with the same
     # SSH settings. If that network isn't reachable from here, give each node its own settings:
     # node_ssh:
@@ -40,7 +59,8 @@ incus:
     url: https://192.168.1.20:8443
     client_cert: /config/incus-client.crt
     client_key: /config/incus-client.key
-    verify_ssl: false
+    # Pins the server certificate: `incus info | grep certificate_fingerprint` on the Incus host.
+    # tls_fingerprint: "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
     # Or, if the dashboard runs on the Incus host itself:
     # socket: /var/lib/incus/unix.socket
     ssh:
@@ -61,5 +81,7 @@ hosts:
     port: 22
     user: ubuntu
     key_file: /config/id_ed25519
-    known_hosts: /config/known_hosts # strongly recommended for anything on the internet
     sudo: true
+  # - name: old-box
+  #   host: 192.168.1.40
+  #   insecure_skip_host_key_check: true # accept any host key; anyone on the path can pose as it

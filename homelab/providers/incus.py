@@ -5,6 +5,7 @@ import httpx
 from ..config import IncusConfig
 from ..executors import IncusExecutor, SSHExecutor
 from ..models import Target
+from ..tls import PinnedTransport
 from . import Discovered
 
 
@@ -20,7 +21,10 @@ class IncusProvider:
             )
         else:
             cert = (cfg.client_cert, cfg.client_key) if cfg.client_cert and cfg.client_key else None
-            self.client = httpx.AsyncClient(base_url=cfg.url.rstrip("/"), cert=cert, verify=cfg.verify_ssl, timeout=30)
+            pinned = PinnedTransport(cfg.url, cfg.tls_fingerprint, cert) if cfg.tls_fingerprint else None
+            self.client = httpx.AsyncClient(
+                base_url=cfg.url.rstrip("/"), cert=cert, verify=cfg.verify_ssl, transport=pinned, timeout=30
+            )
 
     async def _instances(self) -> list[dict]:
         r = await self.client.get("/1.0/instances", params={"recursion": 1, "all-projects": "true"})
@@ -41,7 +45,8 @@ class IncusProvider:
 
     async def discover(self) -> Discovered:
         found: Discovered = []
-        ssh = SSHExecutor(self.cfg.ssh) if self.cfg.ssh else None
+        ssh_problem = self.cfg.ssh.host_key_problem if self.cfg.ssh else None
+        ssh = SSHExecutor(self.cfg.ssh) if self.cfg.ssh and not ssh_problem else None
         prefix = f"incus:{self.name}"
         found.append(
             (
@@ -52,7 +57,7 @@ class IncusProvider:
                     source=self.name,
                     kind="host",
                     updatable=ssh is not None,
-                    note=None if ssh else "add ssh settings to update this host",
+                    note=None if ssh else ssh_problem or "add ssh settings to update this host",
                 ),
                 ssh,  # type: ignore[arg-type]
             )

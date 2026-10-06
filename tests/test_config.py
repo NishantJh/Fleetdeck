@@ -45,10 +45,55 @@ def test_warns_when_ssh_host_keys_are_not_checked(tmp_path, caplog):
         "hosts:\n"
         "  - {name: pi, host: pi.lan}\n"
         "  - {name: nas, host: nas.lan, known_hosts: /config/known_hosts}\n"
+        "  - {name: old, host: old.lan, insecure_skip_host_key_check: true}\n"
     )
     with caplog.at_level("WARNING", logger="homelab.config"):
         load_config(str(f))
-    assert "pi.lan" in caplog.text and "nas.lan" not in caplog.text
+    assert "No known_hosts for pi.lan" in caplog.text and "nas.lan" not in caplog.text
+    assert "off for old.lan" in caplog.text
+
+
+def test_top_level_known_hosts_is_inherited():
+    from homelab.config import HostConfig, ProxmoxConfig, SSHConfig
+
+    cfg = AppConfig(
+        known_hosts="/config/known_hosts",
+        hosts=[
+            HostConfig(name="pi", host="pi.lan"),
+            HostConfig(name="vps", host="vps", known_hosts="/config/vps_hosts"),
+            HostConfig(name="old", host="old", insecure_skip_host_key_check=True),
+        ],
+        proxmox=[
+            ProxmoxConfig(
+                name="pve", api_url="https://pve:8006", token_id="t", token_secret="s",
+                ssh=SSHConfig(host="pve"), node_ssh={"pve2": SSHConfig(host="pve2")},
+            )
+        ],
+    )  # fmt: skip
+    assert [h.known_hosts for h in cfg.hosts] == ["/config/known_hosts", "/config/vps_hosts", None]
+    assert cfg.proxmox[0].ssh.known_hosts == cfg.proxmox[0].node_ssh["pve2"].known_hosts == "/config/known_hosts"
+
+
+def test_tls_fingerprint_and_warning(tmp_path, caplog):
+    from homelab.config import ProxmoxConfig
+
+    fp = "AB:" * 31 + "CD"
+    p = ProxmoxConfig(name="pve", api_url="https://pve:8006", token_id="t", token_secret="s", tls_fingerprint=fp)
+    assert p.tls_fingerprint == "ab" * 31 + "cd"
+    with pytest.raises(ValidationError, match="SHA-256"):
+        ProxmoxConfig(name="pve", api_url="https://pve:8006", token_id="t", token_secret="s", tls_fingerprint="AB:CD")
+
+    f = tmp_path / "c.yaml"
+    f.write_text(
+        "auth: {password: x}\n"
+        "proxmox:\n"
+        "  - {name: insecure, api_url: 'https://a:8006', token_id: t, token_secret: s, verify_ssl: false}\n"
+        "  - {name: pinned, api_url: 'https://b:8006', token_id: t, token_secret: s, verify_ssl: false,\n"
+        f"     tls_fingerprint: '{fp}'}}\n"
+    )
+    with caplog.at_level("WARNING", logger="homelab.config"):
+        load_config(str(f))
+    assert "checking is off for insecure" in caplog.text and "pinned" not in caplog.text
 
 
 def test_example_config_is_valid(monkeypatch):
@@ -76,7 +121,7 @@ def test_unreadable_files_are_reported(tmp_path, monkeypatch, caplog):
     load_config(str(cfg_file))
     assert f"can't read {key}" in caplog.text and "chown -R 10001:10001 config" in caplog.text
     with pytest.raises(RuntimeError, match="can't read"):
-        SSHExecutor(SSHConfig(host="10.0.0.2", key_file=str(key)))._connect_kwargs()
+        SSHExecutor(SSHConfig(host="10.0.0.2", key_file=str(key), known_hosts="/kh"))._connect_kwargs()
 
     monkeypatch.setattr(homelab.config.os, "access", lambda p, m: False)
     with pytest.raises(ValueError, match="can't read"):
