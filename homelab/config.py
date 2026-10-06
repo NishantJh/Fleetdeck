@@ -89,6 +89,18 @@ class AppConfig(BaseModel):
     max_parallel: int = Field(4, ge=1)
     # Adds fake targets so the UI can be tried without real infrastructure.
     demo: bool = False
+    # Running without `auth:` against real machines must be asked for explicitly.
+    allow_no_auth: bool = False
+    # Host names/IPs the dashboard is reached by (e.g. ["192.168.1.50", "homelab.lan"]). Requests
+    # for any other Host header are refused, which stops DNS-rebinding attacks. Empty allows any.
+    allowed_hosts: list[str] = Field(default_factory=list)
+    # Reverse proxies whose X-Forwarded-For is believed (IPs or CIDRs). Without it, everyone behind a
+    # proxy shares the proxy's address, so the login lockout would lock them all out together.
+    trusted_proxies: list[str] = Field(default_factory=list)
+
+    @property
+    def has_real_targets(self) -> bool:
+        return bool(self.proxmox or self.incus or self.hosts)
 
     @model_validator(mode="after")
     def _unique_names(self) -> AppConfig:
