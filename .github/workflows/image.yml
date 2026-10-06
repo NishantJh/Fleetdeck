@@ -38,3 +38,6 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # No attestation manifests: each one is another untagged version in the package.
+          provenance: false
+          sbom: false
