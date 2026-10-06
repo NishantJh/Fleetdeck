@@ -169,7 +169,9 @@ def _markers(stdout: str) -> tuple[dict[str, str], list[str]]:
     return meta, body
 
 
-_APT = re.compile(r"^(?P<name>[^/\s]+)/\S+\s+(?P<new>\S+)\s+\S+(?:\s+\[upgradable from: (?P<old>[^\]]+)\])?")
+_APT = re.compile(
+    r"^(?P<name>[^/\s]+)/(?P<suites>\S+)\s+(?P<new>\S+)\s+\S+(?:\s+\[upgradable from: (?P<old>[^\]]+)\])?"
+)
 _APK = re.compile(r"^(?P<pkg>\S+)\s.*?(?:\[upgradable from: (?P<old>[^\]]+)\])?$")
 _APK_VER = re.compile(r"^(?P<name>.+?)-(?P<ver>\d[^-]*-r\d+)$")
 
@@ -179,7 +181,9 @@ def parse_apt(lines: list[str]) -> list[Package]:
     for line in lines:
         m = _APT.match(line)
         if m:
-            out.append(Package(name=m["name"], available=m["new"], current=m["old"]))
+            # The suites the new version comes from, e.g. "bookworm-security" or "jammy-updates,jammy-security".
+            security = any(s.endswith("-security") for s in m["suites"].split(","))
+            out.append(Package(name=m["name"], available=m["new"], current=m["old"], security=security))
     return out
 
 

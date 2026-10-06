@@ -13,6 +13,19 @@ def test_parse_apt():
         ("curl", "7.88.1-10+deb12u7", "7.88.1-10+deb12u8"),
         ("openssh-server", "1:9.2p1-2+deb12u3", "1:9.2p1-2+deb12u4"),
     ]
+    assert [p.security for p in pkgs] == [True, False]
+
+
+def test_parse_apt_security_suites():
+    pkgs = parse_apt(
+        [
+            "libssl3t64/noble-updates,noble-security 3.0.13-0ubuntu3.5 amd64 [upgradable from: 3.0.13-0ubuntu3.4]",
+            "tzdata/noble-updates 2024b-0ubuntu0.24.04 all [upgradable from: 2024a-0ubuntu0.24.04]",
+            "openssl/bookworm-security 3.0.15-1~deb12u1 arm64 [upgradable from: 3.0.14-1~deb12u2]",
+            "fake/my-securityish-repo 1.0 all [upgradable from: 0.9]",
+        ]
+    )
+    assert [p.security for p in pkgs] == [True, False, True, False]
 
 
 def test_parse_dnf():

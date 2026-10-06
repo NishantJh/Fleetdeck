@@ -1,6 +1,7 @@
 import httpx
 
 from homelab.config import IncusConfig, ProxmoxConfig, SSHConfig
+from homelab.models import ExecResult
 from homelab.providers.incus import IncusProvider
 from homelab.providers.proxmox import ProxmoxProvider
 
@@ -225,3 +226,42 @@ async def test_unknown_ssh_host_key_is_shown_on_the_dashboard():
     assert not pi.updatable and "add 10.0.0.2 to known_hosts" in pi.note
     ((ok, _),) = await SSHHostsProvider([HostConfig(name="pi", host="10.0.0.2", known_hosts="/kh")]).discover()
     assert ok.updatable and ok.note is None
+
+
+async def test_pve_node_check_flags_security_updates_over_ssh():
+    from homelab.providers.proxmox import APT_LIST_SCRIPT, PveNodeExecutor
+
+    def handler(req):
+        path = req.url.path.removeprefix("/api2/json/nodes/pve")
+        if req.method == "POST":
+            return httpx.Response(200, json={"data": "UPID:x"})
+        if path == "/version":
+            return httpx.Response(200, json={"data": {"version": "8.3.0"}})
+        if path == "/apt/repositories":
+            return httpx.Response(200, json={"data": {"standard-repos": [], "errors": []}})
+        if path == "/tasks/UPID:x/status":
+            return httpx.Response(200, json={"data": {"status": "stopped", "exitstatus": "OK"}})
+        if path == "/tasks/UPID:x/log":
+            return httpx.Response(200, json={"data": []})
+        if path == "/apt/update":
+            pkgs = [
+                {"Package": "openssl", "OldVersion": "3.0.14-1", "Version": "3.0.15-1"},
+                {"Package": "pve-manager", "OldVersion": "8.3.0", "Version": "8.3.1"},
+            ]
+            return httpx.Response(200, json={"data": pkgs})
+        raise AssertionError(path)
+
+    class FakeSSH:
+        async def run(self, script, on_line=None, timeout=0):
+            if script == APT_LIST_SCRIPT:
+                return ExecResult(
+                    rc=0,
+                    stdout="Listing...\n"
+                    "openssl/stable-security 3.0.15-1 amd64 [upgradable from: 3.0.14-1]\n"
+                    "pve-manager/stable 8.3.1 all [upgradable from: 8.3.0]\n",
+                )
+            return ExecResult(rc=0, stdout="__REBOOT__=no\n")
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://pve:8006/api2/json")
+    res = await PveNodeExecutor(client, "pve", FakeSSH()).check()
+    assert {p.name: p.security for p in res.packages} == {"openssl": True, "pve-manager": False}
