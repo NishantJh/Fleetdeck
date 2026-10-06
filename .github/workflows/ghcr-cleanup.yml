@@ -28,4 +28,6 @@ jobs:
           package: homelab-manager
           keep-n-untagged: 3
           validate: true
-          dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+          # Dry run until the repository variable GHCR_CLEANUP_LIVE is 'true': run it manually first,
+          # read the log, then set the variable (Settings > Secrets and variables > Actions > Variables).
+          dry-run: ${{ vars.GHCR_CLEANUP_LIVE != 'true' || (github.event_name == 'workflow_dispatch' && inputs.dry-run) }}
