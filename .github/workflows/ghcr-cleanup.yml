@@ -1,0 +1,31 @@
+name: GHCR cleanup
+# Every main build leaves untagged versions behind in GHCR. Delete the ones nothing uses.
+on:
+  workflow_run:
+    workflows: [Image]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only print what would be deleted
+        type: boolean
+        default: true
+concurrency: ghcr-cleanup
+jobs:
+  cleanup:
+    # After a publish only when the build succeeded; schedule and manual runs always.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 .github/scripts/ghcr_cleanup.py
+        env:
+          OWNER: ${{ github.repository_owner }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
