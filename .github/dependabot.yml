@@ -4,6 +4,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      # pydantic pins pydantic-core exactly; it only moves with pydantic.
+      - dependency-name: pydantic-core
   - package-ecosystem: github-actions
     directory: /
     schedule:
