@@ -21,11 +21,17 @@ jobs:
     permissions:
       packages: write
     steps:
-      # Deletes only untagged versions that no tagged image uses. Each multi-arch image is a tagged
-      # index plus untagged amd64/arm64 manifests; the action keeps those, so tagged images still pull.
+      # Every build gets its own sha-<commit> tag, so those pile up and nothing is ever untagged.
+      # Keep the newest 10 sha- tags and delete the rest (latest and v* release tags never match
+      # sha-*). Then delete untagged versions no tagged image uses. A multi-arch image is a tagged
+      # index plus untagged amd64/arm64 manifests; the action keeps those while the index exists,
+      # so remaining tags still pull, and validate: true checks that after the run.
       - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
           package: homelab-manager
+          delete-tags: sha-*
+          keep-n-tagged: 10
+          exclude-tags: latest
           keep-n-untagged: 3
           validate: true
           # Dry run until the repository variable GHCR_CLEANUP_LIVE is 'true': run it manually first,
