@@ -102,11 +102,45 @@ release tag such as `ghcr.io/nishantjh/homelab-manager:0.2.0`.
   PVE's API has no non-interactive upgrade call (its Upgrade button opens a shell), so the upgrade
   runs `apt-get dist-upgrade` over SSH, against those same repositories. SSH is also used for LXCs.
 * **Incus:** expose the API (`incus config set core.https_address :8443`) and trust a client
-  certificate restricted to the projects you use
-  (`incus config trust add-certificate client.crt --restricted --projects default`), or run the
+  certificate restricted to the projects you use (steps below), or run the
   dashboard on the Incus host and point `socket:` at `/var/lib/incus/unix.socket`. An unrestricted
   certificate is a full Incus admin, which is root on the Incus host. SSH is used for the host itself; if root login is disabled there, use a normal user with passwordless sudo and `sudo: true` in the `ssh:` block (the app runs `sudo -n sh -c ...`, so the sudoers rule must allow `sh`, e.g. `NOPASSWD: ALL`).
 * **Raspberry Pi, VPS and other hosts:** SSH. Non-root users need passwordless sudo and `sudo: true`.
+
+### Giving the dashboard an Incus client certificate
+
+The certificate and key are created on the Docker host, in the `config/` folder the app reads
+(`/config/incus-client.crt` and `/config/incus-client.key` inside the container). Only the public
+`.crt` goes to the Incus host.
+
+1. On the Docker host, in `config/`:
+
+   ```bash
+   openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:secp384r1 -sha384 -nodes -days 3650 \
+     -subj "/CN=homelab-manager" -keyout incus-client.key -out incus-client.crt
+   ```
+
+2. Still on the Docker host, copy only the `.crt` to the Incus host as your normal (non-root) user:
+
+   ```bash
+   scp incus-client.crt <your-user>@<incus-ip>:~/
+   ```
+
+3. On the Incus host, trust it, restricted to the projects you use:
+
+   ```bash
+   ssh <your-user>@<incus-ip>
+   sudo incus config trust add-certificate ~/incus-client.crt --restricted --projects default
+   incus config trust list    # the new certificate should show up
+   ```
+
+   Members of the `incus-admin` group can drop the `sudo`.
+
+4. Optional tidying: `rm ~/incus-client.crt` on the Incus host. Incus keeps its own copy in its
+   trust store, so the file is no longer used, and a `.crt` is the public half and grants nothing
+   without the key.
+
+Never copy `incus-client.key` off the Docker host.
 
 ### Giving the dashboard its own SSH key
 

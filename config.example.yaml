@@ -94,7 +94,7 @@ proxmox:
 incus:
   - name: incus01
     # Remote API: `incus config set core.https_address :8443`, then trust the client cert for the
-    # projects you use only: `incus config trust add-certificate client.crt --restricted --projects default`
+    # projects you use only (see "Giving the dashboard an Incus client certificate" in the README)
     url: https://192.168.1.20:8443
     client_cert: /config/incus-client.crt
     client_key: /config/incus-client.key
