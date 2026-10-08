@@ -142,6 +142,8 @@ For a VPS:
 - This key plus passwordless sudo is root on the VPS, so restrict where it can be used. Either
   reach the VPS only over Tailscale/WireGuard, or prefix its line in `~/.ssh/authorized_keys`
   with your home IP: `from="203.0.113.7" ssh-ed25519 AAAA... homelab-manager`.
+- If the VPS only accepts SSH from your PC and runs Pangolin, see
+  [docs/vps-wireguard.md](docs/vps-wireguard.md) for a dedicated WireGuard link.
 
 ### Security
 
