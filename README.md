@@ -87,7 +87,7 @@ release tag such as `ghcr.io/nishantjh/homelab-manager:0.2.0`.
   certificate restricted to the projects you use
   (`incus config trust add-certificate client.crt --restricted --projects default`), or run the
   dashboard on the Incus host and point `socket:` at `/var/lib/incus/unix.socket`. An unrestricted
-  certificate is a full Incus admin, which is root on the Incus host. SSH is used for the host itself.
+  certificate is a full Incus admin, which is root on the Incus host. SSH is used for the host itself; if root login is disabled there, use a normal user with passwordless sudo and `sudo: true` in the `ssh:` block (the app runs `sudo -n sh -c ...`, so the sudoers rule must allow `sh`, e.g. `NOPASSWD: ALL`).
 * **Raspberry Pi, VPS and other hosts:** SSH. Non-root users need passwordless sudo and `sudo: true`.
 
 ### Giving the dashboard its own SSH key
