@@ -108,7 +108,7 @@ function setStatus(card, text, cls = "") {
   s.className = `status ${cls}`;
 }
 
-const TUNNEL_HINT = " Via tunnel: the dashboard dials out a WireGuard link to this machine on the UDP port shown (it must be free there; Pangolin uses 51820), so it works behind CGNAT and when the machine only accepts SSH from your PC. The script sets up the machine's end; open that UDP port in its provider's firewall.";
+const TUNNEL_HINT = "";
 
 function addCard(m = { kind: "host", name: "", address: "", port: 22 }, saved = false) {
   const card = $("#card-tpl").content.firstElementChild.cloneNode(true);
@@ -131,6 +131,9 @@ function addCard(m = { kind: "host", name: "", address: "", port: 22 }, saved = 
     const tunnel = host && $(".f-tunnel", card).checked;
     $(".tun", card).hidden = !host;
     $(".udp-field", card).hidden = !tunnel;
+    $(".tunnel-steps", card).hidden = !tunnel;
+    $(".udp-num", card).textContent = $(".f-udp", card).value || "51821";
+    $(".hint", card).hidden = tunnel;
     $(".f-address", card).placeholder = tunnel ? "its public IP or host name" : "IP address or host name";
     $(".card-title", card).textContent = $(".f-name", card).value.trim() || "New machine";
     $(".hint", card).textContent = HINTS[$(".f-kind", card).value] + (tunnel ? TUNNEL_HINT : "");
@@ -254,6 +257,7 @@ async function remove(card) {
     for (const b of card.querySelectorAll(".card-actions button, .b-remove")) b.hidden = true;
     $(".tun", card).hidden = true;
     $(".hint", card).hidden = true;
+    $(".tunnel-steps", card).hidden = true;
     $(".connect-log", card).hidden = true;
     setStatus(card, "removed", "muted");
     $(".script", card).hidden = false;

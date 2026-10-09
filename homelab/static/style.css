@@ -145,6 +145,13 @@ textarea { font: 12.5px/1.5 var(--mono); }
 .tun.check { flex-direction: row; align-items: center; gap: 8px; margin-top: 12px; font-weight: 500; cursor: pointer; }
 .card .hint { margin: 12px 0 0; }
 .card-actions { display: flex; gap: 8px; margin-top: 14px; }
+.tunnel-steps { margin-top: 14px; padding: 14px 16px; border-radius: var(--radius-sm); border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); background: var(--accent-soft); }
+.tunnel-steps[hidden] { display: none; }
+.tunnel-steps h3 { margin: 0 0 6px; font-size: 14px; }
+.tunnel-steps p { margin: 0 0 8px; }
+.tunnel-steps ol { margin: 0 0 8px; padding-left: 22px; }
+.tunnel-steps li { margin-bottom: 6px; }
+.tunnel-steps p:last-child { margin: 0; }
 .status { font-size: 12px; font-weight: 500; }
 .status:not(:empty) { padding: 2px 10px; border-radius: 999px; background: var(--chip); }
 .status.ok { background: color-mix(in srgb, var(--ok) 14%, var(--panel)); }
