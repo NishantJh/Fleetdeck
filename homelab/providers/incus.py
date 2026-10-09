@@ -9,6 +9,7 @@ import httpx
 
 from ..config import IncusConfig
 from ..executors import IncusExecutor, SSHExecutor
+from ..host_backups import HostBackups
 from ..models import BackupInfo, Target
 from ..snapshots import PREFIX, IncusSnapshots
 from ..tls import PinnedTransport
@@ -29,6 +30,7 @@ class IncusProvider:
         self.snapshots: dict[str, IncusSnapshots] = {}
         self._backups: dict[str, BackupInfo] = {}
         self._backups_at = 0.0
+        self.host_backups = HostBackups()
         if cfg.socket:
             self.client = httpx.AsyncClient(
                 transport=httpx.AsyncHTTPTransport(uds=cfg.socket), base_url="http://incus", timeout=30
@@ -117,6 +119,7 @@ class IncusProvider:
                     kind="host",
                     updatable=ssh is not None,
                     note=None if ssh else ssh_problem or "add ssh settings to update this host",
+                    backup=await self.host_backups.for_machine(self.name, self.cfg.ssh),
                 ),
                 ssh,  # type: ignore[arg-type]
             )

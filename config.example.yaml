@@ -108,6 +108,7 @@ incus:
       user: admin # root login is often disabled here; use your normal user with passwordless sudo
       key_file: /config/id_ed25519
       sudo: true
+      # backup: { type: path, path: /var/backups/incus-host } # this host's own backup, see hosts: below
     exclude: [] # "name" or "project/name"
     # Last backup = newest snapshot or export (incus export / incus backup) of each instance.
     backup_max_age_hours: 48 # 0 = don't track

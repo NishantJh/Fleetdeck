@@ -14,8 +14,8 @@ import shlex
 import time
 from datetime import UTC, datetime, timedelta, timezone
 
-from .config import HostBackupConfig
-from .executors import Executor
+from .config import HostBackupConfig, SSHConfig
+from .executors import Executor, SSHExecutor
 from .models import BackupInfo
 
 log = logging.getLogger(__name__)
@@ -26,9 +26,10 @@ TTL = 300.0
 FIRST_WAIT = 10.0
 RUN_TIMEOUT = 180.0
 NOT_SET_UP = (
-    "Not set up. Add a backup: entry to this host in config.yaml: a folder your backups go to "
-    "(type: path), or a restic or borg repository."
+    "Not set up. Add a backup: entry to this machine's SSH settings in config.yaml: a folder your "
+    "backups go to (type: path), or a restic or borg repository."
 )
+NO_SSH = "Not set up. Add SSH settings for this machine, then a backup: entry under them in config.yaml."
 
 
 def _env(cfg: HostBackupConfig) -> str:
@@ -101,6 +102,19 @@ class HostBackups:
     def __init__(self) -> None:
         self._info: dict[str, tuple[float, BackupInfo]] = {}
         self._tasks: dict[str, asyncio.Task] = {}
+
+    async def for_machine(self, name: str, ssh: SSHConfig | None, online: bool = True) -> BackupInfo:
+        """The backup of a machine reached over ``ssh``, or why there is none to show."""
+        if ssh is None:
+            return BackupInfo(not_set_up=True, note=NO_SSH)
+        if ssh.backup is None:
+            return BackupInfo(not_set_up=True, note=NOT_SET_UP)
+        if ssh.host_key_problem:
+            return BackupInfo(note=ssh.host_key_problem)
+        if not online:
+            cached = self._info.get(name)
+            return cached[1] if cached else BackupInfo(note="offline")
+        return await self.get(name, ssh.backup, SSHExecutor(ssh))
 
     async def get(self, name: str, cfg: HostBackupConfig, ex: Executor) -> BackupInfo:
         cached = self._info.get(name)

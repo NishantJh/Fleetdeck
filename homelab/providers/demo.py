@@ -7,6 +7,7 @@ import random
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from ..host_backups import NOT_SET_UP
 from ..models import BackupInfo, ExecResult, Target
 from ..updates import BOOT_ID_SCRIPT, CHECK_SCRIPT, REBOOT_NOW_SCRIPT
 from . import Discovered
@@ -101,6 +102,8 @@ class DemoProvider:
             "web": BackupInfo(last=now - timedelta(hours=20), storage="snapshot", count=7, in_job=True),
             "fedora-vm": BackupInfo(last=now - timedelta(days=9), storage="export", count=1, stale=True),
             "pi4": BackupInfo(last=now - timedelta(hours=11), storage="restic", count=30),
+            "pve": BackupInfo(last=now - timedelta(days=1), storage="/mnt/nas/pve-etc", count=12),
+            "incus01": BackupInfo(not_set_up=True, note=NOT_SET_UP),
         }
         found: Discovered = []
         for platform, name, kind, parent, pm, os_name, lines in items:
