@@ -63,7 +63,9 @@ Installing takes one compose file and a web page:
    or paste it into whatever manages your containers (Portainer, Dockge, Arcane, Komodo, ...) as a
    new stack and deploy. Plain Docker works too:
    `docker run -d --name homelab-manager -p 8080:8080 -v homelab-data:/data --restart unless-stopped ghcr.io/nishantjh/homelab-manager:latest`.
-   Nothing else is needed: no `.env` file, no config file and no `chown`.
+   Nothing else is needed: no `.env` file, no config file and no `chown`. If port 8080 is already
+   used on that host, Docker refuses to start it ("port is already allocated"); set
+   `HOMELAB_PORT=8081` (or any free port) in the stack's environment and deploy again.
 2. The container's log prints a one-time link (`docker logs homelab-manager`, or the logs view
    of your container manager):
    `http://<this machine>:8080/setup#token=...`. Open it and create the admin login.
@@ -91,7 +93,8 @@ is harmless.
   dashboard uses (PVE 8 and 9 alike), and an API token of its own for each node you add, and pins
   the API's TLS certificate. If the node serves a custom (e.g. ACME) certificate, that exact one is
   pinned, so press *Reconnect* after it renews.
-* **Incus or LXD:** it turns on the HTTPS API (port 8443) if it's off, listening only on the address
+* **Incus or LXD:** it turns on the HTTPS API if it's off, on port 8443 or, if something
+  already uses that (UniFi often does), the next free port, listening only on the address
   you entered when that is an IP (on every interface for a host name), trusts the dashboard's own client
   certificate for the projects that exist (press *Reconnect* after adding one), and pins the server
   certificate.

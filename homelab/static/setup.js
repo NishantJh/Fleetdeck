@@ -3,7 +3,7 @@
 const $ = (sel, root = document) => root.querySelector(sel);
 const HINTS = {
   proxmox: "On Connect the dashboard creates its own API user, role and token on this node and pins its certificate. For a cluster, add one node and run the script on every node; Connect checks the others. Put the VMID of the LXC running this dashboard under protect: in the config editor below.",
-  incus: "On Connect the dashboard turns on the HTTPS API (port 8443, on this address only) if it's off and trusts its own client certificate for the existing projects. Works for LXD too.",
+  incus: "On Connect the dashboard turns on the HTTPS API (port 8443, or the next free one; on this address only) if it's off and trusts its own client certificate for the existing projects. Works for LXD too.",
   host: "A Raspberry Pi, a VPS or any other Linux machine. If its firewall only accepts SSH from some addresses, allow the dashboard's (for a VPS: your home's public IP). Run the script before pressing Connect: failed logins can get the dashboard banned by fail2ban or CrowdSec.",
 };
 const DRAFTS = "homelab-setup-drafts";

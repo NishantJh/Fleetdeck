@@ -74,11 +74,11 @@ def create_app(
             log.warning(
                 "First run: open http://<this machine>:%s/setup#token=%s to create the admin login and add "
                 "machines. The link changes every time the container starts.",
-                os.environ.get("PORT", "8080"),
+                _published_port(),
                 setup_token,
             )
         elif setup_token:
-            log.info("Setup page: http://<this machine>:%s/setup#token=%s", os.environ.get("PORT", "8080"), setup_token)
+            log.info("Setup page: http://<this machine>:%s/setup#token=%s", _published_port(), setup_token)
         if cfg.auth is None and not locked:
             log.warning("No auth configured: anyone who can reach this dashboard can update your machines.")
             if not cfg.allowed_hosts:
@@ -206,6 +206,11 @@ def create_app(
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     return app
+
+
+def _published_port() -> str:
+    """The port people open the dashboard on: the host side of the Docker mapping, when known."""
+    return os.environ.get("HOMELAB_PORT") or os.environ.get("PORT", "8080")
 
 
 def _open_store(path: str | None) -> Store | None:

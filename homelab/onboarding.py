@@ -464,23 +464,48 @@ async def _check_cluster_nodes(machine: Machine, paths: Paths, stdout: str, res:
         res.log.append(f"Cluster node {name} ({ip}): {state}")
 
 
+# Is a TCP/UDP port free on this machine? (`port_free tcp 8443`) Never take one something else uses.
+PORT_FREE_SH = r"""port_free() {
+  h=$(printf '%04X' "$2"); st=0A; [ "$1" = udp ] && st=07
+  for f in /proc/net/$1 /proc/net/${1}6; do
+    if [ -r "$f" ] && awk -v h="$h" -v st="$st" \
+      'NR > 1 { n = split($2, a, ":"); if (a[n] == h && $4 == st) f = 1 } END { exit !f }' "$f"; then return 1; fi
+  done
+  return 0
+}
+"""
+
+
 def incus_listen(address: str) -> str:
-    """Where to open the Incus API: only on the address the dashboard uses, when that is an IP."""
+    """The host part to open the Incus API on: only the address the dashboard uses, when that is an IP."""
     try:
         ipaddress.ip_address(address)
     except ValueError:
-        return f":{INCUS_PORT}"
-    return f"{_url_host(address)}:{INCUS_PORT}"
+        return ""
+    return _url_host(address)
 
 
-def incus_script(cert_pem: str, cert_fp: str, listen: str = f":{INCUS_PORT}") -> str:
+def incus_script(cert_pem: str, cert_fp: str, listen_host: str = "") -> str:
     # LXD has the same API under the `lxc` command; only adding a trusted certificate is spelled differently.
     return f"""set -e
 if command -v incus >/dev/null 2>&1; then C=incus; ADD="add-certificate"
 elif command -v lxc >/dev/null 2>&1 && lxc query /1.0 >/dev/null 2>&1; then C=lxc; ADD="add"
 else echo "neither Incus nor LXD is installed here" >&2; exit 1; fi
-addr=$($C config get core.https_address)
-if [ -z "$addr" ]; then $C config set core.https_address {listen}; addr="{listen}"; echo "__OPENED__=1"; fi
+{PORT_FREE_SH}addr=$($C config get core.https_address)
+if [ -z "$addr" ]; then
+  # 8443 is often taken (UniFi, other web UIs): use the next free port rather than fight over it.
+  p={INCUS_PORT}
+  while ! port_free tcp $p; do
+    p=$((p + 1))
+    if [ $p -gt {INCUS_PORT + 20} ]; then
+      echo "no free TCP port between {INCUS_PORT} and {INCUS_PORT + 20}" >&2; exit 1
+    fi
+  done
+  if [ $p -ne {INCUS_PORT} ]; then echo "__PORTNOTE__=port {INCUS_PORT} is already in use here, so the API uses $p"; fi
+  addr="{listen_host}:$p"
+  $C config set core.https_address "$addr"
+  echo "__OPENED__=1"
+fi
 case "$addr" in
   127.*|localhost*|"[::1]"*|::1*)
     echo "The API only listens on $addr (core.https_address); set it to this machine's address." >&2; exit 1 ;;
@@ -598,8 +623,9 @@ async def connect(
             out = await _run(ssh, incus_script(pem, incus_cert_fingerprint(paths), listen), "trusting Incus")
             port, fp = parse_incus(out)
             if "__OPENED__=1" in out:
-                where = "on every interface" if listen.startswith(":") else f"on {listen} only"
-                res.log.append(f"Turned on the Incus API {where}")
+                where = f"on {listen} only" if listen else "on every interface"
+                res.log.append(f"Turned on the API {where}, port {port}")
+            res.log += [ln.partition("=")[2] for ln in out.splitlines() if ln.startswith("__PORTNOTE__=")]
             projects = next((ln.partition("=")[2] for ln in out.splitlines() if ln.startswith("__PROJECTS__=")), "")
             res.log.append(
                 f"API on port {port} trusts the dashboard for projects {projects or 'default'}; pinned its "

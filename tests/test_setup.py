@@ -374,10 +374,10 @@ def test_review_fixes(configured, monkeypatch):
 
         AuthConfig(username="a:b", password="x")
     # The Incus API is opened only on the address the dashboard uses, when that is an IP.
-    assert ob.incus_listen("10.0.0.5") == "10.0.0.5:8443"
-    assert ob.incus_listen("fd00::5") == "[fd00::5]:8443"
-    assert ob.incus_listen("incus.lan") == ":8443"
-    assert "core.https_address 10.0.0.5:8443" in ob.incus_script("pem", "fp", ob.incus_listen("10.0.0.5"))
+    assert ob.incus_listen("10.0.0.5") == "10.0.0.5"
+    assert ob.incus_listen("fd00::5") == "[fd00::5]"
+    assert ob.incus_listen("incus.lan") == ""
+    assert 'addr="10.0.0.5:$p"' in ob.incus_script("pem", "fp", ob.incus_listen("10.0.0.5"))
 
     # Removing a machine forgets its pinned host key, unless another entry still uses that address.
     _fake_machine(monkeypatch, asyncssh.generate_private_key("ssh-ed25519"), {"id -un": "root\n"})
@@ -454,3 +454,16 @@ async def test_unresolvable_name():
 def test_zone_ids_rejected():
     with pytest.raises(ValueError, match="zone"):
         ob.Machine(kind="host", name="a", address="fe80::1%eth0")
+
+
+def test_port_free_check_runs_here():
+    """The shell port check finds a port that is in use, and passes a free one."""
+    import socket as so
+
+    with so.socket() as srv:
+        srv.bind(("127.0.0.1", 0))
+        srv.listen()
+        used = srv.getsockname()[1]
+        script = ob.PORT_FREE_SH + f"port_free tcp {used} && echo free || echo used; port_free tcp 1 && echo free\n"
+        out = subprocess.run(["sh", "-c", script], capture_output=True, text=True).stdout.split()
+    assert out == ["used", "free"]
