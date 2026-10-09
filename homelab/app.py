@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import secrets
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,13 +13,15 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .config import AppConfig, load_config
+from .config import AppConfig, config_path, load_config
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
 from .models import CheckResult, Job, JobAction, Target
 from .notify import Notifier
+from .onboarding import Paths
 from .scheduler import Scheduler
 from .security import LoginThrottle, make_guard
+from .setup_routes import add_setup_routes
 from .store import Store
 
 log = logging.getLogger("homelab")
@@ -38,15 +43,24 @@ class ActionRequest(BaseModel):
     snapshot_first: bool = False
 
 
-def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None) -> FastAPI:
-    cfg = cfg or load_config()
-    if cfg.auth is None and cfg.has_real_targets and not cfg.allow_no_auth:
-        raise SystemExit(
-            "Refusing to start: no `auth:` in the config, so anyone who can reach the dashboard could update "
-            "and reboot your machines. Add auth (see config.example.yaml), or set `allow_no_auth: true` if "
-            "something in front of the dashboard already handles login."
-        )
-    inventory = inventory or Inventory(build_providers(cfg))
+def create_app(
+    cfg: AppConfig | None = None,
+    inventory: Inventory | None = None,
+    *,
+    config_file: str | None = None,
+    restart: Callable[[], None] | None = None,
+) -> FastAPI:
+    """``config_file`` is the file the setup page edits; ``restart`` reloads the app with it."""
+    cfg = cfg or load_config(config_file)
+    paths = Paths(Path(config_file or config_path()).absolute())
+    # No login yet (a fresh install): only the setup page works, and only with a one-time link from
+    # the logs, until it has created one. A demo without real machines has nothing to protect.
+    setup_token = None
+    if cfg.auth is None and not cfg.allow_no_auth and (cfg.has_real_targets or not cfg.demo):
+        setup_token = secrets.token_urlsafe(24)
+    if setup_token and cfg.has_real_targets:
+        log.warning("No `auth:` in the config: the dashboard stays locked until an admin login is set up.")
+    inventory = inventory or Inventory(build_providers(cfg) if not setup_token else [])
     store = _open_store(cfg.state_file)
     jobs = JobManager(inventory, cfg.max_parallel, store, cfg.snapshot_keep)
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
@@ -54,7 +68,14 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        if cfg.auth is None:
+        if setup_token:
+            log.warning(
+                "First run: open http://<this machine>:%s/setup#token=%s to create the admin login and add "
+                "machines. The link changes every time the container starts.",
+                os.environ.get("PORT", "8080"),
+                setup_token,
+            )
+        elif cfg.auth is None:
             log.warning("No auth configured: anyone who can reach this dashboard can update your machines.")
             if not cfg.allowed_hosts:
                 log.warning("allowed_hosts is not set: without auth, web pages can reach the API via DNS rebinding.")
@@ -77,8 +98,9 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
     app.state.jobs = jobs
     app.state.inventory = inventory
     app.state.scheduler = scheduler
+    app.state.setup_token = setup_token
 
-    app.middleware("http")(make_guard(cfg.auth, LoginThrottle()))
+    app.middleware("http")(make_guard(cfg.auth, LoginThrottle(), setup_token))
     if cfg.allowed_hosts:
         # Added last so it runs first: a request for a foreign Host never reaches the API.
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=cfg.allowed_hosts)
@@ -171,6 +193,8 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
             raise HTTPException(404, "target no longer exists") from None
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
+
+    add_setup_routes(app, cfg, paths, restart, setup_token is not None)
 
     @app.get("/")
     async def index():

@@ -1,4 +1,6 @@
-# Works as-is as an Arcane project (or plain `docker compose up -d`).
+# The whole install: `docker compose up -d` (or paste this into an Arcane project and deploy), then
+# open the setup link from the logs (`docker compose logs homelab-manager`, or the container's logs
+# in Arcane). Nothing else to create, copy or chown.
 services:
   homelab-manager:
     # Pin a release (e.g. :0.2.0) rather than :latest so an update is something you choose.
@@ -11,21 +13,20 @@ services:
       # To listen on one interface only, prefix its IP: "192.168.1.50:8080:8080"
       - "8080:8080"
     volumes:
-      # config.yaml, SSH key, known_hosts, Incus client cert. Must be readable by uid 10001
-      # (`sudo chown -R 10001:10001 config`).
-      - ./config:/config:ro
-      # Check results and job history (SQLite), kept across restarts and image updates. Must be
-      # writable by uid 10001: `mkdir -p data && sudo chown 10001:10001 data`.
+      # Config, the dashboard's own keys and its history. Back this folder up; it is the whole install.
       - ./data:/data
-    environment:
-      HOMELAB_PASSWORD: ${HOMELAB_PASSWORD}
-      PVE_TOKEN_SECRET: ${PVE_TOKEN_SECRET}
-    # Hardening: the app needs no privileges and writes nothing outside its volumes.
-    user: "10001:10001"
+    # Hardening: read-only filesystem, and only the capabilities needed to hand ./data to the app's
+    # user (uid 10001) at start. The app drops them, and root, before it does anything else.
     read_only: true
     tmpfs:
       - /tmp
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     security_opt:
       - no-new-privileges:true

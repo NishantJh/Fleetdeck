@@ -54,40 +54,85 @@ pip install -e ".[dev]"
 HOMELAB_DEMO=1 python -m homelab   # http://localhost:8080
 ```
 
-## Run it for real
+## Install
 
 Every push to `main` publishes `ghcr.io/nishantjh/homelab-manager:latest` (amd64 and arm64).
+Installing takes one compose file and a web page:
 
-```bash
-mkdir config
-cp config.example.yaml config/config.yaml   # fill in your hosts
-ssh-keygen -t ed25519 -f config/id_ed25519 -N "" -C homelab-manager   # see "Giving the dashboard its own SSH key"
-ssh-keyscan 192.168.1.10 192.168.1.20 192.168.1.30 > config/known_hosts
-chmod 600 config/id_ed25519 && mkdir -p data && sudo chown -R 10001:10001 config data   # the container runs as uid 10001
-HOMELAB_PASSWORD=change-me PVE_TOKEN_SECRET=... docker compose up -d
-```
+1. Put [`docker-compose.yml`](docker-compose.yml) in a folder and run `docker compose up -d`.
+   Nothing else is needed: no `.env` file, no config file and no `chown`.
+2. The container's log prints a one-time link (`docker compose logs homelab-manager`):
+   `http://<this machine>:8080/setup#token=...`. Open it and create the admin login.
+3. Add each machine: pick its type (Proxmox VE, Incus, or a Linux host such as a Raspberry Pi or
+   a VPS), give it a name, and enter its IP address and SSH port.
+4. The page shows a script for each machine. Paste it into a shell on that machine, as root or
+   as a user with sudo.
+5. Press **Connect**. The dashboard does the rest itself, then press **Apply**.
 
-The container runs as an unprivileged user (uid 10001) with a read-only filesystem and no Linux
-capabilities, so the files in `config/` must be readable, and `data/` writable, by
-that uid. Anything it can't read is logged at start-up with the `chown` to fix it, and shows on the
-affected machine's check.
+**What the script does** on the machine: it creates a user `homelab` with no password, which
+logs in only with the dashboard's own SSH key and has passwordless sudo (checked with `visudo`
+before it's installed). The key line carries `restrict` and, if you fill in *Only accept the
+dashboard's key from these addresses*, a `from=` list, so a stolen key can't be used from
+anywhere else. The script then prints the machine's SSH host key fingerprints. Running it twice
+is harmless.
 
-**Upgrading from an image that ran as root:** before pulling the new image, run
-`mkdir -p data && sudo chown -R 10001:10001 config data` in the project folder, or the dashboard
-can't read its config and won't start. To pin a version instead of `latest`, use a
-release tag such as `ghcr.io/nishantjh/homelab-manager:0.2.0`.
+**What Connect does:**
+
+* It records the machine's SSH host key the first time it sees it, and shows the fingerprint.
+  Compare it with what the script printed. The key is pinned from then on, and if it ever changes
+  the dashboard refuses to connect until you trust the new one.
+* It checks that it can log in and that sudo works.
+* **Proxmox:** it creates a `homelab@pve` user, a `HomelabManager` role with only what the
+  dashboard uses (PVE 8 and 9 alike), and an API token, and pins the API's TLS certificate.
+* **Incus:** it turns on the HTTPS API (port 8443) if it's off, trusts the dashboard's own client
+  certificate (restricted to the `default` project), and pins the server certificate.
+
+The same page (the **Setup** button on the dashboard) adds and removes machines later. It also
+has an editor for `config.yaml` (schedule, notifications, `protect:`, everything in
+[`config.example.yaml`](config.example.yaml)), which checks the YAML before saving it.
+
+**Machines that only accept SSH from some addresses**, like a hardened VPS: allow the address the
+dashboard connects from (for a VPS, your home's public IP), or reach it over Tailscale or
+WireGuard and enter that address instead. If `sshd_config` has `AllowUsers` or `AllowGroups`,
+add `homelab` there; the script warns when this applies.
+
+**Proxmox cluster:** add the node you use, and run the script on every node, since `pct exec`
+runs on the node that holds the guest. Put the VMID of the LXC that runs the dashboard under
+`protect:` (in the config editor), so upgrading Docker inside it can't restart the dashboard
+halfway through.
+
+### The data folder
+
+Everything the dashboard keeps is in `./data`: `config.yaml`, its SSH key, the pinned host keys,
+the Incus client certificate and the check history. Back this folder up and you have backed up
+the whole install. Every file in it is readable only by the dashboard.
+
+The container starts as root only long enough to give `./data` to its own user (uid 10001),
+whoever owns the folder on the host. It then switches to that user and keeps no Linux
+capabilities. That is why the compose file adds `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID` and
+`SETGID`. To use another uid, set `PUID` and `PGID`.
 
 ### With Arcane
 
-1. Create a new project in Arcane and paste in `docker-compose.yml`.
-2. Put `config.yaml`, the SSH key and `known_hosts` in a `config/` folder inside that project's
-   directory on the Docker host (check results and job history go in `data/` next to it), and set `HOMELAB_PASSWORD` and `PVE_TOKEN_SECRET` in the
-   project's `.env`.
-3. While the repo is private, the image is too: add `ghcr.io` as a registry in Arcane with your
+1. Create a project in Arcane, paste in `docker-compose.yml` and deploy it.
+2. Open the setup link from the container's logs in Arcane, then follow steps 2 to 5 above.
+3. While the repo is private, the image is too. Add `ghcr.io` as a registry in Arcane with your
    GitHub username and a token that has `read:packages`.
-4. Add the VMID of the LXC that runs Docker/Arcane to `protect:` under your Proxmox entry. It still
-   shows on the dashboard, but can't be updated from it, because upgrading Docker in that LXC would
-   restart the dashboard halfway through. Update that one LXC from its own console.
+
+To pin a version instead of `latest`, use a release tag such as
+`ghcr.io/nishantjh/homelab-manager:0.2.0`.
+
+### Upgrading from the `config/` folder install
+
+An install that mounts `./config:/config:ro` keeps working unchanged: the dashboard uses
+`/config/config.yaml` when `/data` has no config, and the setup page shows it as read-only. To
+switch, remove the `config` volume and `user:` from the compose file, deploy, and set the
+machines up again from the setup page (the old `homelab@pve` token is replaced).
+
+## Configuring by hand
+
+The setup page writes an ordinary `config.yaml`, and everything below can also be set by hand
+(see [`config.example.yaml`](config.example.yaml); `${VARS}` in it are read from the environment).
 
 ### What each platform needs
 
@@ -176,11 +221,12 @@ and set `auth:` in the config.
 * **Proxmox and Incus certificates:** set `tls_fingerprint` (shown in the example config) rather than
   `verify_ssl: false`. It pins the exact certificate, works with the self-signed ones both ship and
   with IP addresses, and the dashboard warns at start-up about any API with checking off.
-* `auth:` is required once real machines are configured (the dashboard refuses to start without
-  it, unless you set `allow_no_auth: true` because a proxy in front does the login). Repeated wrong
-  passwords lock that IP out for 5 minutes.
+* `auth:` is required. Without it, nothing but the setup page is served, and that page only
+  works through the one-time link in the logs until it has created a login (`allow_no_auth: true`
+  skips this when a proxy in front does the login). The setup page stores only a scrypt hash of
+  the password (`password_hash`). Repeated wrong passwords lock that IP out for 5 minutes.
 * Basic auth sends the password with every request, so use HTTPS: either set `TLS_CERT` and
-  `TLS_KEY` (paths inside the container, e.g. `/config/tls.crt`) to serve HTTPS directly, or put
+  `TLS_KEY` (paths inside the container, e.g. `/data/tls.crt`) to serve HTTPS directly, or put
   Caddy, Traefik or `tailscale serve` in front.
 * Set `allowed_hosts` to the names/IPs you open the dashboard by, so other websites can't reach it
   through DNS rebinding.

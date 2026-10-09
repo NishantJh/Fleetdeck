@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Homelab Manager setup</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Homelab Manager setup</h1>
+    <div class="toolbar">
+      <a id="to-dashboard" class="button" href="/" hidden>Dashboard</a>
+    </div>
+  </header>
+
+  <main class="setup">
+    <div id="notice"></div>
+
+    <section id="admin" class="panel" hidden>
+      <h2>1. Create the admin login</h2>
+      <p class="muted">This login protects the dashboard. It can run commands as root on every machine you add, so use a strong password.</p>
+      <form id="admin-form" class="form-grid">
+        <label>Username <input id="admin-user" value="admin" autocomplete="username" required></label>
+        <label>Password <input id="admin-pass" type="password" minlength="10" autocomplete="new-password" required></label>
+        <label>Password again <input id="admin-pass2" type="password" minlength="10" autocomplete="new-password" required></label>
+        <div><button class="primary">Create login</button></div>
+      </form>
+    </section>
+
+    <section id="machines" class="panel" hidden>
+      <h2>Machines</h2>
+      <p class="muted">For each machine: fill in its details, run the script it shows on that machine (as root, or as a user with sudo), then press <b>Connect</b>. The dashboard does the rest over SSH.</p>
+      <label class="wide">Only accept the dashboard's key from these addresses (optional)
+        <input id="allow-from" placeholder="e.g. 192.168.1.50, 203.0.113.7" spellcheck="false">
+        <span class="muted small">The address(es) machines see the dashboard connect from: this Docker host's LAN IP, and your home's public IP for a VPS. Leave empty to allow any. Changing it changes the scripts.</span>
+      </label>
+      <div id="cards"></div>
+      <div class="row">
+        <button id="add-machine">Add a machine</button>
+      </div>
+    </section>
+
+    <section id="apply" class="panel" hidden>
+      <h2>Apply</h2>
+      <p class="muted" id="apply-text">Changes are saved. Apply them to start using them on the dashboard.</p>
+      <button id="apply-btn" class="primary">Apply and open the dashboard</button>
+    </section>
+
+    <details id="advanced" class="panel" hidden>
+      <summary>Edit config.yaml (schedule, notifications, protected guests, everything else)</summary>
+      <p class="muted">Checked before it's saved. See <code>config.example.yaml</code> in the repository for every setting.</p>
+      <textarea id="config-text" spellcheck="false" rows="24"></textarea>
+      <div class="row"><button id="config-save">Save</button> <span id="config-status" class="muted"></span></div>
+    </details>
+  </main>
+
+  <template id="card-tpl">
+    <div class="card">
+      <div class="card-head">
+        <select class="f-kind">
+          <option value="proxmox">Proxmox VE</option>
+          <option value="incus">Incus</option>
+          <option value="host">Linux host (Pi, VPS, ...)</option>
+        </select>
+        <input class="f-name" placeholder="name, e.g. pve" spellcheck="false">
+        <input class="f-address" placeholder="IP address or host name" spellcheck="false">
+        <input class="f-port" type="number" min="1" max="65535" value="22" title="SSH port">
+        <span class="status"></span>
+        <span class="grow"></span>
+        <button class="small b-script">Show script</button>
+        <button class="small primary b-connect">Connect</button>
+        <button class="small b-remove" title="Remove">✕</button>
+      </div>
+      <p class="hint muted small"></p>
+      <div class="script" hidden>
+        <div class="row"><span class="muted small">Paste this into a shell on <b class="s-name"></b>:</span><button class="small b-copy">Copy</button></div>
+        <pre class="code"></pre>
+      </div>
+      <pre class="code connect-log" hidden></pre>
+      <div class="row key-changed" hidden><button class="small b-trust">Trust the new host key</button></div>
+    </div>
+  </template>
+
+  <script src="/static/setup.js"></script>
+</body>
+</html>

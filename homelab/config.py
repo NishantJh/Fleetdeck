@@ -117,7 +117,15 @@ class HostConfig(SSHConfig):
 
 class AuthConfig(BaseModel):
     username: str = Field("admin", min_length=1)
-    password: str = Field(min_length=1)
+    # Either the password itself (e.g. ${HOMELAB_PASSWORD}), or a hash of it as the setup page writes it.
+    password: str | None = Field(None, min_length=1)
+    password_hash: str | None = None
+
+    @model_validator(mode="after")
+    def _one_password(self) -> AuthConfig:
+        if not self.password and not self.password_hash:
+            raise ValueError("auth needs password (or password_hash)")
+        return self
 
 
 _DURATION = re.compile(r"^\s*(\d+)\s*([smhd]?)\s*$")
@@ -261,21 +269,39 @@ def unreadable(path: str | None) -> str | None:
     return f"can't read {path} as uid {uid}; on the Docker host run: sudo chown -R 10001:10001 config"
 
 
+# Where configs lived before the setup page: a read-only volume of hand-written files.
+LEGACY_CONFIG = "/config/config.yaml"
+
+
+def config_path() -> str:
+    """The config file to use: ``HOMELAB_CONFIG``, else ``config.yaml``, else an older install's /config."""
+    path = os.environ.get("HOMELAB_CONFIG", "config.yaml")
+    if not os.path.exists(path) and os.path.exists(LEGACY_CONFIG):
+        log.info("Using %s (from an older install; the setup page can't edit it).", LEGACY_CONFIG)
+        return LEGACY_CONFIG
+    return path
+
+
+def validate_raw(data: dict | None, origin: str = "config") -> AppConfig:
+    """Validate parsed YAML, expanding ``${VAR}`` references first."""
+    missing: set[str] = set()
+    data = _expand(data or {}, missing)
+    if missing:
+        raise ValueError(f"{origin}: environment variable(s) not set: {', '.join(sorted(missing))}")
+    return AppConfig.model_validate(data)
+
+
 def load_config(path: str | None = None) -> AppConfig:
-    path = path or os.environ.get("HOMELAB_CONFIG", "config.yaml")
+    path = path or config_path()
     p = Path(path)
     if not p.exists():
-        log.warning("Config file %s not found; starting with no targets.", p)
+        log.info("Config file %s not found yet; open /setup to create it.", p)
         return AppConfig(
             demo=os.environ.get("HOMELAB_DEMO", "") == "1", state_file=os.environ.get("HOMELAB_STATE") or None
         )
     if problem := unreadable(str(p)):
         raise ValueError(problem)
-    missing: set[str] = set()
-    data = _expand(yaml.safe_load(p.read_text()) or {}, missing)
-    if missing:
-        raise ValueError(f"{p}: environment variable(s) not set: {', '.join(sorted(missing))}")
-    cfg = AppConfig.model_validate(data)
+    cfg = validate_raw(yaml.safe_load(p.read_text()), str(p))
     if os.environ.get("HOMELAB_DEMO") == "1":
         cfg.demo = True
     if os.environ.get("HOMELAB_STATE"):

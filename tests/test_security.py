@@ -1,4 +1,3 @@
-import pytest
 from fastapi.testclient import TestClient
 from test_jobs import _finish, _inventory, _target
 
@@ -12,12 +11,20 @@ from homelab.security import LoginThrottle
 PI = HostConfig(name="pi", host="10.0.0.2")
 
 
-def test_refuses_to_start_without_auth_for_real_machines():
-    with pytest.raises(SystemExit, match="auth"):
-        create_app(AppConfig(hosts=[PI]))
-    create_app(AppConfig(hosts=[PI], allow_no_auth=True))
-    create_app(AppConfig(demo=True))  # nothing real to protect
-    create_app(AppConfig(hosts=[PI], auth=AuthConfig(password="x")))
+def test_locked_until_setup_without_auth_for_real_machines(tmp_path):
+    app = create_app(AppConfig(hosts=[PI]), config_file=str(tmp_path / "config.yaml"))
+    assert app.state.setup_token
+    with TestClient(app) as client:
+        assert client.get("/api/targets").status_code == 403
+        r = client.get("/", follow_redirects=False)
+        assert r.status_code == 307 and r.headers["location"] == "/setup"
+        assert client.get("/setup").status_code == 200
+        assert client.get("/api/setup").status_code == 403
+        assert client.get("/api/setup", headers={"X-Setup-Token": "wrong"}).status_code == 403
+        assert client.get("/api/setup", headers={"X-Setup-Token": app.state.setup_token}).status_code == 200
+    assert create_app(AppConfig(hosts=[PI], allow_no_auth=True)).state.setup_token is None
+    assert create_app(AppConfig(demo=True)).state.setup_token is None  # nothing real to protect
+    assert create_app(AppConfig(hosts=[PI], auth=AuthConfig(password="x"))).state.setup_token is None
 
 
 def test_allowed_hosts_blocks_dns_rebinding():
