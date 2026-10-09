@@ -91,9 +91,10 @@ is harmless.
   dashboard uses (PVE 8 and 9 alike), and an API token of its own for each node you add, and pins
   the API's TLS certificate. If the node serves a custom (e.g. ACME) certificate, that exact one is
   pinned, so press *Reconnect* after it renews.
-* **Incus:** it turns on the HTTPS API (port 8443) if it's off, listening only on the address
+* **Incus or LXD:** it turns on the HTTPS API (port 8443) if it's off, listening only on the address
   you entered when that is an IP (on every interface for a host name), trusts the dashboard's own client
-  certificate (restricted to the `default` project), and pins the server certificate.
+  certificate for the projects that exist (press *Reconnect* after adding one), and pins the server
+  certificate.
 
 The same page (the **Setup** button on the dashboard) adds and removes machines later. It also
 has an editor for `config.yaml` (schedule, notifications, `protect:`, everything in
@@ -102,10 +103,18 @@ has an editor for `config.yaml` (schedule, notifications, `protect:`, everything
 **Machines that only accept SSH from some addresses**, like a hardened VPS: allow the address the
 dashboard connects from (for a VPS, your home's public IP), or reach it over Tailscale or
 WireGuard and enter that address instead. If `sshd_config` has `AllowUsers` or `AllowGroups`,
-add `homelab` there; the script warns when this applies.
+add `homelab` there; the script warns when this applies. The dashboard always connects out to
+your machines (there's no agent), so each one has to be reachable from it. Connecting before the
+script has run counts as failed logins, which fail2ban or CrowdSec may ban the dashboard for.
 
-**Proxmox cluster:** add the node you use, and run the script on every node, since `pct exec`
-runs on the node that holds the guest. Put the VMID of the LXC that runs the dashboard under
+**Addresses:** use IP addresses or names your DNS server resolves; `.local` (mDNS) names usually
+don't resolve inside a container. Docker's default network has no IPv6, so an IPv6-only machine
+needs IPv6 enabled in Docker.
+
+**Proxmox cluster:** add one node and run the script on every node. Connect reads the other
+nodes and their host keys from the cluster, pins them, and lists any node that still needs the
+script (the dashboard reaches each node at its cluster IP, for `pct exec` and host upgrades).
+Press *Reconnect* once you've run it there. Put the VMID of the LXC that runs the dashboard under
 `protect:` (in the config editor), so upgrading Docker inside it can't restart the dashboard
 halfway through.
 
@@ -117,10 +126,19 @@ and the check history. Back it up and you have backed up the whole install. Ever
 readable only by the dashboard; edit the config on the setup page. Nothing else on the host (the
 compose file, an `.env`) is touched, so your container manager can still edit those.
 
-The container starts as root only long enough to give `/data` to its own user (uid 10001),
-whoever owns the folder on the host. It then switches to that user and keeps no Linux
-capabilities. That is why the compose file adds `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID` and
-`SETGID`. To use another uid, set `PUID` and `PGID`.
+The container starts as root only long enough to sort out ownership, then switches user and keeps
+no Linux capabilities (that is what the `cap_add` lines in the compose file are for):
+
+* A folder you mounted and own (say uid 1000) stays yours: the app runs as that user, so you can
+  still read and back it up.
+* A folder owned by root (one Docker created for you) or the named volume is given to uid 10001.
+* `PUID`/`PGID` pick the user yourself. With rootless Docker or Podman, set `PUID=0`: root in
+  the container is your own user there.
+
+**Not supported:** NAS systems that rebuild `/etc` (Unraid, TrueNAS on upgrade) or ignore
+`/etc/sudoers.d` (Synology) lose the `homelab` user; the script warns about them. The image is
+built for amd64 and arm64, so the dashboard itself needs a 64-bit OS (a Pi on 32-bit Raspberry Pi
+OS can still be managed).
 
 While the repo is private, the image is too: log in to `ghcr.io` (`docker login ghcr.io`, or
 add it as a registry in your container manager) with your GitHub username and a token that has

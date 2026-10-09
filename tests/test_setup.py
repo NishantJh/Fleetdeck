@@ -175,7 +175,7 @@ def test_several_machines_of_each_type(configured, monkeypatch):
     _fake_machine(
         monkeypatch,
         asyncssh.generate_private_key("ssh-ed25519"),
-        {"id -un": "root\n", "pveum": PVE_OUT, "incus config": incus_out},
+        {"id -un": "root\n", "pveum": PVE_OUT, "core.https_address": incus_out},
     )
     for i in (1, 2, 3):
         body = {"kind": "proxmox", "name": f"pve{i}", "address": f"10.0.1.{i}"}
@@ -196,7 +196,7 @@ def test_connect_incus_and_host(configured, monkeypatch):
     _fake_machine(
         monkeypatch,
         asyncssh.generate_private_key("ssh-ed25519"),
-        {"id -un": "root\n", "incus config": "__ADDR__=[::]:8444\n__FP__=" + "cd" * 32 + "\n"},
+        {"id -un": "root\n", "core.https_address": "__ADDR__=[::]:8444\n__FP__=" + "cd" * 32 + "\n"},
     )
     r = _connect(client, {"kind": "incus", "name": "incus01", "address": "192.168.1.20"})
     assert r["ok"], r
@@ -318,21 +318,39 @@ def test_drop_privileges_only_in_the_image(monkeypatch):
 
 
 @pytest.mark.skipif(not hasattr(os, "getuid") or os.getuid() != 0, reason="needs root")
-def test_drop_privileges_fixes_ownership(tmp_path, monkeypatch):
+@pytest.mark.parametrize(
+    ("owner", "env", "expected"),
+    [
+        (1000, {}, 1000),  # your own folder stays yours
+        (0, {}, 10001),  # a folder Docker created as root goes to the app user
+        (1000, {"PUID": "12345"}, 12345),
+        (1000, {"PUID": "0"}, None),  # rootless Docker/Podman: stay root
+    ],
+)
+def test_drop_privileges_ownership(tmp_path, monkeypatch, owner, env, expected):
     data = tmp_path / "data"
     (data / "keys").mkdir(parents=True)
     (data / "keys" / "f").write_text("x")
+    os.chown(data, owner, owner)
+    os.chmod(data, 0o755)
     monkeypatch.setenv("HOMELAB_DATA", str(data))
-    monkeypatch.setenv("PUID", "12345")
+    monkeypatch.delenv("PUID", raising=False)
+    monkeypatch.delenv("PGID", raising=False)
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
     switched = []
     monkeypatch.setattr(os, "setgroups", lambda g: switched.append(("groups", g)))
     monkeypatch.setattr(os, "setgid", lambda g: switched.append(("gid", g)))
     monkeypatch.setattr(os, "setuid", lambda u: switched.append(("uid", u)))
     monkeypatch.setitem(os.environ, "HOME", os.environ.get("HOME", "/root"))
     drop_privileges()
+    if expected is None:
+        assert switched == []
+        return
     for p in (data, data / "keys", data / "keys" / "f"):
-        assert (p.stat().st_uid, p.stat().st_gid) == (12345, 12345)
-    assert switched == [("groups", []), ("gid", 12345), ("uid", 12345)]
+        assert (p.stat().st_uid, p.stat().st_gid) == (expected, expected)
+    assert switched == [("groups", []), ("gid", expected), ("uid", expected)]
+    assert oct(data.stat().st_mode & 0o777) == "0o755"  # the folder's mode is left alone
 
 
 def test_written_config_round_trips(tmp_path):
@@ -406,3 +424,33 @@ def test_bootstrap_refuses_someone_elses_user():
     script = ob.bootstrap_script(ob.Machine(kind="host", name="pi", address="10.0.0.2"), "ssh-ed25519 AAAA x", [])
     assert "wasn't made by this script" in script
     assert script.index("wasn't made by this script") < script.index("usermod -p")
+
+
+def test_cluster_nodes_are_pinned_and_checked(configured, monkeypatch):
+    client, tmp_path = configured
+    node2 = asyncssh.generate_private_key("ssh-rsa")
+    cluster = json.dumps(
+        [
+            {"type": "cluster", "name": "lab"},
+            {"type": "node", "name": "pve1", "ip": "10.0.1.1", "local": 1},
+            {"type": "node", "name": "pve2", "ip": "10.0.1.2", "local": 0},
+            {"type": "node", "name": "pve3", "ip": "10.0.1.3", "local": 0},
+        ]
+    )
+    out = PVE_OUT + f"__CLUSTER__={cluster}\n__NODEKEY__=pve2 pve2 {node2.export_public_key().decode().strip()}\n"
+    _fake_machine(monkeypatch, asyncssh.generate_private_key("ssh-ed25519"), {"id -un": "root\n", "pveum": out})
+    r = _connect(client, {"kind": "proxmox", "name": "pve1", "address": "10.0.1.1"})
+    assert r["ok"], r
+    assert any("pve2 (10.0.1.2): reachable" in line for line in r["log"])
+    assert any("pve3 (10.0.1.3): no SSH host key" in line for line in r["log"])
+    assert "10.0.1.2 ssh-rsa " in (tmp_path / "keys" / "known_hosts").read_text()
+
+
+async def test_unresolvable_name():
+    with pytest.raises(ob.SetupError, match="enter its IP"):
+        await ob.fetch_host_key("no-such-host.invalid", 22)
+
+
+def test_zone_ids_rejected():
+    with pytest.raises(ValueError, match="zone"):
+        ob.Machine(kind="host", name="a", address="fe80::1%eth0")

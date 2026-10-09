@@ -15,10 +15,11 @@ services:
     volumes:
       # Config, the dashboard's own keys and its history: the whole install, so back it up.
       # A named volume works the same in every tool. To keep it in a folder instead, use e.g.
-      # `- ./data:/data` or `- /opt/homelab-manager:/data`; any owner works, the app fixes it.
+      # `- ./data:/data`. The app runs as the folder's owner, so it stays yours (a root-owned one
+      # goes to uid 10001). Rootless Docker/Podman: add `environment: {PUID: "0"}`.
       - homelab-data:/data
-    # Hardening: read-only filesystem, and only the capabilities needed to hand ./data to the app's
-    # user (uid 10001) at start. The app drops them, and root, before it does anything else.
+    # Hardening: read-only filesystem, and only the capabilities needed to sort out /data's owner at
+    # start. The app drops them, and root, before it does anything else.
     read_only: true
     tmpfs:
       - /tmp

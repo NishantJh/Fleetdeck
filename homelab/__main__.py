@@ -31,22 +31,30 @@ def server_options(cfg: AppConfig) -> dict:
 
 
 def drop_privileges() -> None:
-    """In the container: hand the data volume to the app user, then stop being root.
+    """In the container: run as the owner of the data folder, never as root.
 
-    The image starts as root only for this. A bind-mounted folder arrives owned by whoever created
-    it on the host, so the app fixes the ownership itself instead of asking for a `chown`. After
-    switching user the process keeps no capabilities. Only runs when HOMELAB_DATA is set (the image
-    sets it), so running from a checkout as root is left alone.
+    The image starts as root only for this. A folder you mounted and own (say uid 1000) stays yours:
+    the app runs as that user, so you can still read and back it up. A folder owned by root (one
+    Docker created) or a named volume is given to uid 10001. PUID/PGID override both; PUID=0 keeps
+    root, for rootless Docker/Podman, where root in the container is your own user. After switching
+    user the process keeps no capabilities. Only runs when HOMELAB_DATA is set (the image sets it),
+    so running from a checkout as root is left alone.
     """
     data = os.environ.get("HOMELAB_DATA")
     if not data or not hasattr(os, "getuid") or os.getuid() != 0:
         return
-    uid = int(os.environ.get("PUID", APP_UID))
-    gid = int(os.environ.get("PGID", uid))
-    if uid == 0:
-        log.warning("PUID=0: running as root.")
-        return
     os.makedirs(data, exist_ok=True)
+    st = os.stat(data)
+    if "PUID" in os.environ:
+        uid = int(os.environ["PUID"])
+        gid = int(os.environ.get("PGID", uid))
+    elif st.st_uid != 0:
+        uid, gid = st.st_uid, int(os.environ.get("PGID", st.st_gid))
+    else:
+        uid, gid = APP_UID, int(os.environ.get("PGID", APP_UID))
+    if uid == 0:
+        log.warning("PUID=0: running as root in the container.")
+        return
     for root, dirs, files in os.walk(data):
         for path in [root, *(os.path.join(root, n) for n in dirs + files)]:
             try:
@@ -55,11 +63,11 @@ def drop_privileges() -> None:
                     os.lchown(path, uid, gid)
             except OSError as e:  # e.g. rootless Docker can't map the uid; the app reports what it can't read
                 log.warning("Can't change the owner of %s: %s", path, e)
-    os.chmod(data, 0o700)
     os.setgroups([])
     os.setgid(gid)
     os.setuid(uid)
     os.environ["HOME"] = data
+    log.info("Running as uid %s, gid %s (the owner of %s).", uid, gid, data)
 
 
 def serve(path: str) -> bool:

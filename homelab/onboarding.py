@@ -20,6 +20,7 @@ import logging
 import os
 import re
 import shlex
+import socket
 import tempfile
 import threading
 from dataclasses import dataclass, field
@@ -55,6 +56,8 @@ _HOST = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$")
 
 def _address(value: str) -> str:
     value = value.strip()
+    if "%" in value:
+        raise ValueError("link-local addresses with a zone (%eth0) don't work here; use another address")
     try:
         return str(ipaddress.ip_address(value.strip("[]")))
     except ValueError:
@@ -193,9 +196,20 @@ _BOOTSTRAP = r"""# Homelab Manager: let the dashboard manage this machine ({name
 # Creates the user {user}, which logs in only with the dashboard's key and has passwordless sudo.
 set -eu
 U={user}
+for nas in /etc/unraid-version /etc/synoinfo.conf; do
+  if [ -f "$nas" ]; then echo "WARNING: this looks like Unraid or Synology, which reset /etc or don't read"
+    echo "/etc/sudoers.d; the user may vanish on reboot or update. Managing it over SSH isn't supported."; fi
+done
+if [ -f /etc/version ] && grep -qi truenas /etc/version 2>/dev/null; then
+  echo "WARNING: TrueNAS resets users and sudoers on upgrades; you may need to run this again after one."
+fi
 KEY={key}
 if ! command -v sudo >/dev/null 2>&1; then
-  if command -v apt-get >/dev/null 2>&1; then apt-get update -qq && apt-get install -y -qq sudo
+  # `apt-get update` fails as a whole on a fresh Proxmox node (enterprise repo, no subscription), but
+  # the Debian repos it got through are enough for sudo.
+  if command -v apt-get >/dev/null 2>&1; then apt-get update -qq || true; apt-get install -y -qq sudo || {{
+    echo "Couldn't install sudo. On Proxmox, disable the enterprise repository (or add no-subscription) under"
+    echo "Updates > Repositories, then run this again." >&2; exit 1; }}
   elif command -v dnf >/dev/null 2>&1; then dnf install -y -q sudo
   elif command -v yum >/dev/null 2>&1; then yum install -y -q sudo
   elif command -v apk >/dev/null 2>&1; then apk add -q sudo
@@ -219,6 +233,7 @@ install -d -m 700 -o "$U" -g "$G" "$H/.ssh"
 printf '%s\n' "$KEY" > "$H/.ssh/authorized_keys"
 chown "$U:$G" "$H/.ssh/authorized_keys"
 chmod 600 "$H/.ssh/authorized_keys"
+if command -v restorecon >/dev/null 2>&1; then restorecon -R "$H/.ssh" 2>/dev/null || true; fi
 mkdir -p /etc/sudoers.d
 T=$(mktemp)
 printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$U" > "$T"
@@ -311,11 +326,11 @@ def forget_host_key(paths: Paths, host: str, port: int) -> None:
         _write_private(paths.known_hosts, "\n".join(kept) + ("\n" if kept else ""))
 
 
-def _pin_host_key(paths: Paths, host: str, port: int, key: asyncssh.SSHKey) -> None:
+def _pin_host_key(paths: Paths, host: str, port: int, *keys: asyncssh.SSHKey) -> None:
     name = _known_hosts_name(host, port)
     lines = paths.known_hosts.read_text().splitlines() if paths.known_hosts.exists() else []
     lines = [ln for ln in lines if ln.split(None, 1)[:1] != [name]]
-    lines.append(f"{name} {key.export_public_key().decode().strip()}")
+    lines += [f"{name} {key.export_public_key().decode().strip()}" for key in keys]
     _write_private(paths.known_hosts, "\n".join(lines) + "\n")
 
 
@@ -324,6 +339,9 @@ async def fetch_host_key(host: str, port: int) -> asyncssh.SSHKey:
         key = await asyncio.wait_for(
             asyncssh.get_server_host_key(host, port, server_host_key_algs=HOST_KEY_ALGS), CONNECT_TIMEOUT
         )
+    except socket.gaierror:
+        hint = " (.local names usually don't resolve inside a container)" if host.endswith(".local") else ""
+        raise SetupError(f"can't resolve {host} from the dashboard{hint}; enter its IP address instead") from None
     except (OSError, TimeoutError, asyncssh.Error) as e:
         raise SetupError(
             f"can't reach SSH on {host}:{port} ({e or type(e).__name__}). Check the address and port, and that "
@@ -373,6 +391,13 @@ pveum user token add {PVE_USER} {token} --privsep 0 --comment "Homelab Manager" 
 if [ -f /etc/pve/local/pveproxy-ssl.pem ]; then echo "__CUSTOM__=1"; f=/etc/pve/local/pveproxy-ssl.pem
 else f=/etc/pve/local/pve-ssl.pem; fi
 echo "__FP__=$(openssl x509 -in "$f" -noout -fingerprint -sha256)"
+# Cluster members and their SSH host keys, which the cluster keeps in /etc/pve (read over this pinned
+# connection, so they can be trusted without asking about each node).
+echo "__CLUSTER__=$(pvesh get /cluster/status --output-format json 2>/dev/null | tr -d '\n')"
+for d in /etc/pve/nodes/*/; do
+  n=$(basename "$d")
+  if [ -f "$d/ssh_known_hosts" ]; then sed "s/^/__NODEKEY__=$n /" "$d/ssh_known_hosts"; fi
+done
 """
 
 
@@ -396,6 +421,49 @@ def parse_pve(stdout: str) -> tuple[str, str, bool]:
     return secret, normalize_fingerprint(fp) or "", custom
 
 
+def parse_cluster(stdout: str) -> list[tuple[str, str, list[asyncssh.SSHKey]]]:
+    """(name, IP, host keys) of the other nodes of the cluster, from :func:`pve_script`'s output."""
+    nodes: list = []
+    keys: dict[str, list[asyncssh.SSHKey]] = {}
+    for line in stdout.splitlines():
+        if line.startswith("__CLUSTER__="):
+            try:
+                nodes = json.loads(line.partition("=")[2] or "[]")
+            except ValueError:
+                nodes = []
+        elif line.startswith("__NODEKEY__="):
+            parts = line.partition("=")[2].split()
+            if len(parts) >= 4:  # node, host pattern, key type, key data
+                try:
+                    keys.setdefault(parts[0], []).append(asyncssh.import_public_key(f"{parts[2]} {parts[3]}"))
+                except (asyncssh.KeyImportError, ValueError):
+                    pass
+    return [
+        (n["name"], n["ip"], keys.get(n["name"], []))
+        for n in nodes
+        if isinstance(n, dict) and n.get("type") == "node" and not n.get("local") and n.get("name") and n.get("ip")
+    ]
+
+
+async def _check_cluster_nodes(machine: Machine, paths: Paths, stdout: str, res: ConnectResult) -> None:
+    """Pin the other cluster nodes' host keys and check the dashboard can log in to each: it reaches
+    them at their cluster IP for `pct exec` and host upgrades."""
+    for name, ip, keys in parse_cluster(stdout):
+        if not keys:
+            res.log.append(f"Cluster node {name} ({ip}): no SSH host key in /etc/pve; add it as its own machine")
+            continue
+        _pin_host_key(paths, ip, machine.port, *keys)
+        node = machine.model_copy(update={"address": ip})
+        try:
+            ok = (await SSHExecutor(ssh_config(node, paths)).run("id -un", timeout=60)).stdout.strip() == "root"
+        except (OSError, asyncssh.Error):
+            ok = False
+        state = (
+            "reachable, sudo works" if ok else "can't log in as homelab yet; run the setup script there, then Reconnect"
+        )
+        res.log.append(f"Cluster node {name} ({ip}): {state}")
+
+
 def incus_listen(address: str) -> str:
     """Where to open the Incus API: only on the address the dashboard uses, when that is an IP."""
     try:
@@ -406,20 +474,29 @@ def incus_listen(address: str) -> str:
 
 
 def incus_script(cert_pem: str, cert_fp: str, listen: str = f":{INCUS_PORT}") -> str:
+    # LXD has the same API under the `lxc` command; only adding a trusted certificate is spelled differently.
     return f"""set -e
-command -v incus >/dev/null 2>&1 || {{ echo "incus is not installed here" >&2; exit 1; }}
-addr=$(incus config get core.https_address)
-if [ -z "$addr" ]; then incus config set core.https_address {listen}; addr="{listen}"; echo "__OPENED__=1"; fi
+if command -v incus >/dev/null 2>&1; then C=incus; ADD="add-certificate"
+elif command -v lxc >/dev/null 2>&1 && lxc query /1.0 >/dev/null 2>&1; then C=lxc; ADD="add"
+else echo "neither Incus nor LXD is installed here" >&2; exit 1; fi
+addr=$($C config get core.https_address)
+if [ -z "$addr" ]; then $C config set core.https_address {listen}; addr="{listen}"; echo "__OPENED__=1"; fi
+case "$addr" in
+  127.*|localhost*|"[::1]"*|::1*)
+    echo "The API only listens on $addr (core.https_address); set it to this machine's address." >&2; exit 1 ;;
+esac
 echo "__ADDR__=$addr"
-if ! incus query /1.0/certificates/{cert_fp} >/dev/null 2>&1; then
-  f=$(mktemp)
-  cat > "$f" <<'EOF'
+# Trusted for every project that exists now; press Reconnect after adding one.
+projects=$($C query /1.0/projects | tr -d ' "[],' | sed -n 's#^/1.0/projects/##p' | paste -sd, -)
+echo "__PROJECTS__=$projects"
+$C config trust remove {cert_fp} >/dev/null 2>&1 || true
+f=$(mktemp)
+cat > "$f" <<'CERT'
 {cert_pem.strip()}
-EOF
-  incus config trust add-certificate "$f" --name {KEY_COMMENT} --restricted --projects default
-  rm -f "$f"
-fi
-echo "__FP__=$(incus info | sed -n 's/^ *certificate_fingerprint: *//p' | head -n1)"
+CERT
+$C config trust $ADD "$f" --name {KEY_COMMENT} --restricted --projects "${{projects:-default}}"
+rm -f "$f"
+echo "__FP__=$($C info | sed -n 's/^ *certificate_fingerprint: *//p' | head -n1)"
 """
 
 
@@ -477,7 +554,8 @@ async def connect(
         except asyncssh.PermissionDenied:
             raise SetupError(
                 f"{machine.address} refused the dashboard's key for user {SSH_USER}. Run the setup script on it "
-                "first (and if sshd has AllowUsers, add homelab there)."
+                "first (and if sshd has AllowUsers, add homelab there). Failed logins count towards fail2ban or "
+                "CrowdSec bans, so run the script before trying again."
             ) from None
         except (OSError, asyncssh.Error) as e:
             raise SetupError(f"SSH to {machine.address} failed: {e}") from None
@@ -498,8 +576,10 @@ async def connect(
         }
         if machine.kind == "proxmox":
             token = pve_token(machine.name)
-            secret, fp, custom = parse_pve(await _run(ssh, pve_script(token), "creating the Proxmox API token"))
+            out = await _run(ssh, pve_script(token), "creating the Proxmox API token")
+            secret, fp, custom = parse_pve(out)
             res.log.append(f"Created API token {PVE_USER}!{token} (role {PVE_ROLE}) and pinned the API certificate")
+            await _check_cluster_nodes(machine, paths, out, res)
             if custom:
                 res.log.append(
                     "Note: this node serves a custom (e.g. ACME) certificate, which is pinned exactly. After it "
@@ -520,7 +600,11 @@ async def connect(
             if "__OPENED__=1" in out:
                 where = "on every interface" if listen.startswith(":") else f"on {listen} only"
                 res.log.append(f"Turned on the Incus API {where}")
-            res.log.append(f"Incus API on port {port} trusts the dashboard (project default); pinned its certificate")
+            projects = next((ln.partition("=")[2] for ln in out.splitlines() if ln.startswith("__PROJECTS__=")), "")
+            res.log.append(
+                f"API on port {port} trusts the dashboard for projects {projects or 'default'}; pinned its "
+                "certificate. Press Reconnect after adding a project."
+            )
             entry |= {
                 "url": f"https://{_url_host(machine.address)}:{port}",
                 "client_cert": str(paths.incus_cert),

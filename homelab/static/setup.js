@@ -2,9 +2,9 @@
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const HINTS = {
-  proxmox: "On Connect the dashboard creates its own API user, role and token on this node and pins its certificate. For a cluster, add the node you use; run the script on every node. Put the VMID of the LXC running this dashboard under protect: in the config editor below.",
-  incus: "On Connect the dashboard turns on the Incus HTTPS API (port 8443) if it's off and trusts its own client certificate, restricted to the default project.",
-  host: "A Raspberry Pi, a VPS or any other Linux machine. If its firewall only accepts SSH from some addresses, allow the dashboard's (for a VPS: your home's public IP).",
+  proxmox: "On Connect the dashboard creates its own API user, role and token on this node and pins its certificate. For a cluster, add one node and run the script on every node; Connect checks the others. Put the VMID of the LXC running this dashboard under protect: in the config editor below.",
+  incus: "On Connect the dashboard turns on the HTTPS API (port 8443, on this address only) if it's off and trusts its own client certificate for the existing projects. Works for LXD too.",
+  host: "A Raspberry Pi, a VPS or any other Linux machine. If its firewall only accepts SSH from some addresses, allow the dashboard's (for a VPS: your home's public IP). Run the script before pressing Connect: failed logins can get the dashboard banned by fail2ban or CrowdSec.",
 };
 const DRAFTS = "homelab-setup-drafts";
 const ALLOW = "homelab-setup-allow-from";
