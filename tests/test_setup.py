@@ -134,7 +134,7 @@ def test_connect_proxmox_pins_and_writes_config(configured, monkeypatch):
 
     cfg = load_config(str(tmp_path / "config.yaml"))
     pve = cfg.proxmox[0]
-    assert pve.api_url == "https://192.168.1.10:8006" and pve.token_id == "homelab@pve!dashboard"
+    assert pve.api_url == "https://192.168.1.10:8006" and pve.token_id == "homelab@pve!hm-pve"
     assert pve.token_secret == "secret-uuid" and pve.tls_fingerprint == "ab" * 32
     assert pve.ssh.user == "homelab" and pve.ssh.sudo and pve.ssh.known_hosts == str(tmp_path / "keys" / "known_hosts")
     st = client.get("/api/setup").json()
@@ -152,6 +152,28 @@ def test_connect_proxmox_pins_and_writes_config(configured, monkeypatch):
     assert client.post("/api/setup/connect", json={**body, "replace_host_key": True}).json()["ok"]
     lines = (tmp_path / "keys" / "known_hosts").read_text().splitlines()
     assert len(lines) == 1 and other.export_public_key().decode().split()[1] in lines[0]
+
+
+def test_several_machines_of_each_type(configured, monkeypatch):
+    client, tmp_path = configured
+    incus_out = "__ADDR__=:8443\n__FP__=" + "cd" * 32 + "\n"
+    _fake_machine(
+        monkeypatch,
+        asyncssh.generate_private_key("ssh-ed25519"),
+        {"id -un": "root\n", "pveum": PVE_OUT, "incus config": incus_out},
+    )
+    for i in (1, 2, 3):
+        body = {"kind": "proxmox", "name": f"pve{i}", "address": f"10.0.1.{i}"}
+        assert client.post("/api/setup/connect", json=body).json()["ok"]
+    for i in (1, 2):
+        body = {"kind": "incus", "name": f"incus{i}", "address": f"10.0.2.{i}"}
+        assert client.post("/api/setup/connect", json=body).json()["ok"]
+    cfg = load_config(str(tmp_path / "config.yaml"))
+    # Each node gets its own token, so nodes of one cluster don't revoke each other's.
+    assert [p.token_id for p in cfg.proxmox] == [f"homelab@pve!hm-pve{i}" for i in (1, 2, 3)]
+    assert [i.url for i in cfg.incus] == ["https://10.0.2.1:8443", "https://10.0.2.2:8443"]
+    assert len(client.get("/api/setup").json()["machines"]) == 5
+    assert ob.pve_token("pve.lab") == "hm-pve-lab"
 
 
 def test_connect_incus_and_host(configured, monkeypatch):
@@ -264,7 +286,10 @@ def test_parse_outputs():
 def test_provisioning_scripts_are_valid_sh(tmp_path):
     paths = ob.Paths(tmp_path / "config.yaml")
     ob.ensure_identity(paths)
-    for script in (ob.PVE_SCRIPT, ob.incus_script(paths.incus_cert.read_text(), ob.incus_cert_fingerprint(paths))):
+    for script in (
+        ob.pve_script("hm-pve"),
+        ob.incus_script(paths.incus_cert.read_text(), ob.incus_cert_fingerprint(paths)),
+    ):
         assert subprocess.run(["sh", "-n", "-c", script]).returncode == 0
     m = ob.Machine(kind="host", name="pi", address="10.0.0.2")
     assert subprocess.run(["sh", "-n", "-c", ob.bootstrap_script(m, "ssh-ed25519 AAAA x", [])]).returncode == 0

@@ -39,7 +39,6 @@ log = logging.getLogger(__name__)
 SSH_USER = "homelab"
 KEY_COMMENT = "homelab-manager"
 PVE_USER = "homelab@pve"
-PVE_TOKEN = "dashboard"
 PVE_ROLE = "HomelabManager"
 # Everything the dashboard uses (README, "What each platform needs"). Guest agent exec is
 # VM.GuestAgent.Unrestricted on PVE 9 and VM.Monitor on PVE 8.
@@ -323,15 +322,22 @@ async def _run(ssh: SSHExecutor, script: str, what: str) -> str:
     return res.stdout
 
 
-PVE_SCRIPT = f"""set -e
+def pve_token(machine_name: str) -> str:
+    """One token per added node: nodes of one cluster share their users and tokens, so a shared
+    token name would have each Connect revoke the token the previous node got."""
+    return "hm-" + re.sub(r"[^A-Za-z0-9_-]", "-", machine_name)
+
+
+def pve_script(token: str) -> str:
+    return f"""set -e
 pveum role add {PVE_ROLE} -privs VM.Audit >/dev/null 2>&1 || true
 pveum role modify {PVE_ROLE} -privs "{PVE_PRIVS} VM.GuestAgent.Unrestricted" 2>/dev/null \\
   || pveum role modify {PVE_ROLE} -privs "{PVE_PRIVS} VM.Monitor"
 pveum user add {PVE_USER} --comment "Homelab Manager" >/dev/null 2>&1 || true
 pveum acl modify / --users {PVE_USER} --roles {PVE_ROLE}
 # A token's secret is shown only once, so make a new one (revoking the old) each time.
-pveum user token remove {PVE_USER} {PVE_TOKEN} >/dev/null 2>&1 || true
-pveum user token add {PVE_USER} {PVE_TOKEN} --privsep 0 --comment "Homelab Manager" --output-format json
+pveum user token remove {PVE_USER} {token} >/dev/null 2>&1 || true
+pveum user token add {PVE_USER} {token} --privsep 0 --comment "Homelab Manager" --output-format json
 for f in /etc/pve/local/pveproxy-ssl.pem /etc/pve/local/pve-ssl.pem; do
   if [ -f "$f" ]; then echo "__FP__=$(openssl x509 -in "$f" -noout -fingerprint -sha256)"; break; fi
 done
@@ -339,7 +345,7 @@ done
 
 
 def parse_pve(stdout: str) -> tuple[str, str]:
-    """(token secret, certificate fingerprint) from :data:`PVE_SCRIPT`'s output."""
+    """(token secret, certificate fingerprint) from :func:`pve_script`'s output."""
     secret = fp = None
     for line in stdout.splitlines():
         line = line.strip()
@@ -432,11 +438,12 @@ async def connect(machine: Machine, paths: Paths, replace_host_key: bool = False
             "sudo": True,
         }
         if machine.kind == "proxmox":
-            secret, fp = parse_pve(await _run(ssh, PVE_SCRIPT, "creating the Proxmox API token"))
-            res.log.append(f"Created API token {PVE_USER}!{PVE_TOKEN} (role {PVE_ROLE}) and pinned the API certificate")
+            token = pve_token(machine.name)
+            secret, fp = parse_pve(await _run(ssh, pve_script(token), "creating the Proxmox API token"))
+            res.log.append(f"Created API token {PVE_USER}!{token} (role {PVE_ROLE}) and pinned the API certificate")
             entry |= {
                 "api_url": f"https://{_url_host(machine.address)}:8006",
-                "token_id": f"{PVE_USER}!{PVE_TOKEN}",
+                "token_id": f"{PVE_USER}!{token}",
                 "token_secret": secret,
                 "tls_fingerprint": fp,
                 "ssh": ssh_entry,
