@@ -107,12 +107,12 @@ function rowHtml(v, withBackup) {
   let html = `<tr class="${t.kind === "host" ? "host" : "guest"}">
     <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${canUpgrade(t) ? "" : "disabled"}></td>
     <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
-    <td class="muted">${esc(c?.os || "")}</td>
-    <td>${esc(t.status)}</td>
+    <td class="muted os">${esc(c?.os || "")}</td>
+    <td><span class="dot ${t.status === "running" ? "on" : t.status ? "off" : ""}"></span>${esc(t.status)}</td>
     ${withBackup ? `<td>${backupCell(t)}</td>` : ""}
     <td>${updatesCell(v)} ${reboot}${notes}</td>
     <td class="muted">${c ? ago(c.checked_at) : ""}</td>
-    <td>
+    <td class="actions">
       <button class="small" data-act="check" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Check</button>
       <button class="small ${pending && !t.check_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy ? "" : "disabled"} title="${t.check_only ? esc(t.note) : ""}">Update</button>
       <button class="small" data-act="reboot" data-id="${esc(t.id)}" ${canReboot(t) && !busy ? "" : "disabled"} title="${esc(t.no_reboot || (t.check_only ? t.note : ""))}">Reboot</button>
@@ -154,10 +154,10 @@ function render() {
     return `
     <div class="group">
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
-      <table>
+      <div class="group-scroll"><table>
         <thead><tr><th></th><th>Name</th><th>OS</th><th>State</th>${withBackup ? "<th>Last backup</th>" : ""}<th>Updates</th><th>Checked</th><th></th></tr></thead>
         <tbody>${g.rows.map((v) => rowHtml(v, withBackup)).join("")}</tbody>
-      </table>
+      </table></div>
     </div>`;
   }).join("") || `<p class="muted">No targets yet. Add Proxmox, Incus or SSH hosts to config.yaml.</p>`;
 
