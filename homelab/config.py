@@ -51,6 +51,12 @@ class HostBackupConfig(BaseModel):
             raise ValueError("backup type path needs path")
         if self.type != "path" and not (self.repository or self.env_file):
             raise ValueError(f"backup type {self.type} needs repository (or an env_file that sets it)")
+        # A relative path would be read from the SSH user's home folder, and "-x" would reach find as
+        # an option.
+        for key in ("path", "env_file"):
+            value = getattr(self, key)
+            if value and not value.startswith("/"):
+                raise ValueError(f"backup {key} must be a full path starting with /, not {value!r}")
         return self
 
 
