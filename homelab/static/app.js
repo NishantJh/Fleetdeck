@@ -170,7 +170,8 @@ function render() {
   const hiddenCount = state.targets.length - active().length;
   const toggle = $("#show-hidden");
   toggle.hidden = hiddenCount === 0;
-  toggle.textContent = state.showHidden ? `Hide hidden (${hiddenCount})` : `Show hidden (${hiddenCount})`;
+  toggle.textContent = `Show hidden (${hiddenCount})`;
+  toggle.setAttribute("aria-pressed", String(state.showHidden));
   const hint = active().find((v) => v.runs_dashboard && !dismissed.has(v.target.id));
   $("#self-hint").innerHTML = hint
     ? `<div class="hint-banner"><span><b>${esc(hint.target.name)}</b> looks like the machine this dashboard runs on. Hide it, so it isn't updated or rebooted from here by accident?</span>
