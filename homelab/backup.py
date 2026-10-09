@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from . import onboarding as ob
 from .config import AppConfig, validate_raw
+from .setup_routes import refuse_while_busy
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -46,6 +47,9 @@ log = logging.getLogger(__name__)
 MAGIC = b"HLMBACKUP1\n"
 _HEADER = struct.Struct(">III16s12s")
 _SCRYPT = (2**15, 8, 1)
+# Settings a backup may have been written with: old files stay readable if the default goes up.
+_KNOWN_SCRYPT = {(2**15, 8, 1), (2**17, 8, 1)}
+KEEP_SAFETY_COPIES = 5
 MIN_PASSPHRASE = 12
 MAX_BACKUP_BYTES = 100 * 2**20  # uploaded file, and everything inside it once unpacked
 SUFFIX = ".hlmbackup"
@@ -57,7 +61,8 @@ class BackupError(ValueError):
 
 
 def _key(passphrase: str, salt: bytes, n: int, r: int, p: int) -> bytes:
-    return hashlib.scrypt(passphrase.encode(), salt=salt, n=n, r=r, p=p, maxmem=2**26, dklen=32)
+    # scrypt needs 128 * n * r bytes; allow twice that.
+    return hashlib.scrypt(passphrase.encode(), salt=salt, n=n, r=r, p=p, maxmem=256 * n * r, dklen=32)
 
 
 def encrypt(plain: bytes, passphrase: str) -> bytes:
@@ -71,9 +76,10 @@ def decrypt(blob: bytes, passphrase: str) -> bytes:
     if len(blob) < size or not blob.startswith(MAGIC):
         raise BackupError("this isn't a Homelab Manager backup file")
     n, r, p, salt, nonce = _HEADER.unpack(blob[len(MAGIC) : size])
-    # Only what we write; anything else is a damaged or crafted file (and huge n would eat memory).
-    if (n, r, p) != _SCRYPT:
-        raise BackupError("this backup was made by a newer version of Homelab Manager")
+    # Only settings we know; anything else is a newer version's, or a damaged or crafted file (a huge
+    # n would eat memory).
+    if (n, r, p) not in _KNOWN_SCRYPT:
+        raise BackupError("this backup uses encryption settings this version doesn't know (made by a newer version?)")
     try:
         return AESGCM(_key(passphrase, salt, n, r, p)).decrypt(nonce, blob[size:], blob[:size])
     except InvalidTag:
@@ -242,6 +248,22 @@ def restore_files(paths: ob.Paths, files: dict[str, bytes]) -> None:
         ob._write_private(paths.config, files["config.yaml"])
 
 
+def _state_file(new: AppConfig, paths: ob.Paths) -> str | None:
+    """The restored config's state file, resolved the way ``load_config`` will after the restart."""
+    if os.environ.get("HOMELAB_STATE"):
+        return os.environ["HOMELAB_STATE"]
+    if not new.state_file:
+        return None
+    p = Path(new.state_file)
+    return str(p if p.is_absolute() else paths.config.absolute().parent / p)
+
+
+def _prune_safety_copies(folder: Path) -> None:
+    """Keep only the newest few: each holds every secret."""
+    for old in sorted(folder.glob(f"before-restore-*{SUFFIX}"))[:-KEEP_SAFETY_COPIES]:
+        old.unlink(missing_ok=True)
+
+
 class BackupRequest(BaseModel):
     passphrase: str = Field(min_length=MIN_PASSPHRASE, max_length=1024)
 
@@ -259,6 +281,7 @@ def add_backup_routes(
     paths: ob.Paths,
     store: Store | None,
     restart: Callable[[], None] | None,
+    busy: Callable[[], list[str]] = list,
 ) -> None:
     lock = asyncio.Lock()
 
@@ -305,6 +328,7 @@ def add_backup_routes(
 
         if not paths.writable():
             raise HTTPException(409, f"{paths.config} can't be written; restore the files by hand")
+        refuse_while_busy(busy)
         async with lock:
             # Keep what is there now, encrypted with the same passphrase, in case this was a mistake.
             db = _snapshot_db(store)
@@ -315,9 +339,14 @@ def add_backup_routes(
             )
             current = await asyncio.to_thread(lambda: encrypt(pack(paths, db), req.passphrase))
             await asyncio.to_thread(ob._write_private, safety, current)
+            await asyncio.to_thread(_prune_safety_copies, safety.parent)
             await asyncio.to_thread(restore_files, paths, files)
             if "state.db" in files:
-                _restore_db(files["state.db"], store, cfg.state_file)
+                # Where the restored config keeps its history, which may not be where this one does.
+                state_file = _state_file(new_cfg, paths) or cfg.state_file
+                same = cfg.state_file and Path(state_file).absolute() == Path(cfg.state_file).absolute()
+                live = store if same else None
+                _restore_db(files["state.db"], live, state_file)
         log.warning("Restored a backup from %s; the previous data was saved to %s.", info["created_at"], safety)
         if restart is not None:
             asyncio.get_running_loop().call_later(0.3, restart)
