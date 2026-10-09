@@ -395,6 +395,15 @@ def test_drop_privileges_ownership(tmp_path, monkeypatch, owner, env, expected):
     assert oct(data.stat().st_mode & 0o777) == "0o755"  # the folder's mode is left alone
 
 
+def test_reconnecting_keeps_a_hand_added_backup():
+    data = {"hosts": [{"name": "pi", "host": "a", "backup": {"type": "path", "path": "/b"}}]}
+    ob.upsert(data, "host", {"name": "pi", "host": "b"})
+    assert data["hosts"] == [{"name": "pi", "host": "b", "backup": {"type": "path", "path": "/b"}}]
+    data = {"incus": [{"name": "i", "ssh": {"host": "a", "backup": {"type": "borg", "repository": "/r"}}}]}
+    ob.upsert(data, "incus", {"name": "i", "ssh": {"host": "b"}})
+    assert data["incus"][0]["ssh"]["backup"] == {"type": "borg", "repository": "/r"}
+
+
 def test_written_config_round_trips(tmp_path):
     paths = ob.Paths(tmp_path / "config.yaml")
     data = ob.new_config(paths, "admin", hash_password("x" * 10))

@@ -234,7 +234,8 @@ async def test_proxmox_backups():
     assert pihole.count == 2 and pihole.storage == "pbs" and pihole.verified and not pihole.stale and pihole.in_job
     assert old.last is None and old.stale and old.in_job is False
     assert docker.stale and docker.verified is False
-    assert found["pve"].backup is None  # hosts aren't backed up by vzdump
+    # Nodes aren't backed up by vzdump; without SSH their own check can't run.
+    assert found["pve"].backup.not_set_up and "SSH" in found["pve"].backup.note
 
     before = len(calls)
     await p.discover()
@@ -419,3 +420,99 @@ async def test_pve_node_check_flags_security_updates_over_ssh():
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://pve:8006/api2/json")
     res = await PveNodeExecutor(client, "pve", FakeSSH()).check()
     assert {p.name: p.security for p in res.packages} == {"openssl": True, "pve-manager": False}
+
+
+async def test_incus_backups_from_snapshots_and_exports():
+    from datetime import UTC, datetime, timedelta
+
+    p = IncusProvider(IncusConfig(name="incus01", socket="/nonexistent"))
+    now = datetime.now(UTC)
+    iso = lambda h: (now - timedelta(hours=h)).isoformat().replace("+00:00", "Z")  # noqa: E731
+    data = {
+        "/1.0/instances": [
+            {
+                "name": "web",
+                "project": "default",
+                "type": "container",
+                "status": "Running",
+                "expanded_config": {"snapshots.schedule": "@daily"},
+            },
+            {"name": "old", "project": "default", "type": "container", "status": "Running"},
+            {"name": "none", "project": "default", "type": "container", "status": "Running"},
+        ],
+        "/1.0/instances/web/snapshots": [
+            {"name": "snap0", "created_at": iso(30)},
+            {"name": "snap1", "created_at": iso(5)},
+        ],
+        "/1.0/instances/web/backups": [{"name": "b0", "created_at": iso(50)}],
+        # Only the dashboard's own pre-upgrade snapshot, which doesn't count, and an old export.
+        "/1.0/instances/old/snapshots": [{"name": "homelab_20261009_101010", "created_at": iso(1)}],
+        "/1.0/instances/old/backups": [{"name": "b0", "created_at": iso(100)}],
+        "/1.0/instances/none/snapshots": [],
+        "/1.0/instances/none/backups": [],
+    }
+    p.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"metadata": data[req.url.path]})),
+        base_url="http://incus",
+    )
+    found = {t.name: t.backup for t, _ in await p.discover()}
+    assert found["incus01"].not_set_up
+    web, old, none = found["web"], found["old"], found["none"]
+    assert web.storage == "snapshot" and web.count == 3 and not web.stale and web.in_job
+    assert old.storage == "export" and old.count == 1 and old.stale and old.in_job is None
+    assert none.last is None and none.stale and none.note is None
+
+
+async def test_incus_backups_unreadable_is_unknown_not_none():
+    p = IncusProvider(IncusConfig(name="incus01", socket="/nonexistent"))
+
+    def handler(req):
+        if req.url.path == "/1.0/instances":
+            return httpx.Response(200, json={"metadata": [{"name": "web", "type": "container", "status": "Running"}]})
+        return httpx.Response(403, json={"error": "not authorized"})
+
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://incus")
+    found = {t.name: t for t, _ in await p.discover()}
+    b = found["web"].backup
+    assert b.last is None and not b.stale and "could not list snapshots" in b.note
+
+
+async def test_nodes_and_incus_host_run_their_own_backup_check(monkeypatch):
+    from homelab.config import HostBackupConfig
+    from homelab.host_backups import HostBackups
+    from homelab.models import BackupInfo
+
+    seen = []
+
+    async def fake_get(self, name, cfg, ex):
+        seen.append((name, cfg.path, ex.cfg.host))
+        return BackupInfo(storage=cfg.path, count=1)
+
+    monkeypatch.setattr(HostBackups, "get", fake_get)
+    ssh = SSHConfig(host="10.0.0.5", insecure_skip_host_key_check=True, backup=HostBackupConfig(type="path", path="/b"))
+
+    pve = ProxmoxProvider(
+        ProxmoxConfig(
+            name="lab", api_url="https://pve:8006", token_id="t", token_secret="x", ssh=ssh, backup_max_age_hours=0
+        )
+    )
+    data = {
+        "/api2/json/nodes": [{"node": "pve", "status": "online"}, {"node": "pve2", "status": "offline"}],
+        "/api2/json/cluster/status": [],
+        "/api2/json/nodes/pve/lxc": [],
+        "/api2/json/nodes/pve/qemu": [],
+    }
+    pve.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": data[req.url.path]})),
+        base_url=pve.client.base_url,
+    )
+    nodes = {t.name: t.backup for t, _ in await pve.discover()}
+    assert nodes["pve"].storage == "/b" and nodes["pve2"].note == "offline"
+
+    inc = IncusProvider(IncusConfig(name="incus01", socket="/nonexistent", ssh=ssh))
+    inc.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"metadata": []})), base_url="http://incus"
+    )
+    ((host, _),) = await inc.discover()
+    assert host.backup.storage == "/b"
+    assert seen == [("pve", "/b", "10.0.0.5"), ("incus01", "/b", "10.0.0.5")]

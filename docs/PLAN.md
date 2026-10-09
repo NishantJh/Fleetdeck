@@ -36,5 +36,7 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 - [ ] Start/stop/restart guests
 - [ ] Docker/Compose stacks inside guests: image update checks
 - [x] Backup status: last backup per guest (vzdump/PBS), stale, not in a job, failed verification
+- [x] Last backup for Incus (snapshots/exports) and plain hosts (folder, restic, borg)
+- [ ] Set a host's backup location from the setup page
 - [ ] Notify when a backup goes stale
 - [ ] Proper login (OIDC) instead of basic auth

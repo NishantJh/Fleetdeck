@@ -10,6 +10,7 @@ import httpx
 
 from ..config import ProxmoxConfig, SSHConfig
 from ..executors import DEFAULT_TIMEOUT, LineCallback, PctExecutor, PveAgentExecutor, SSHExecutor
+from ..host_backups import HostBackups
 from ..models import BackupInfo, CheckResult, ExecResult, Package, Target
 from ..snapshots import PveSnapshots
 from ..tls import PinnedTransport
@@ -148,6 +149,7 @@ class ProxmoxProvider:
         self._backups: BackupIndex | None = None
         self._backups_at = 0.0
         self.snapshots: dict[str, PveSnapshots] = {}
+        self.host_backups = HostBackups()
         self.client = httpx.AsyncClient(
             base_url=cfg.api_url.rstrip("/") + "/api2/json",
             headers={"Authorization": f"PVEAPIToken={cfg.token_id}={cfg.token_secret}"},
@@ -292,7 +294,16 @@ class ProxmoxProvider:
                 backups = await self._backup_index(online)
             except Exception as e:  # noqa: BLE001 - backups are extra; never hide the guests
                 backups = BackupIndex(note=f"could not read backups: {e}")
-        for node in nodes:
+        # Each node's own backup check runs over its SSH, all nodes at once.
+        node_backups = await asyncio.gather(
+            *(
+                self.host_backups.for_machine(
+                    n["node"], self._node_ssh(n["node"], node_ips), n.get("status") == "online"
+                )
+                for n in nodes
+            )
+        )
+        for node, node_backup in zip(nodes, node_backups, strict=True):
             nname = node["node"]
             online = node.get("status") == "online"
             ssh_cfg = self._node_ssh(nname, node_ips)
@@ -312,6 +323,7 @@ class ProxmoxProvider:
                 note=(None if ssh else ssh_problem or "check only: add ssh settings to upgrade this node")
                 if online
                 else "offline",
+                backup=node_backup,
             )
             found.append((host, PveNodeExecutor(self.client, nname, ssh)))
             if not online:

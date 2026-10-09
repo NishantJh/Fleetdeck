@@ -36,6 +36,12 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   API token most likely lacks it, so add the read-only `PVEAuditor` role on `/storage`
   (`pveum acl modify /storage --tokens 'root@pam!homelab' --roles PVEAuditor`, with your token id),
   or set `backup_max_age_hours: 0` to turn the column off.
+  Incus instances show their newest snapshot or export (the dashboard's own pre-upgrade snapshots
+  don't count). Every other machine (Proxmox nodes, the Incus host, a Raspberry Pi, a VPS) shows
+  *not set up* until you add a `backup:` entry to its SSH settings (under `ssh:` for Proxmox and Incus):
+  the newest file in a folder (`type: path`), or the newest snapshot in a restic or borg repository
+  (read with `--no-lock` / `--bypass-lock`, so it never gets in a running backup's way). See
+  `config.example.yaml`.
 * **Snapshot first:** the Update dialog can snapshot Proxmox LXCs/VMs and Incus instances before
   upgrading (on by default, `snapshot_before_upgrade`). A guest whose storage can't snapshot at all
   (a raw disk on dir/NFS storage) is upgraded without one and the log says so; any other snapshot

@@ -10,7 +10,7 @@ Kind = Literal["host", "lxc", "vm", "container"]
 
 
 class BackupInfo(BaseModel):
-    """Proxmox backups (vzdump / Proxmox Backup Server) of one guest."""
+    """Newest backup of one machine: Proxmox vzdump/PBS, Incus snapshots/exports, or a host's own check."""
 
     last: datetime | None = None
     storage: str | None = None  # where the newest backup is
@@ -21,8 +21,10 @@ class BackupInfo(BaseModel):
     in_job: bool | None = None
     # Verification state of the newest backup on PBS (None when not verified / not PBS).
     verified: bool | None = None
-    # Why backups couldn't be read, e.g. missing permissions.
+    # Why backups couldn't be read, e.g. missing permissions. With not_set_up: how to set it up.
     note: str | None = None
+    # Nothing tells the dashboard where this machine's backups are.
+    not_set_up: bool = False
 
 
 class Target(BaseModel):

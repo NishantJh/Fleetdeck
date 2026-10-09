@@ -906,7 +906,16 @@ def new_config(paths: Paths, username: str, password_hash: str) -> dict:
 
 
 def upsert(data: dict, kind: str, entry: dict) -> dict:
-    """Add or replace the machine called ``entry['name']``, also removing that name from other sections."""
+    """Add or replace the machine called ``entry['name']``, also removing that name from other sections.
+
+    A backup: setting the user added to the machine by hand is kept."""
+    old = next((m for m in data.get(SECTION[kind]) or [] if m.get("name") == entry["name"]), None)
+    if old:
+        if kind == "host" and old.get("backup") and "backup" not in entry:
+            entry["backup"] = old["backup"]
+        old_ssh = old.get("ssh") if isinstance(old.get("ssh"), dict) else {}
+        if kind != "host" and old_ssh.get("backup") and isinstance(entry.get("ssh"), dict):
+            entry["ssh"].setdefault("backup", old_ssh["backup"])
     for k, section in SECTION.items():
         items = [m for m in data.get(section) or [] if m.get("name") != entry["name"]]
         if k == kind:
