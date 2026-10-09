@@ -12,6 +12,7 @@ is the whole install.
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import datetime as dt
 import ipaddress
@@ -202,10 +203,41 @@ def incus_cert_fingerprint(paths: Paths) -> str:
 
 # --- the script pasted on each machine -------------------------------------------------------
 
-_BOOTSTRAP = r"""# Homelab Manager: let the dashboard manage this machine ({name}).
-# Creates the user {user}, which logs in only with the dashboard's key and has passwordless sudo.
+# Is a TCP/UDP port free on this machine? (`port_free tcp 8443`) Never take one something else uses.
+PORT_FREE_SH = r"""port_free() {
+  h=$(printf '%04X' "$2"); st=0A; [ "$1" = udp ] && st=07
+  for f in /proc/net/$1 /proc/net/${1}6; do
+    if [ -r "$f" ] && awk -v h="$h" -v st="$st" \
+      'NR > 1 { n = split($2, a, ":"); if (a[n] == h && $4 == st) f = 1 } END { exit !f }' "$f"; then return 1; fi
+  done
+  return 0
+}
+"""
+
+
+_CHECKS = r"""# Homelab Manager: let the dashboard manage this machine ({name}).
+# It creates the user {user}, which logs in only with the dashboard's key and has passwordless sudo.
+# First it checks everything and changes nothing; then it lists the changes and makes them.
 set -eu
 U={user}
+KEY={key}
+SUDOERS=/etc/sudoers.d/homelab-manager
+stop() {{ echo >&2; echo "Stopped; nothing was changed. $*" >&2; exit 1; }}
+{port_free}# Installs package $1 only when that upgrades or removes nothing already installed.
+apt_ok() {{
+  out=$(apt-get -s install -y --no-install-recommends "$1" 2>/dev/null) || return 1
+  printf '%s\n' "$out" | grep -q "^Inst $1 " || return 1
+  if printf '%s\n' "$out" | grep -Eq '^(Inst [^ ]+ \[|Remv )'; then return 1; fi
+}}
+pkg_hint() {{
+  for pm in "dnf install" "yum install" "apk add" "pacman -S" "zypper install" "apt-get install"; do
+    if command -v "${{pm%% *}}" >/dev/null 2>&1; then echo "$pm $1"; return; fi
+  done
+  echo "your package manager"
+}}
+
+# --- checks ---
+[ "$(id -u)" -eq 0 ] || stop "This needs root."
 for nas in /etc/unraid-version /etc/synoinfo.conf; do
   if [ -f "$nas" ]; then echo "WARNING: this looks like Unraid or Synology, which reset /etc or don't read"
     echo "/etc/sudoers.d; the user may vanish on reboot or update. Managing it over SSH isn't supported."; fi
@@ -213,30 +245,80 @@ done
 if [ -f /etc/version ] && grep -qi truenas /etc/version 2>/dev/null; then
   echo "WARNING: TrueNAS resets users and sudoers on upgrades; you may need to run this again after one."
 fi
-KEY={key}
+if [ "$(cat /proc/sys/crypto/fips_enabled 2>/dev/null || echo 0)" = 1 ]; then
+  stop "FIPS mode is on, which refuses the dashboard's ed25519 key, so this machine can't be managed."
+fi
+# Never take over somebody's account of that name (local, or from LDAP/SSSD); ours has its sudoers file.
+if id "$U" >/dev/null 2>&1; then
+  [ -f "$SUDOERS" ] || stop "A user called $U already exists and wasn't made by this script."
+  grep -q "^$U:" /etc/passwd || stop "The user $U comes from a directory service (LDAP/SSSD), not this machine."
+fi
+# What sshd allows for this user (Match blocks included), when it can tell.
+S=""
+if command -v sshd >/dev/null 2>&1; then
+  S=$(sshd -T -C "user=$U,host=homelab-manager,addr={addr}" 2>/dev/null || sshd -T 2>/dev/null || true)
+fi
+v() {{ printf '%s\n' "$S" | sed -n "s/^$1 //p" | tr '\n' ' ' | sed 's/ $//'; }}
+am=$(v authenticationmethods)
+case " $am " in
+  "  "|*" any "*|*" publickey "*) ;;
+  *) stop "sshd wants more than a key to log in (AuthenticationMethods $am). Add these two lines at the
+end of /etc/ssh/sshd_config, reload sshd, then run this again:
+Match User $U
+    AuthenticationMethods publickey" ;;
+esac
+akf=$(v authorizedkeysfile)
+case " $akf " in
+  "  "|*" .ssh/authorized_keys "*|*"/.ssh/authorized_keys "*) ;;
+  *) stop "sshd reads keys only from $akf, not ~/.ssh/authorized_keys. Add .ssh/authorized_keys to
+AuthorizedKeysFile in /etc/ssh/sshd_config (or use Match User $U), reload sshd, then run this again." ;;
+esac
+au=$(v allowusers)
+if [ -n "$au" ]; then
+  case " $au " in
+    *" $U "*|*" $U@"*) ;;
+    *) stop "sshd only lets some users log in (AllowUsers $au). Add $U to AllowUsers in
+/etc/ssh/sshd_config, reload sshd, then run this again." ;;
+  esac
+fi
+case " $(v denyusers) " in
+  *" $U "*) stop "sshd's DenyUsers lists $U; take it out, reload sshd, then run this again." ;;
+esac
+ag=$(v allowgroups)
+INSTALL=""
 if ! command -v sudo >/dev/null 2>&1; then
-  # `apt-get update` fails as a whole on a fresh Proxmox node (enterprise repo, no subscription), but
-  # the Debian repos it got through are enough for sudo.
-  if command -v apt-get >/dev/null 2>&1; then apt-get update -qq || true; apt-get install -y -qq sudo || {{
-    echo "Couldn't install sudo. On Proxmox, disable the enterprise repository (or add no-subscription) under"
-    echo "Updates > Repositories, then run this again." >&2; exit 1; }}
-  elif command -v dnf >/dev/null 2>&1; then dnf install -y -q sudo
-  elif command -v yum >/dev/null 2>&1; then yum install -y -q sudo
-  elif command -v apk >/dev/null 2>&1; then apk add -q sudo
-  elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm sudo
-  elif command -v zypper >/dev/null 2>&1; then zypper -q install -y sudo
-  else echo "Install sudo first, then run this again." >&2; exit 1; fi
+  if command -v apt-get >/dev/null 2>&1 && apt_ok sudo; then INSTALL="sudo"
+  elif command -v apt-get >/dev/null 2>&1; then
+    stop "sudo isn't installed, and apt can't add it on its own (out-of-date package lists, or it would
+upgrade other packages). Run
+  apt-get update && apt-get install sudo
+(on Proxmox without a subscription, enable the no-subscription repository under Updates > Repositories
+first), then run this again."
+  else stop "sudo isn't installed. Install it ($(pkg_hint sudo)), then run this again."
+  fi
+elif ! grep -Eqs '^[[:space:]]*[#@]includedir[[:space:]]+/etc/sudoers\.d/?[[:space:]]*$' /etc/sudoers; then
+  stop "sudo here doesn't read /etc/sudoers.d (no includedir line in /etc/sudoers), so it can't be set up."
 fi
-# Never take over somebody's existing account of that name; one this script made has its sudoers file.
-if id "$U" >/dev/null 2>&1 && [ ! -f /etc/sudoers.d/homelab-manager ]; then
-  echo "A user called $U already exists and wasn't made by this script; not touching it." >&2; exit 1
+"""
+
+_CHANGES = r"""
+# --- changes ---
+echo "Checks passed. Making these changes:"
+if [ -n "$INSTALL" ]; then echo "  - install the package(s): $INSTALL"; fi
+{plan}if id "$U" >/dev/null 2>&1; then echo "  - update the user $U (made by this script before)"
+else echo "  - add the user $U (no password, logs in only with the dashboard's key)"; fi
+echo "  - $SUDOERS: passwordless sudo for $U"
+echo
+if [ -n "$INSTALL" ]; then
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends -o DPkg::Lock::Timeout=120 $INSTALL
 fi
-if ! id "$U" >/dev/null 2>&1; then
+{changes}if ! id "$U" >/dev/null 2>&1; then
   if command -v useradd >/dev/null 2>&1; then useradd --create-home --shell /bin/sh --comment "Homelab Manager" "$U"
   else adduser -D -s /bin/sh -g "Homelab Manager" "$U"; fi
 fi
 # No password at all, but not "locked": sshd refuses key logins to locked accounts on some systems.
-if command -v usermod >/dev/null 2>&1; then usermod -p '*' "$U"; else sed -i "s/^$U:!*:/$U:*:/" /etc/shadow; fi
+if command -v usermod >/dev/null 2>&1; then usermod -p '*' "$U"
+else cp -p /etc/shadow /etc/shadow.homelab-bak && sed -i "s/^$U:!*:/$U:*:/" /etc/shadow; fi
 H=$(getent passwd "$U" | cut -d: -f6)
 G=$(id -gn "$U")
 install -d -m 700 -o "$U" -g "$G" "$H/.ssh"
@@ -244,45 +326,76 @@ printf '%s\n' "$KEY" > "$H/.ssh/authorized_keys"
 chown "$U:$G" "$H/.ssh/authorized_keys"
 chmod 600 "$H/.ssh/authorized_keys"
 if command -v restorecon >/dev/null 2>&1; then restorecon -R "$H/.ssh" 2>/dev/null || true; fi
+# The rule is written next to its final place under a dotted name (which sudo skips), checked, moved in,
+# and the whole sudo configuration checked again; if that fails it is taken out again.
 mkdir -p /etc/sudoers.d
-T=$(mktemp)
+T=$(mktemp /etc/sudoers.d/.homelab-manager.XXXXXX)
 printf '%s ALL=(ALL) NOPASSWD: ALL\n' "$U" > "$T"
-if command -v visudo >/dev/null 2>&1 && ! visudo -cqf "$T"; then echo "sudoers check failed" >&2; rm -f "$T"; exit 1; fi
 chmod 440 "$T"
-mv "$T" /etc/sudoers.d/homelab-manager
-if command -v sshd >/dev/null 2>&1 && sshd -T 2>/dev/null | grep -qiE '^(allowusers|allowgroups) '; then
+if command -v visudo >/dev/null 2>&1 && ! visudo -cqf "$T"; then
+  rm -f "$T"; echo "The sudoers rule didn't check out." >&2; exit 1
+fi
+OLD=""
+if [ -f "$SUDOERS" ]; then OLD=$(mktemp /etc/sudoers.d/.homelab-manager-old.XXXXXX); cp -p "$SUDOERS" "$OLD"; fi
+mv -f "$T" "$SUDOERS"
+if command -v restorecon >/dev/null 2>&1; then restorecon "$SUDOERS" 2>/dev/null || true; fi
+if command -v visudo >/dev/null 2>&1 && ! visudo -cq; then
+  if [ -n "$OLD" ]; then mv -f "$OLD" "$SUDOERS"; else rm -f "$SUDOERS"; fi
+  echo "sudo's configuration doesn't check out with the rule added, so it was taken out again." >&2; exit 1
+fi
+if [ -n "$OLD" ]; then rm -f "$OLD"; fi
+if ! sudo -l -U "$U" 2>/dev/null | grep -q NOPASSWD; then
+  echo "sudo doesn't give $U passwordless sudo (it ignores $SUDOERS here); the dashboard needs that." >&2; exit 1
+fi
+if [ -n "$ag" ]; then
   echo
-  echo "WARNING: sshd only lets some users log in (AllowUsers/AllowGroups in /etc/ssh/sshd_config)."
-  echo "Add $U there and reload sshd, or the dashboard can't connect."
+  echo "WARNING: sshd only lets members of some groups log in (AllowGroups $ag)."
+  echo "Add $U to one of them (usermod -aG <group> $U), or the dashboard can't connect."
 fi
 echo
 echo "Done. This machine's SSH host keys (compare with what the setup page shows after Connect):"
 for f in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$f" 2>/dev/null || true; done
 """
 
+# Runs the script as root from any login shell (sh, bash, zsh, fish, nushell, csh): the script travels as
+# base64, and sh picks sudo, doas or su. No `!` (csh history), backslashes (fish) or newlines (csh).
+_WRAPPER = (
+    'sh -c \'S=$1; if [ "$(id -u)" = 0 ]; then printf %s "$S" | base64 -d | sh; '
+    'elif command -v sudo >/dev/null 2>&1; then printf %s "$S" | base64 -d | sudo sh; '
+    'elif command -v doas >/dev/null 2>&1; then printf %s "$S" | base64 -d | doas sh; '
+    'else echo "Enter the root password:" >&2; su root -c "printf %s $S | base64 -d | sh"; fi\' homelab-setup '
+)
 
-def bootstrap_script(machine: Machine, public_key: str, allow_from: list[str], tunnel: dict | None = None) -> str:
-    """The commands to paste on ``machine``, as root or as a user with sudo. With ``tunnel`` (from
-    :func:`tunnels.pending`) it also sets up the machine's end of the tunnel, and the key only works
-    through it."""
+
+def wrap(script: str) -> str:
+    """One line to paste into a shell on the machine, as root or as a user with sudo, doas or su."""
+    return _WRAPPER + base64.b64encode(script.encode()).decode() + "\n"
+
+
+def bootstrap_source(machine: Machine, public_key: str, allow_from: list[str], tunnel: dict | None = None) -> str:
+    """What the setup script runs on ``machine`` (as root). With ``tunnel`` (from :func:`tunnels.pending`) it
+    also sets up the machine's end of the tunnel, and the key only works through it."""
     if tunnel is not None:
         allow_from = [f"10.99.{tunnel['index']}.2/32"]
     options = ["restrict"]
     if allow_from:
         options.append(f'from="{",".join(allow_from)}"')
     key_line = f"{','.join(options)} {public_key}"
-    body = _BOOTSTRAP.format(name=machine.name, user=SSH_USER, key=shlex.quote(key_line))
-    if tunnel is not None:
-        # First, so a port or subnet conflict stops the script before it changes anything else.
-        start = body.index("if ! command -v sudo")
-        body = body[:start] + PORT_FREE_SH + tunnels.vps_script(tunnel, machine.port) + body[start:]
-    # One block that works pasted into any shell: root runs it directly, anyone else through sudo.
-    return (
-        "f=$(mktemp) && cat > \"$f\" <<'HOMELAB_SETUP'\n"
-        f"{body}"
-        "HOMELAB_SETUP\n"
-        'if [ "$(id -u)" -eq 0 ]; then sh "$f"; else sudo sh "$f"; fi; r=$?; rm -f "$f"; [ "$r" -eq 0 ]\n'
+    # The address sshd's Match blocks are checked against: one the dashboard will connect from.
+    addr = allow_from[0].split("/")[0] if allow_from else "192.0.2.1"
+    checks = _CHECKS.format(
+        name=machine.name, user=SSH_USER, key=shlex.quote(key_line), addr=addr, port_free=PORT_FREE_SH
     )
+    plan = changes = ""
+    if tunnel is not None:
+        checks += tunnels.vps_checks(tunnel)
+        plan = tunnels.vps_plan(tunnel)
+        changes = tunnels.vps_changes(tunnel, machine.port)
+    return checks + _CHANGES.format(plan=plan, changes=changes)
+
+
+def bootstrap_script(machine: Machine, public_key: str, allow_from: list[str], tunnel: dict | None = None) -> str:
+    return wrap(bootstrap_source(machine, public_key, allow_from, tunnel))
 
 
 # --- connecting ------------------------------------------------------------------------------
@@ -389,10 +502,25 @@ async def _run(ssh: SSHExecutor, script: str, what: str) -> str:
     return res.stdout
 
 
-def pve_token(machine_name: str) -> str:
-    """One token per added node: nodes of one cluster share their users and tokens, so a shared
-    token name would have each Connect revoke the token the previous node got."""
+def _pve_token_base(machine_name: str) -> str:
     return "hm-" + re.sub(r"[^A-Za-z0-9_-]", "-", machine_name)
+
+
+def pve_token(machine_name: str, now: dt.datetime | None = None) -> str:
+    """A new token name for an added node, unique each time. One per node: nodes of one cluster share
+    their users and tokens, so they must not replace each other's."""
+    stamp = (now or dt.datetime.now(dt.UTC)).strftime("%Y%m%d%H%M%S")
+    return f"{_pve_token_base(machine_name)}-{stamp}"
+
+
+def stale_pve_tokens(machine_name: str, token_list_json: str, keep: set[str]) -> list[str]:
+    """This node's earlier tokens (from `pveum user token list --output-format json`), except ``keep``."""
+    mine = re.compile(re.escape(_pve_token_base(machine_name)) + r"(-\d{14})?")
+    try:
+        tokens = [t.get("tokenid", "") for t in json.loads(token_list_json or "[]") if isinstance(t, dict)]
+    except ValueError:
+        return []
+    return [t for t in tokens if mine.fullmatch(t) and t not in keep]
 
 
 def pve_script(token: str) -> str:
@@ -402,8 +530,8 @@ pveum role modify {PVE_ROLE} -privs "{PVE_PRIVS} VM.GuestAgent.Unrestricted" 2>/
   || pveum role modify {PVE_ROLE} -privs "{PVE_PRIVS} VM.Monitor"
 pveum user add {PVE_USER} --comment "Homelab Manager" >/dev/null 2>&1 || true
 pveum acl modify / --users {PVE_USER} --roles {PVE_ROLE}
-# A token's secret is shown only once, so make a new one (revoking the old) each time.
-pveum user token remove {PVE_USER} {token} >/dev/null 2>&1 || true
+# A token's secret is shown only once, so make a new one each time; the old one keeps working until
+# the dashboard no longer uses it, and goes on the next Connect.
 pveum user token add {PVE_USER} {token} --privsep 0 --comment "Homelab Manager" --output-format json
 # The certificate the API serves: a custom/ACME one (pveproxy-ssl.pem) if uploaded, else PVE's own.
 if [ -f /etc/pve/local/pveproxy-ssl.pem ]; then echo "__CUSTOM__=1"; f=/etc/pve/local/pveproxy-ssl.pem
@@ -463,6 +591,16 @@ def parse_cluster(stdout: str) -> list[tuple[str, str, list[asyncssh.SSHKey]]]:
     ]
 
 
+async def _remove_stale_tokens(ssh: SSHExecutor, machine_name: str, keep: set[str], res: ConnectResult) -> None:
+    """Revoke this node's older tokens, but never one the running dashboard (or the new config) uses."""
+    listed = await ssh.run(f"pveum user token list {PVE_USER} --output-format json", timeout=60)
+    if listed.rc != 0:
+        return
+    for t in stale_pve_tokens(machine_name, listed.stdout, keep):
+        if (await ssh.run(f"pveum user token remove {PVE_USER} {shlex.quote(t)}", timeout=60)).rc == 0:
+            res.log.append(f"Revoked the old token {PVE_USER}!{t}")
+
+
 async def _check_cluster_nodes(machine: Machine, paths: Paths, stdout: str, res: ConnectResult) -> None:
     """Pin the other cluster nodes' host keys and check the dashboard can log in to each: it reaches
     them at their cluster IP for `pct exec` and host upgrades."""
@@ -482,18 +620,6 @@ async def _check_cluster_nodes(machine: Machine, paths: Paths, stdout: str, res:
         res.log.append(f"Cluster node {name} ({ip}): {state}")
 
 
-# Is a TCP/UDP port free on this machine? (`port_free tcp 8443`) Never take one something else uses.
-PORT_FREE_SH = r"""port_free() {
-  h=$(printf '%04X' "$2"); st=0A; [ "$1" = udp ] && st=07
-  for f in /proc/net/$1 /proc/net/${1}6; do
-    if [ -r "$f" ] && awk -v h="$h" -v st="$st" \
-      'NR > 1 { n = split($2, a, ":"); if (a[n] == h && $4 == st) f = 1 } END { exit !f }' "$f"; then return 1; fi
-  done
-  return 0
-}
-"""
-
-
 def incus_listen(address: str) -> str:
     """The host part to open the Incus API on: only the address the dashboard uses, when that is an IP."""
     try:
@@ -510,6 +636,9 @@ if command -v incus >/dev/null 2>&1; then C=incus; ADD="add-certificate"
 elif command -v lxc >/dev/null 2>&1 && lxc query /1.0 >/dev/null 2>&1; then C=lxc; ADD="add"
 else echo "neither Incus nor LXD is installed here" >&2; exit 1; fi
 {PORT_FREE_SH}addr=$($C config get core.https_address)
+opened=""
+# If a later step fails, turn the API back off when this script turned it on: leave things as they were.
+trap 'if [ $? -ne 0 ] && [ -n "$opened" ]; then $C config unset core.https_address; fi' EXIT
 if [ -z "$addr" ]; then
   # 8443 is often taken (UniFi, other web UIs): use the next free port rather than fight over it.
   p={INCUS_PORT}
@@ -522,6 +651,7 @@ if [ -z "$addr" ]; then
   if [ $p -ne {INCUS_PORT} ]; then echo "__PORTNOTE__=port {INCUS_PORT} is already in use here, so the API uses $p"; fi
   addr="{listen_host}:$p"
   $C config set core.https_address "$addr"
+  opened=1
   echo "__OPENED__=1"
 fi
 case "$addr" in
@@ -530,15 +660,22 @@ case "$addr" in
 esac
 echo "__ADDR__=$addr"
 # Trusted for every project that exists now; press Reconnect after adding one.
-projects=$($C query /1.0/projects | tr -d ' "[],' | sed -n 's#^/1.0/projects/##p' | paste -sd, -)
-echo "__PROJECTS__=$projects"
-$C config trust remove {cert_fp} >/dev/null 2>&1 || true
-f=$(mktemp)
-cat > "$f" <<'CERT'
+names=$($C query /1.0/projects | grep -o '"/1.0/projects/[^"]*"' | sed 's#^"/1.0/projects/##; s#"$##')
+[ -n "$names" ] || names=default
+echo "__PROJECTS__=$(printf '%s\\n' "$names" | paste -sd, -)"
+if $C config trust show {cert_fp} >/dev/null 2>&1; then
+  # Already trusted: only update its projects (never remove it, which would cut off the dashboard).
+  json=$(printf '"%s"\\n' $names | paste -sd, -)
+  $C query -X PATCH /1.0/certificates/{cert_fp} -d "{{\\"restricted\\": true, \\"projects\\": [$json]}}" >/dev/null
+else
+  f=$(mktemp)
+  cat > "$f" <<'CERT'
 {cert_pem.strip()}
 CERT
-$C config trust $ADD "$f" --name {KEY_COMMENT} --restricted --projects "${{projects:-default}}"
-rm -f "$f"
+  $C config trust $ADD "$f" --name {KEY_COMMENT} --restricted --projects "$(printf '%s\\n' "$names" | paste -sd, -)" \\
+    || {{ rm -f "$f"; exit 1; }}
+  rm -f "$f"
+fi
 echo "__FP__=$($C info | sed -n 's/^ *certificate_fingerprint: *//p' | head -n1)"
 """
 
@@ -558,13 +695,14 @@ def parse_incus(stdout: str) -> tuple[int, str]:
 
 
 async def connect(
-    machine: Machine, paths: Paths, trust_fingerprint: str | None = None
+    machine: Machine, paths: Paths, trust_fingerprint: str | None = None, keep_tokens: frozenset[str] = frozenset()
 ) -> tuple[ConnectResult, dict | None]:
     """Connect to a machine the bootstrap script has run on; return the result and its config entry.
 
     A host key that isn't pinned yet is only reported (``needs_confirm``): nothing is pinned or
     changed until the call is repeated with ``trust_fingerprint`` set to that key's fingerprint, after
-    the user compared it with what the script printed on the machine.
+    the user compared it with what the script printed on the machine. ``keep_tokens`` are Proxmox token
+    names still in use (by the running dashboard), which are not revoked.
     """
     res = ConnectResult(ok=False)
     try:
@@ -597,8 +735,9 @@ async def connect(
         except asyncssh.PermissionDenied:
             raise SetupError(
                 f"{machine.address} refused the dashboard's key for user {SSH_USER}. Run the setup script on it "
-                "first (and if sshd has AllowUsers, add homelab there). Failed logins count towards fail2ban or "
-                "CrowdSec bans, so run the script before trying again."
+                "first; it checks sshd's settings (AllowUsers, AuthenticationMethods, AuthorizedKeysFile) and says "
+                "what to change. Failed logins count towards fail2ban or CrowdSec bans, so run the script before "
+                "trying again."
             ) from None
         except (OSError, asyncssh.Error) as e:
             raise SetupError(f"SSH to {machine.address} failed: {e}") from None
@@ -608,6 +747,8 @@ async def connect(
                 "has `Defaults requiretty` (older RHEL/CentOS), remove it for homelab."
             )
         res.log.append(f"Logged in as {SSH_USER}, sudo works")
+        if await _shares_our_kernel(ssh):
+            res.log.append(OWN_MACHINE[machine.kind])
 
         entry: dict = {"name": machine.name}
         ssh_entry = {
@@ -622,6 +763,7 @@ async def connect(
             out = await _run(ssh, pve_script(token), "creating the Proxmox API token")
             secret, fp, custom = parse_pve(out)
             res.log.append(f"Created API token {PVE_USER}!{token} (role {PVE_ROLE}) and pinned the API certificate")
+            await _remove_stale_tokens(ssh, machine.name, {token, *keep_tokens}, res)
             await _check_cluster_nodes(machine, paths, out, res)
             if custom:
                 res.log.append(
@@ -663,6 +805,27 @@ async def connect(
     except SetupError as e:
         res.log.append(str(e))
         return res, None
+
+
+OWN_MACHINE = {
+    "proxmox": "WARNING: the dashboard runs on this node (in a container or VM sharing its kernel). Put the "
+    "VMID of its LXC under protect: in the config editor, so an upgrade or reboot can't stop it mid-job.",
+    "incus": "WARNING: the dashboard runs on this machine or in one of its containers. Put that container under "
+    "protect: in the config editor, so an upgrade or reboot can't stop it mid-job.",
+    "host": "WARNING: the dashboard runs on this machine. Upgrading Docker or rebooting it from the dashboard "
+    "stops the dashboard mid-job; do those yourself.",
+}
+
+
+async def _shares_our_kernel(ssh: SSHExecutor) -> bool:
+    """Whether the machine is the one the dashboard runs on: a container shares its host's kernel, and
+    with it the boot ID."""
+    try:
+        ours = Path("/proc/sys/kernel/random/boot_id").read_text().strip()
+        theirs = (await ssh.run("cat /proc/sys/kernel/random/boot_id", timeout=60)).stdout.strip()
+    except (OSError, asyncssh.Error):
+        return False
+    return bool(ours) and ours == theirs
 
 
 def _url_host(address: str) -> str:
@@ -731,6 +894,74 @@ def upsert(data: dict, kind: str, entry: dict) -> dict:
     return data
 
 
+def uninstall_source(kind: str, entry: dict, incus_fp: str) -> str:
+    """What undoes the setup on a machine: everything the setup script and Connect added for this machine."""
+    parts = [
+        f"""# Homelab Manager: undo the setup of {entry.get("name", "this machine")}.
+set -u
+U={SSH_USER}
+SUDOERS=/etc/sudoers.d/homelab-manager
+[ "$(id -u)" -eq 0 ] || {{ echo "This needs root." >&2; exit 1; }}
+"""
+    ]
+    if kind == "proxmox":
+        base = _pve_token_base(entry.get("name", ""))
+        parts.append(
+            f"""if command -v pveum >/dev/null 2>&1; then
+  for t in $(pveum user token list {PVE_USER} --output-format json 2>/dev/null \\
+      | grep -o '"tokenid" *: *"[^"]*"' | sed 's/.*"\\([^"]*\\)"$/\\1/' | grep -Ex '{base}(-[0-9]{{14}})?'); do
+    pveum user token remove {PVE_USER} "$t" && echo "Revoked the API token {PVE_USER}!$t"
+  done
+  # The user and role are shared by every node of a cluster: they go with the last token.
+  if [ "$(pveum user token list {PVE_USER} --output-format json 2>/dev/null | tr -d ' \\n')" = "[]" ]; then
+    pveum user delete {PVE_USER} && pveum role delete {PVE_ROLE} && echo "Removed {PVE_USER} and the role {PVE_ROLE}"
+  fi
+fi
+"""
+        )
+    elif kind == "incus":
+        parts.append(
+            f"""C=""
+if command -v incus >/dev/null 2>&1; then C=incus; elif command -v lxc >/dev/null 2>&1; then C=lxc; fi
+if [ -n "$C" ]; then
+  $C config trust remove {incus_fp} 2>/dev/null && echo "Removed the dashboard's certificate from the trust list"
+  echo "If nothing else uses the API ($($C config get core.https_address)), turn it off:"
+  echo "  $C config unset core.https_address"
+fi
+"""
+        )
+    tunnel = entry.get("tunnel") or {}
+    peer = str(tunnel.get("peer_address", ""))
+    if peer.count(".") == 3 and peer.split(".")[2].isdigit():
+        parts.append(tunnels.vps_uninstall(int(peer.split(".")[2]), tunnel["port"], tunnel.get("target_port", 22)))
+    parts.append(
+        """if [ -f "$SUDOERS" ]; then
+  rm -f "$SUDOERS"
+  if id "$U" >/dev/null 2>&1; then
+    # Its SSH sessions from the dashboard first, or userdel refuses.
+    pkill -u "$U" 2>/dev/null && sleep 1
+    if command -v userdel >/dev/null 2>&1; then userdel -r "$U" 2>/dev/null || userdel "$U"
+    else deluser --remove-home "$U" 2>/dev/null || deluser "$U"; fi
+  fi
+  if id "$U" >/dev/null 2>&1; then echo "Removed the sudo rule, but couldn't remove the user $U." >&2; exit 1; fi
+  echo "Removed the user $U and its sudo rule."
+else
+  echo "There's no $U user made by Homelab Manager here."
+fi
+"""
+    )
+    return "".join(parts)
+
+
+def find(data: dict, name: str) -> tuple[str, dict] | None:
+    """(kind, entry) of the machine called ``name`` in a raw config."""
+    for kind, section in SECTION.items():
+        for m in data.get(section) or []:
+            if m.get("name") == name:
+                return kind, m
+    return None
+
+
 def remove(data: dict, name: str) -> dict | None:
     """Remove the machine called ``name``; return its entry (None if there was none)."""
     found = None
@@ -747,8 +978,9 @@ def ssh_endpoints(data: dict) -> set[tuple[str, int]]:
     for section in SECTION.values():
         for m in data.get(section) or []:
             ssh = m if section == "hosts" else m.get("ssh") or {}
-            if ssh.get("host"):
-                out.add((str(ssh["host"]), int(ssh.get("port") or 22)))
+            for conn in [ssh, *(m.get("node_ssh") or {}).values()]:
+                if isinstance(conn, dict) and conn.get("host"):
+                    out.add((str(conn["host"]), int(conn.get("port") or 22)))
     return out
 
 

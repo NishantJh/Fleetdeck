@@ -32,11 +32,11 @@ def test_pending_keeps_keys_and_picks_free_subnets(tmp_path):
 def test_tunnel_script(tmp_path):
     data = tun.pending(tmp_path, "vps", "vps.example.com", 51821, 22, used=set())
     m = ob.Machine(kind="host", name="vps", address="vps.example.com", tunnel=True)
-    script = ob.bootstrap_script(m, "ssh-ed25519 AAAA x", ["192.168.1.0/24"], data)
+    script = ob.bootstrap_source(m, "ssh-ed25519 AAAA x", ["192.168.1.0/24"], data)
     assert subprocess.run(["sh", "-n"], input=script, text=True).returncode == 0
     # The key only works through the tunnel, and the tunnel part runs before anything is changed.
     assert 'restrict,from="10.99.1.2/32" ssh-ed25519' in script
-    assert script.index("port_free udp 51821") < script.index("if ! command -v sudo")
+    assert script.index("port_free udp 51821") < script.index("# --- changes ---") < script.index('cat > "$WG_CONF"')
     assert data["peer_private_key"] in script and data["public_key"] in script
     assert "ListenPort = 51821" in script and "Address = 10.99.1.1/30" in script
     with pytest.raises(ValueError, match="Linux hosts"):
@@ -57,7 +57,7 @@ def test_connect_through_tunnel(tmp_path, monkeypatch):
     with TestClient(app) as client:
         client.auth = ("me", PASSWORD)
         body = {"kind": "host", "name": "vps", "address": "203.0.113.7", "port": 2222, "tunnel": True}
-        assert "hm1" in client.post("/api/setup/script", json=body).json()["script"]
+        assert "hm1" in client.post("/api/setup/script", json=body).json()["source"]
         r = client.post("/api/setup/connect", json=body).json()
         assert r["needs_confirm"] and "203.0.113.7 presents" in r["log"][0]
         r = client.post("/api/setup/connect", json={**body, "trust_fingerprint": r["fingerprint"]}).json()

@@ -64,6 +64,17 @@ def add_setup_routes(
             used = set()
         return tunnels.pending(paths.keys, req.name, req.address, req.udp_port, req.port, used)
 
+    def _tokens_in_use(name: str) -> frozenset[str]:
+        """Proxmox token names of this machine that the running dashboard or the saved config use."""
+        ids = {p.token_id for p in cfg.proxmox if p.name == name}
+        try:
+            found = ob.find(ob.read_raw(paths), name)
+        except ValueError:
+            found = None
+        if found and found[0] == "proxmox":
+            ids.add(str(found[1].get("token_id", "")))
+        return frozenset(i.partition("!")[2] for i in ids if "!" in i)
+
     def editable() -> None:
         if not paths.writable():
             raise HTTPException(
@@ -140,7 +151,8 @@ def add_setup_routes(
         if req.tunnel:
             async with lock:
                 tunnel = await asyncio.to_thread(_pending_tunnel, req)
-        return {"script": ob.bootstrap_script(req, public_key, allow, tunnel)}
+        source = ob.bootstrap_source(req, public_key, allow, tunnel)
+        return {"script": ob.wrap(source), "source": source}
 
     @app.post("/api/setup/connect")
     async def connect(req: ConnectRequest):
@@ -165,7 +177,7 @@ def add_setup_routes(
                     "needs_confirm": False,
                 }
             machine = machine.model_copy(update={"address": "127.0.0.1", "port": tunnel.local_port})
-        result, entry = await ob.connect(machine, paths, req.trust_fingerprint)
+        result, entry = await ob.connect(machine, paths, req.trust_fingerprint, _tokens_in_use(req.name))
         if tunnel is not None:
             result.log = [
                 (
@@ -225,6 +237,20 @@ def add_setup_routes(
             ", API token" if "token_id" in entry else ", certificate trust" if "client_cert" in entry else "",
         )
         return {"removed": name}
+
+    @app.get("/api/setup/machines/{name}/uninstall")
+    async def uninstall_script(name: str):
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        try:
+            found = ob.find(ob.read_raw(paths), name)
+        except ValueError as e:
+            raise _error(e) from None
+        if found is None:
+            raise HTTPException(404, "no such machine")
+        fp = await asyncio.to_thread(ob.incus_cert_fingerprint, paths) if found[0] == "incus" else ""
+        source = ob.uninstall_source(*found, fp)
+        return {"script": ob.wrap(source), "source": source}
 
     @app.get("/api/setup/config")
     async def get_config():

@@ -1,5 +1,9 @@
+import base64
 import json
 import os
+import re
+import shlex
+import shutil
 import subprocess
 import time
 
@@ -92,11 +96,15 @@ def test_login_works_after_restart(configured):
 def test_script(configured):
     client, _ = configured
     m = {"kind": "host", "name": "pi4", "address": "192.168.1.30", "allow_from": "192.168.1.50, 10.0.0.0/8"}
-    script = client.post("/api/setup/script", json=m).json()["script"]
+    r = client.post("/api/setup/script", json=m).json()
+    script, source = r["script"], r["source"]
     assert subprocess.run(["sh", "-n"], input=script, text=True).returncode == 0
-    assert 'restrict,from="192.168.1.50/32,10.0.0.0/8" ssh-ed25519 ' in script
-    assert "NOPASSWD: ALL" in script and "visudo -cqf" in script
-    plain = client.post("/api/setup/script", json={**m, "allow_from": ""}).json()["script"]
+    assert subprocess.run(["sh", "-n"], input=source, text=True).returncode == 0
+    # One line, which carries the source.
+    assert script.count("\n") == 1 and base64.b64decode(script.split()[-1]).decode() == source
+    assert 'restrict,from="192.168.1.50/32,10.0.0.0/8" ssh-ed25519 ' in source
+    assert "NOPASSWD: ALL" in source and "visudo -cqf" in source
+    plain = client.post("/api/setup/script", json={**m, "allow_from": ""}).json()["source"]
     assert "'restrict ssh-ed25519 " in plain
     assert client.post("/api/setup/script", json={**m, "allow_from": "my house"}).status_code == 400
     for bad in ({"name": "a b"}, {"address": "x; rm -rf /"}, {"kind": "windows"}, {"port": 0}):
@@ -116,8 +124,11 @@ def _fake_machine(monkeypatch, host_key, outputs):
     async def fetch(host, port):
         return host_key
 
+    # Another machine than the test's, and no older Proxmox tokens.
+    all_outputs = {"random/boot_id": "another-boot\n", "token list": "[]", **outputs}
+
     async def run(self, script, on_line=None, timeout=0):
-        for marker, out in outputs.items():
+        for marker, out in all_outputs.items():
             if marker in script:
                 return out if isinstance(out, ExecResult) else ExecResult(rc=0, stdout=out, stderr="")
         raise AssertionError(f"unexpected script {script!r}")
@@ -150,7 +161,7 @@ def test_connect_proxmox_pins_and_writes_config(configured, monkeypatch):
 
     cfg = load_config(str(tmp_path / "config.yaml"))
     pve = cfg.proxmox[0]
-    assert pve.api_url == "https://192.168.1.10:8006" and pve.token_id == "homelab@pve!hm-pve"
+    assert pve.api_url == "https://192.168.1.10:8006" and re.fullmatch(r"homelab@pve!hm-pve-\d{14}", pve.token_id)
     assert pve.token_secret == "secret-uuid" and pve.tls_fingerprint == "ab" * 32
     assert pve.ssh.user == "homelab" and pve.ssh.sudo and pve.ssh.known_hosts == str(tmp_path / "keys" / "known_hosts")
     st = client.get("/api/setup").json()
@@ -185,10 +196,40 @@ def test_several_machines_of_each_type(configured, monkeypatch):
         assert _connect(client, body)["ok"]
     cfg = load_config(str(tmp_path / "config.yaml"))
     # Each node gets its own token, so nodes of one cluster don't revoke each other's.
-    assert [p.token_id for p in cfg.proxmox] == [f"homelab@pve!hm-pve{i}" for i in (1, 2, 3)]
+    assert [p.token_id.rsplit("-", 1)[0] for p in cfg.proxmox] == [f"homelab@pve!hm-pve{i}" for i in (1, 2, 3)]
     assert [i.url for i in cfg.incus] == ["https://10.0.2.1:8443", "https://10.0.2.2:8443"]
     assert len(client.get("/api/setup").json()["machines"]) == 5
-    assert ob.pve_token("pve.lab") == "hm-pve-lab"
+    assert ob.pve_token("pve.lab").startswith("hm-pve-lab-")
+
+
+def test_reconnect_revokes_only_unused_proxmox_tokens(configured, monkeypatch):
+    client, tmp_path = configured
+    _fake_machine(monkeypatch, asyncssh.generate_private_key("ssh-ed25519"), {"id -un": "root\n", "pveum": PVE_OUT})
+    body = {"kind": "proxmox", "name": "pve", "address": "192.168.1.10"}
+    assert _connect(client, body)["ok"]
+    saved = load_config(str(tmp_path / "config.yaml")).proxmox[0].token_id.partition("!")[2]
+    ran = []
+    listed = json.dumps([{"tokenid": t} for t in ("hm-pve", saved, "hm-pve2")])
+    _fake_machine(
+        monkeypatch,
+        asyncssh.generate_private_key("ssh-ed25519"),
+        {"id -un": "root\n", "token list": listed, "token remove": "", "pveum": PVE_OUT},
+    )
+    orig = ob.SSHExecutor.run
+
+    async def record(self, script, on_line=None, timeout=0):
+        ran.append(script)
+        return await orig(self, script, on_line, timeout)
+
+    monkeypatch.setattr(ob.SSHExecutor, "run", record)
+    r = _connect(client, {**body, "trust_fingerprint": None})
+    if not r["ok"]:  # host key changed in this fake: trust it
+        r = client.post("/api/setup/connect", json={**body, "trust_fingerprint": r["fingerprint"]}).json()
+    assert r["ok"], r
+    removed = [s.split()[-1] for s in ran if "token remove" in s]
+    # The legacy token goes; the one the saved config still uses, and another node's, stay.
+    assert removed == ["hm-pve"]
+    assert "Revoked the old token homelab@pve!hm-pve" in r["log"]
 
 
 def test_connect_incus_and_host(configured, monkeypatch):
@@ -420,10 +461,86 @@ def test_identity_is_created_once_under_concurrency(tmp_path):
     ]
 
 
-def test_bootstrap_refuses_someone_elses_user():
-    script = ob.bootstrap_script(ob.Machine(kind="host", name="pi", address="10.0.0.2"), "ssh-ed25519 AAAA x", [])
-    assert "wasn't made by this script" in script
-    assert script.index("wasn't made by this script") < script.index("usermod -p")
+PI = ob.Machine(kind="host", name="pi", address="10.0.0.2")
+
+
+def test_bootstrap_checks_before_changing_anything():
+    script = ob.bootstrap_source(PI, "ssh-ed25519 AAAA x", [])
+    changes = script.index("# --- changes ---")
+    for check in ("wasn't made by this script", "AuthenticationMethods", "AllowUsers", "includedir", "FIPS"):
+        assert script.index(check) < changes
+    # Changes only after the checks: nothing is installed, created or written before.
+    for change in ("apt-get install -y", "useradd", "usermod -p", 'authorized_keys"', "mktemp /etc/sudoers.d"):
+        assert script.index(change) > changes, change
+
+
+def _run_checks(tmp_path, sshd_out="", user_exists=False):
+    """Run the setup script with stub `id` and `sshd`, as root as far as it can tell; it must stop in the checks."""
+    stubs = tmp_path / "bin"
+    stubs.mkdir(exist_ok=True)
+    (stubs / "id").write_text(
+        f'#!/bin/sh\ncase "$1" in -u) echo 0 ;; homelab) exit {0 if user_exists else 1} ;; *) exit 1 ;; esac\n'
+    )
+    (stubs / "sshd").write_text(f"#!/bin/sh\nprintf '%s\\n' {shlex.quote(sshd_out)}\n")
+    for f in stubs.iterdir():
+        f.chmod(0o755)
+    script = ob.bootstrap_source(PI, "ssh-ed25519 AAAA x", []).replace("# --- changes ---", "exit 99\n")
+    script = script.replace("/etc/sudoers.d/homelab-manager", str(tmp_path / "none"))
+    env = {**os.environ, "PATH": f"{stubs}:{os.environ['PATH']}"}
+    return subprocess.run(["sh"], input=script, text=True, capture_output=True, env=env)
+
+
+@pytest.mark.parametrize(
+    ("sshd_out", "user_exists", "message"),
+    [
+        ("", True, "wasn't made by this script"),
+        ("authenticationmethods publickey,password", False, "Match User homelab"),
+        ("authorizedkeysfile /etc/ssh/keys/%u", False, "not ~/.ssh/authorized_keys"),
+        ("allowusers alice\nallowusers bob", False, "Add homelab to AllowUsers"),
+        ("denyusers homelab", False, "DenyUsers lists homelab"),
+    ],
+)
+def test_bootstrap_stops_on_problems(tmp_path, sshd_out, user_exists, message):
+    r = _run_checks(tmp_path, sshd_out, user_exists)
+    assert r.returncode == 1 and message in r.stderr and "nothing was changed" in r.stderr
+
+
+def test_bootstrap_accepts_usual_sshd_settings(tmp_path):
+    ok = (
+        "authenticationmethods any\nauthorizedkeysfile .ssh/authorized_keys .ssh/authorized_keys2\n"
+        "allowusers me homelab"
+    )
+    r = _run_checks(tmp_path, ok)
+    # Past the sshd checks: it ends in the sudo check (whatever this machine has) or at the changes.
+    assert "sshd" not in r.stderr and (r.returncode == 99 or "sudo" in r.stderr), r.stderr
+
+
+def test_wrapper_runs_from_any_shell():
+    line = ob.wrap('echo "ran as $(id -u)"')
+    for shell in ("sh", "bash", "zsh", "fish", "csh", "tcsh"):
+        if shutil.which(shell) and (os.getuid() == 0 or shutil.which("sudo")):
+            r = subprocess.run([shell, "-c", line], capture_output=True, text=True, timeout=30)
+            assert r.stdout.strip() == "ran as 0", (shell, r.stderr)
+
+
+def test_uninstall_script(configured):
+    client, _ = configured
+    src = ob.uninstall_source("proxmox", {"name": "pve", "token_id": "homelab@pve!hm-pve-20261009101010"}, "")
+    assert "grep -Ex 'hm-pve(-[0-9]{14})?'" in src and "pveum role delete" in src
+    tun = {"name": "vps", "tunnel": {"peer_address": "10.99.2.1", "port": 51822, "target_port": 22}}
+    for kind, entry in (("proxmox", {"name": "pve"}), ("incus", {"name": "i"}), ("host", tun)):
+        src = ob.uninstall_source(kind, entry, "ab" * 32)
+        assert subprocess.run(["sh", "-n"], input=src, text=True).returncode == 0
+        assert src.index('rm -f "$SUDOERS"') > src.index("U=homelab")
+    assert "wg-quick down hm2" in ob.uninstall_source("host", tun, "")
+    assert client.get("/api/setup/machines/nope/uninstall").status_code == 404
+
+
+def test_stale_pve_tokens():
+    listed = json.dumps([{"tokenid": t} for t in ("hm-pve", "hm-pve-20261009101010", "hm-pve-2", "hm-pve-x", "other")])
+    assert ob.stale_pve_tokens("pve", listed, {"hm-pve-20261009101010"}) == ["hm-pve"]
+    assert ob.stale_pve_tokens("pve", "not json", set()) == []
+    assert ob.pve_token("pve").startswith("hm-pve-") and len(ob.pve_token("pve")) == len("hm-pve-") + 14
 
 
 def test_cluster_nodes_are_pinned_and_checked(configured, monkeypatch):

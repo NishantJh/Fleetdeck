@@ -71,16 +71,24 @@ Installing takes one compose file and a web page:
    `http://<this machine>:8080/setup#token=...`. Open it and create the admin login.
 3. Add each machine: pick its type (Proxmox VE, Incus, or a Linux host such as a Raspberry Pi or
    a VPS), give it a name, and enter its IP address and SSH port.
-4. The page shows a script for each machine. Paste it into a shell on that machine, as root or
-   as a user with sudo.
+4. The page shows a one-line script for each machine. Paste it into a shell on that machine (any
+   shell: bash, zsh, fish, csh, ...), as root or as a user who can use sudo, doas or `su` (it asks
+   for the password it needs). *What it runs* on the page shows the script in full.
 5. Press **Connect**. The dashboard does the rest itself, then press **Apply**.
 
-**What the script does** on the machine: it creates a user `homelab` with no password, which
-logs in only with the dashboard's own SSH key and has passwordless sudo (checked with `visudo`
-before it's installed). The key line carries `restrict` and, if you fill in *Only accept the
-dashboard's key from these addresses*, a `from=` list, so a stolen key can't be used from
-anywhere else. The script then prints the machine's SSH host key fingerprints. Running it twice
-is harmless.
+**What the script does** on the machine: first it checks, changing nothing, and stops with what
+to do if anything is in the way: a `homelab` user it didn't create (or one from LDAP/SSSD), sudo
+missing or not reading `/etc/sudoers.d`, or an sshd setting that would refuse the dashboard
+(`AllowUsers`, `DenyUsers`, `AuthenticationMethods` asking for a second factor, an
+`AuthorizedKeysFile` elsewhere). FIPS mode isn't supported (it refuses ed25519 keys). Then it lists
+the changes and makes them: a user `homelab` with no password, which logs in only with the
+dashboard's own SSH key, and passwordless sudo for it (checked with `visudo`, alone and with the
+rest of sudo's config, and taken out again if that fails). The key line carries `restrict` and, if
+you fill in *Only accept the dashboard's key from these addresses*, a `from=` list, so a stolen key
+can't be used from anywhere else. If sudo isn't installed, it installs it only with apt and only
+when that changes no other package; otherwise it tells you the command to run. It never touches
+`sshd_config`, the firewall (except for a tunnel, below) or other services. Finally it prints the
+machine's SSH host key fingerprints. Running it twice is harmless.
 
 **What Connect does:**
 
@@ -91,15 +99,20 @@ is harmless.
 * It checks that it can log in and that sudo works.
 * **Proxmox:** it creates a `homelab@pve` user, a `HomelabManager` role with only what the
   dashboard uses (PVE 8 and 9 alike), and an API token of its own for each node you add, and pins
-  the API's TLS certificate. If the node serves a custom (e.g. ACME) certificate, that exact one is
+  the API's TLS certificate. *Reconnect* makes a new token; the old one is revoked on a later
+  Connect, once the running dashboard no longer uses it. If the node serves a custom (e.g. ACME) certificate, that exact one is
   pinned, so press *Reconnect* after it renews.
 * **Incus or LXD:** it turns on the HTTPS API if it's off, on port 8443 or, if something
   already uses that (UniFi often does), the next free port, listening only on the address
   you entered when that is an IP (on every interface for a host name), trusts the dashboard's own client
   certificate for the projects that exist (press *Reconnect* after adding one), and pins the server
-  certificate.
+  certificate. If that fails, it turns the API off again when it was the one that turned it on.
+* If the machine is the one the dashboard runs on (or its Proxmox node), it says so: put the
+  dashboard's container under `protect:`, so an upgrade or reboot can't stop it mid-job.
 
-The same page (the **Setup** button on the dashboard) adds and removes machines later. It also
+The same page (the **Setup** button on the dashboard) adds and removes machines later. Removing
+one shows a script that undoes the setup on it: the `homelab` user and its sudo rule, its Proxmox
+token (and the `homelab@pve` user and role with the last one), the Incus trust, the tunnel. It also
 has an editor for `config.yaml` (schedule, notifications, `protect:`, everything in
 [`config.example.yaml`](config.example.yaml)), which checks the YAML before saving it.
 
@@ -114,8 +127,7 @@ the container (wireproxy, no extra privileges or devices), and its keys, includi
 machine's end, are kept in `/data/keys/tunnels`. Removing the machine removes them; on the machine,
 `wg-quick down hm<n>` and deleting `/etc/wireguard/hm<n>.conf` removes its end. Otherwise allow
 the address the dashboard connects from (for a VPS, your home's public IP), or reach it over
-Tailscale and enter that address instead. If `sshd_config` has `AllowUsers` or `AllowGroups`,
-add `homelab` there; the script warns when this applies. The dashboard always connects out to
+Tailscale and enter that address instead. The dashboard always connects out to
 your machines (there's no agent), so each one has to be reachable from it. Connecting before the
 script has run counts as failed logins, which fail2ban or CrowdSec may ban the dashboard for.
 

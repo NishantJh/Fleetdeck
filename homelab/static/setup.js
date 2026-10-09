@@ -76,7 +76,7 @@ function machineOf(card) {
 }
 
 function saveDrafts() {
-  const drafts = [...document.querySelectorAll(".card")].filter((c) => !c.dataset.saved).map(machineOf);
+  const drafts = [...document.querySelectorAll(".card")].filter((c) => !c.dataset.saved && !c.dataset.removed).map(machineOf);
   save(DRAFTS, drafts);
 }
 
@@ -119,7 +119,8 @@ function addCard(m = { kind: "host", name: "", address: "", port: 22 }, saved = 
     if (!$(".script", card).hidden) showScript(card);
   });
   $(".b-script", card).onclick = () => ($(".script", card).hidden ? showScript(card) : ($(".script", card).hidden = true));
-  $(".b-copy", card).onclick = (e) => copy($(".script pre", card).textContent, e.currentTarget);
+  $(".b-copy", card).onclick = (e) => copy($(".s-code", card).textContent, e.currentTarget);
+  $(".b-close", card).onclick = () => card.remove();
   $(".b-connect", card).onclick = () => connect(card);
   $(".b-trust", card).onclick = () => connect(card, card.dataset.fingerprint);
   $(".b-remove", card).onclick = () => remove(card);
@@ -130,9 +131,10 @@ function addCard(m = { kind: "host", name: "", address: "", port: 22 }, saved = 
 let scriptSeq = 0;
 async function showScript(card) {
   const m = machineOf(card);
-  const pre = $(".script pre", card);
+  const pre = $(".s-code", card);
   $(".script", card).hidden = false;
-  $(".s-name", card).textContent = m.name || m.address || "the machine";
+  $(".s-label", card).textContent = `Paste this into a shell on ${m.name || m.address || "the machine"} (any shell; it asks for sudo, doas or the root password if needed). It checks first and stops before changing anything if something's in the way:`;
+  $(".s-source", card).textContent = "";
   if (!m.name || !m.address) {
     pre.textContent = "Fill in a name and an address first.";
     return;
@@ -140,7 +142,10 @@ async function showScript(card) {
   const seq = ++scriptSeq;
   try {
     const r = await api("/api/setup/script", { method: "POST", body: JSON.stringify({ ...m, allow_from: $("#allow-from").value }) });
-    if (seq === scriptSeq) pre.textContent = r.script;
+    if (seq === scriptSeq) {
+      pre.textContent = r.script;
+      $(".s-source", card).textContent = r.source;
+    }
   } catch (e) {
     if (seq === scriptSeq) pre.textContent = `Can't make the script: ${e.message}`;
   }
@@ -185,14 +190,30 @@ async function connect(card, trustFingerprint = null) {
 async function remove(card) {
   const name = card.dataset.saved;
   if (name) {
-    if (!confirm(`Remove ${name} from the dashboard? Nothing is changed on the machine itself: its homelab user (and any Proxmox token or Incus trust) stays there until you remove it.`)) return;
+    if (!confirm(`Remove ${name} from the dashboard? Nothing is changed on the machine itself; you'll get a script that undoes the setup there.`)) return;
+    let undo;
     try {
-      await api(`/api/setup/machines/${encodeURIComponent(name)}`, { method: "DELETE" });
+      const path = `/api/setup/machines/${encodeURIComponent(name)}`;
+      undo = await api(`${path}/uninstall`);
+      await api(path, { method: "DELETE" });
       showApply(true);
     } catch (e) {
       notice(`Can't remove ${name}: ${e.message}`);
       return;
     }
+    // Keep the card to show the undo script; it goes on Close.
+    for (const b of card.querySelectorAll(".card-head button")) b.hidden = true;
+    $(".hint", card).hidden = true;
+    $(".connect-log", card).hidden = true;
+    setStatus(card, "removed", "muted");
+    $(".script", card).hidden = false;
+    $(".s-label", card).textContent = `Removed from the dashboard. To undo the setup on ${name} (its homelab user, sudo rule, API token or trust, tunnel), paste this into a shell there:`;
+    $(".s-code", card).textContent = undo.script;
+    $(".s-source", card).textContent = undo.source;
+    $(".removed", card).hidden = false;
+    delete card.dataset.saved;
+    card.dataset.removed = "1";
+    return;
   }
   card.remove();
   saveDrafts();

@@ -126,32 +126,43 @@ def wireproxy_conf(t: TunnelConfig) -> str:
     )
 
 
-def vps_script(data: dict, ssh_port: int) -> str:
-    """Shell commands for the VPS: its end of the tunnel, never on a UDP port or subnet in use."""
+def vps_checks(data: dict) -> str:
+    """Setup script checks for the VPS's end of the tunnel: never a UDP port or subnet in use, nor a
+    WireGuard config that isn't ours. Uses the bootstrap script's ``stop``, ``apt_ok`` and ``port_free``."""
     n, port = data["index"], data["port"]
     iface = f"hm{n}"
-    return f"""# --- WireGuard tunnel for the dashboard: UDP {port}, interface {iface}, 10.99.{n}.0/30 ---
+    return f"""# Tunnel: UDP {port}, interface {iface}, 10.99.{n}.0/30
 WG_CONF=/etc/wireguard/{iface}.conf
 if ! command -v wg-quick >/dev/null 2>&1; then
-  if command -v apt-get >/dev/null 2>&1; then apt-get update -qq || true; apt-get install -y -qq wireguard-tools
-  elif command -v dnf >/dev/null 2>&1; then dnf install -y -q wireguard-tools
-  elif command -v apk >/dev/null 2>&1; then apk add -q wireguard-tools
-  elif command -v pacman >/dev/null 2>&1; then pacman -S --noconfirm wireguard-tools
-  else echo "Install wireguard-tools first, then run this again." >&2; exit 1; fi
+  if command -v apt-get >/dev/null 2>&1 && apt_ok wireguard-tools; then INSTALL="$INSTALL wireguard-tools"
+  else stop "WireGuard isn't installed. Install it ($(pkg_hint wireguard-tools)), then run this again."; fi
 fi
 ours=no; if [ -f "$WG_CONF" ] && grep -q "Homelab Manager" "$WG_CONF"; then ours=yes; fi
-if [ -f "$WG_CONF" ] && [ "$ours" = no ]; then
-  echo "$WG_CONF exists and isn't ours; not touching it." >&2; exit 1
-fi
-if [ "$ours" = yes ]; then wg-quick down {iface} >/dev/null 2>&1 || true; fi
-if ! port_free udp {port}; then
+if [ -f "$WG_CONF" ] && [ "$ours" = no ]; then stop "$WG_CONF exists and isn't ours."; fi
+# Our own tunnel, already up from an earlier run, holds the port and subnet itself.
+if ! port_free udp {port} && [ "$(wg show {iface} listen-port 2>/dev/null || true)" != {port} ]; then
   p={port}; while ! port_free udp $p; do p=$((p + 1)); done
-  echo "UDP port {port} is already in use here (Pangolin uses 51820). Set the tunnel port to $p on the" >&2
-  echo "setup page, then run the new script." >&2; exit 1
+  stop "UDP port {port} is already in use here (Pangolin uses 51820). Set the tunnel port to $p on the
+setup page, then run the new script."
 fi
-if ip -o addr 2>/dev/null | grep -q " 10\\.99\\.{n}\\."; then
-  echo "10.99.{n}.0/30 is already used on this machine; remove that address, then run this again." >&2; exit 1
+if ip -o addr 2>/dev/null | awk -v i={iface} '$2 != i && $4 ~ /^10\\.99\\.{n}\\./' | grep -q .; then
+  stop "10.99.{n}.0/30 is already used on this machine; remove that address, then run this again."
 fi
+"""
+
+
+def vps_plan(data: dict) -> str:
+    n, port = data["index"], data["port"]
+    return (
+        f'echo "  - WireGuard tunnel for the dashboard: /etc/wireguard/hm{n}.conf, UDP {port}, 10.99.{n}.1"\n'
+        f'echo "  - if ufw is on: allow UDP {port} in, and SSH from the tunnel"\n'
+    )
+
+
+def vps_changes(data: dict, ssh_port: int) -> str:
+    n, port = data["index"], data["port"]
+    iface = f"hm{n}"
+    return f"""(
 umask 077
 mkdir -p /etc/wireguard
 cat > "$WG_CONF" <<'WG'
@@ -165,21 +176,39 @@ PrivateKey = {data["peer_private_key"]}
 PublicKey = {data["public_key"]}
 AllowedIPs = 10.99.{n}.2/32
 WG
+)
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-  systemctl enable --now wg-quick@{iface} >/dev/null
+  systemctl enable wg-quick@{iface} >/dev/null 2>&1
+  systemctl restart wg-quick@{iface}
 else
+  wg-quick down {iface} >/dev/null 2>&1 || true
   wg-quick up {iface}
   echo "NOTE: no systemd; bring the tunnel up at boot yourself (wg-quick up {iface})."
 fi
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
   ufw allow {port}/udp comment "Homelab Manager tunnel" >/dev/null
   ufw allow in on {iface} to any port {ssh_port} proto tcp comment "Homelab Manager SSH" >/dev/null
-  echo "ufw: allowed UDP {port} in, and SSH from the tunnel."
 else
   echo "If a firewall runs here (nftables, firewalld, ...), allow UDP {port} in, and TCP {ssh_port} on {iface}."
 fi
 echo "Also allow UDP {port} in your VPS provider's firewall, if it has one."
-# --- end of tunnel ---
+"""
+
+
+def vps_uninstall(n: int, port: int, ssh_port: int) -> str:
+    iface = f"hm{n}"
+    return f"""if [ -f /etc/wireguard/{iface}.conf ] && grep -q "Homelab Manager" /etc/wireguard/{iface}.conf; then
+  if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+    systemctl disable --now wg-quick@{iface} >/dev/null 2>&1 || true
+  fi
+  wg-quick down {iface} >/dev/null 2>&1 || true
+  rm -f /etc/wireguard/{iface}.conf
+  if command -v ufw >/dev/null 2>&1; then
+    ufw delete allow {port}/udp >/dev/null 2>&1 || true
+    ufw delete allow in on {iface} to any port {ssh_port} proto tcp >/dev/null 2>&1 || true
+  fi
+  echo "Removed the tunnel {iface}."
+fi
 """
 
 
