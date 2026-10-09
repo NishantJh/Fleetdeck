@@ -1,10 +1,14 @@
 # wireproxy: a userspace WireGuard client, for tunnels to machines the dashboard can't reach
 # directly (homelab/tunnels.py). Built from source at a pinned version; the Go module proxy and
 # checksum database verify what is fetched.
-FROM golang:1.26-alpine AS wireproxy
+# Base images come from a Docker Hub mirror (Docker Hub rate-limits CI pulls with 429). Override with
+# --build-arg BASE_REGISTRY=docker.io/library to pull from Docker Hub directly.
+ARG BASE_REGISTRY=mirror.gcr.io/library
+
+FROM ${BASE_REGISTRY}/golang:1.26-alpine AS wireproxy
 RUN CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" github.com/windtf/wireproxy/cmd/wireproxy@v1.1.3
 
-FROM python:3.12-slim
+FROM ${BASE_REGISTRY}/python:3.12-slim
 COPY --from=wireproxy /go/bin/wireproxy /usr/local/bin/wireproxy
 WORKDIR /app
 # Exact, hash-checked dependencies (regenerate with the command at the top of requirements.txt).
