@@ -217,8 +217,12 @@ def create_app(
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
 
-    add_setup_routes(app, cfg, paths, restart, setup_token is not None)
-    add_backup_routes(app, cfg, paths, store, restart)
+    def busy() -> list[str]:
+        return sorted({j.target_name for j in jobs.jobs.values() if j.status in ("queued", "running")})
+
+    restart = _when_idle(restart, busy) if restart is not None else None
+    add_setup_routes(app, cfg, paths, restart, setup_token is not None, busy)
+    add_backup_routes(app, cfg, paths, store, restart, busy)
 
     @app.get("/")
     async def index():
@@ -226,6 +230,19 @@ def create_app(
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     return app
+
+
+def _when_idle(restart: Callable[[], None], busy: Callable[[], list[str]]) -> Callable[[], None]:
+    """``restart``, held back while jobs run (one may start between a request and its restart)."""
+
+    def go() -> None:
+        if names := busy():
+            log.info("Restart waits for the running jobs to finish: %s", ", ".join(names))
+            asyncio.get_running_loop().call_later(2, go)
+        else:
+            restart()
+
+    return go
 
 
 async def _keep_tunnels(tunnels: TunnelManager, wanted: dict) -> None:

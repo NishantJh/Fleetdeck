@@ -316,14 +316,15 @@ $("#allow-from").addEventListener("input", (e) => {
 });
 
 $("#apply-btn").onclick = async (e) => {
-  e.currentTarget.disabled = true;
+  const btn = e.currentTarget; // null once the handler awaits
+  btn.disabled = true;
   try {
     await api("/api/setup/apply", { method: "POST" });
     notice("Restarting with the new machines ...", "info");
     await waitAndGo(async () => !(await api("/api/setup")).restart_pending, "/");
   } catch (err) {
     notice(err.message);
-    e.currentTarget.disabled = false;
+    btn.disabled = false;
   }
 };
 

@@ -73,8 +73,19 @@ def _error(e: Exception) -> HTTPException:
     return HTTPException(400, str(e))
 
 
+def refuse_while_busy(busy: Callable[[], list[str]]) -> None:
+    """A restart cancels running jobs, and an upgrade cut off halfway can leave apt broken."""
+    if names := busy():
+        raise HTTPException(409, f"wait for the running jobs to finish first ({', '.join(names)})")
+
+
 def add_setup_routes(
-    app: FastAPI, cfg: AppConfig, paths: ob.Paths, restart: Callable[[], None] | None, first_run: bool
+    app: FastAPI,
+    cfg: AppConfig,
+    paths: ob.Paths,
+    restart: Callable[[], None] | None,
+    first_run: bool,
+    busy: Callable[[], list[str]] = list,
 ) -> None:
     lock = asyncio.Lock()  # one config write at a time
     state = {"changed": False, "admin_created": False}
@@ -316,6 +327,7 @@ def add_setup_routes(
             raise HTTPException(409, "create the admin login first")
         if restart is None:
             raise HTTPException(409, "restart the container to apply the changes")
+        refuse_while_busy(busy)
         _restart_soon(restart)
         return {"restarting": True}
 

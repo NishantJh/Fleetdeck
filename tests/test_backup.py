@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import io
 import json
@@ -11,8 +12,10 @@ import yaml
 from fastapi.testclient import TestClient
 
 from homelab import backup
-from homelab.app import create_app
+from homelab.app import _when_idle, create_app
 from homelab.config import load_config
+from homelab.jobs import _now
+from homelab.models import Job
 from homelab.security import hash_password
 
 AUTH = ("admin", "s3cret-pass")
@@ -189,3 +192,85 @@ def test_restore_refuses_junk(tmp_path):
         damaged = _encrypted({"manifest.json": MANIFEST, "config.yaml": good, "state.db": b"not sqlite" * 100})
         r = client.post("/api/backup/restore", json={"passphrase": PASS, "data": damaged}, auth=AUTH)
         assert r.status_code == 400
+
+
+def _running_job(client: TestClient, name: str = "pi4") -> Job:
+    job = Job(id="j1", target_id=f"ssh:{name}", target_name=name, action="upgrade", status="running", created_at=_now())
+    client.app.state.jobs.jobs[job.id] = job
+    return job
+
+
+def test_no_restore_or_apply_while_a_job_runs(tmp_path):
+    # A restart cancels jobs; apt cut off halfway can leave a machine broken.
+    data = _data_dir(tmp_path)
+    restarts = []
+    with _client(data, restart=lambda: restarts.append(1)) as client:
+        blob = _make_backup(client)
+        job = _running_job(client)
+        req = {"passphrase": PASS, "data": base64.b64encode(blob).decode(), "confirm": True}
+        r = client.post("/api/backup/restore", json=req, auth=AUTH)
+        assert r.status_code == 409 and "pi4" in r.text
+        assert not (data / "backups").exists()
+        r = client.post("/api/setup/apply", auth=AUTH)
+        assert r.status_code == 409 and "wait for the running jobs" in r.text
+        job.status = "succeeded"
+        assert client.post("/api/backup/restore", json=req, auth=AUTH).status_code == 200
+        deadline = time.time() + 5
+        while not restarts and time.time() < deadline:
+            time.sleep(0.05)
+    assert restarts == [1]
+
+
+async def test_restart_waits_for_a_job_that_started_meanwhile():
+    restarts, running = [], ["pi4"]
+    go = _when_idle(lambda: restarts.append(1), lambda: list(running))
+    go()
+    await asyncio.sleep(0.1)
+    assert restarts == []
+    running.clear()
+    await asyncio.sleep(2.1)
+    assert restarts == [1]
+
+
+def test_old_kdf_settings_stay_readable_and_unknown_ones_are_refused(monkeypatch):
+    monkeypatch.setattr(backup, "_SCRYPT", (2**17, 8, 1))
+    blob = backup.encrypt(b"secret", PASS)
+    monkeypatch.setattr(backup, "_SCRYPT", (2**15, 8, 1))
+    assert backup.decrypt(blob, PASS) == b"secret"
+    crafted = backup.MAGIC + backup._HEADER.pack(2**30, 8, 1, b"s" * 16, b"n" * 12) + b"x" * 32
+    with pytest.raises(backup.BackupError, match="encryption settings"):
+        backup.decrypt(crafted, PASS)
+
+
+def test_history_goes_where_the_restored_config_keeps_it(tmp_path):
+    data = _data_dir(tmp_path)
+    with _client(data) as client:
+        client.app.state.jobs.store.db.execute("INSERT INTO checks VALUES ('kept', '{}')")
+        files = backup.unpack(backup.decrypt(_make_backup(client), PASS))
+        cfg = yaml.safe_load(files["config.yaml"])
+        cfg["state_file"] = "history/other.db"
+        files["config.yaml"] = yaml.safe_dump(cfg).encode()
+        buf = io.BytesIO()
+        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+            for name, content in files.items():
+                info = tarfile.TarInfo(name)
+                info.size = len(content)
+                tar.addfile(info, io.BytesIO(content))
+        req = {"passphrase": PASS, "data": base64.b64encode(backup.encrypt(buf.getvalue(), PASS)).decode()}
+        client.app.state.jobs.store.db.execute("DELETE FROM checks")
+        assert client.post("/api/backup/restore", json={**req, "confirm": True}, auth=AUTH).status_code == 200
+        # The running app's history is untouched; the restored config's file has the backup's.
+        assert client.app.state.jobs.store.db.execute("SELECT * FROM checks").fetchall() == []
+    rows = sqlite3.connect(data / "history" / "other.db").execute("SELECT target_id FROM checks").fetchall()
+    assert rows == [("kept",)]
+
+
+def test_only_the_newest_safety_copies_are_kept(tmp_path):
+    folder = tmp_path / "backups"
+    folder.mkdir()
+    for i in range(8):
+        (folder / f"before-restore-2026-10-0{i + 1}-120000{backup.SUFFIX}").write_text("x")
+    (folder / "mine.hlmbackup").write_text("not ours")
+    backup._prune_safety_copies(folder)
+    left = sorted(p.name for p in folder.iterdir())
+    assert left == [f"before-restore-2026-10-0{i}-120000{backup.SUFFIX}" for i in range(4, 9)] + ["mine.hlmbackup"]
