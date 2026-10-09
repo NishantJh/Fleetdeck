@@ -71,9 +71,12 @@ Installing takes one compose file and a web page:
    `http://<this machine>:8080/setup#token=...`. Open it and create the admin login.
 3. Add each machine: pick its type (Proxmox VE, Incus, or a Linux host such as a Raspberry Pi or
    a VPS), give it a name, and enter its IP address and SSH port.
-4. The page shows a one-line script for each machine. Paste it into a shell on that machine (any
-   shell: bash, zsh, fish, csh, ...), as root or as a user who can use sudo, doas or `su` (it asks
-   for the password it needs). *What it runs* on the page shows the script in full.
+4. The page shows a short command for each machine, which downloads its script from the dashboard
+   (`curl ... /install/<link> && sh ...`). Run it on that machine in any shell (bash, zsh, fish,
+   csh, ...), as root or as a user who can use sudo, doas or `su`; it asks for the password it
+   needs. The link works for an hour and needs no login, so don't share it. If the machine can't
+   reach the dashboard (a VPS, or any machine with a tunnel), paste the whole script as one line
+   instead. *What it runs* on the page shows the script in full.
 5. Press **Connect**. The dashboard does the rest itself, then press **Apply**.
 
 **What the script does** on the machine: first it checks, changing nothing, and stops with what

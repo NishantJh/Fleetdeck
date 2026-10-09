@@ -136,6 +136,7 @@ def cross_site(request: Request) -> bool:
 
 
 SETUP_PATHS = ("/setup", "/static/")
+INSTALL_PATH = "/install/"
 
 
 def make_guard(auth: AuthConfig | None, throttle: LoginThrottle, setup_token: str | None = None, locked: bool = True):
@@ -171,6 +172,8 @@ def make_guard(auth: AuthConfig | None, throttle: LoginThrottle, setup_token: st
     async def _check(request: Request, call_next):
         if cross_site(request):
             return Response("cross-site request refused", status_code=403)
+        if request.url.path.startswith(INSTALL_PATH):
+            return await call_next(request)  # setup scripts for machines: the link is the key
         if setup_token is not None:
             path = request.url.path
             if path.startswith("/api/setup"):

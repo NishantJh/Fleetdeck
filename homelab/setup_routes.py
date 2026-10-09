@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import secrets
+import time
 from collections.abc import Callable
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from . import onboarding as ob
@@ -41,6 +43,23 @@ class ConnectRequest(ob.Machine):
 
 class ConfigText(BaseModel):
     yaml: str = Field(max_length=1_000_000)
+
+
+# Scripts a machine can fetch once it's told the link: id -> (script, expiry). Kept per process, so
+# links outlive the in-process restarts of Apply.
+DOWNLOAD_TTL = 3600
+_downloads: dict[str, tuple[str, float]] = {}
+
+
+def _offer_download(source: str) -> str:
+    now = time.monotonic()
+    for k in [k for k, (_, exp) in _downloads.items() if exp < now]:
+        del _downloads[k]
+    while len(_downloads) >= 200:
+        del _downloads[next(iter(_downloads))]
+    key = secrets.token_urlsafe(18)
+    _downloads[key] = (ob.download(source), now + DOWNLOAD_TTL)
+    return f"/install/{key}"
 
 
 def _error(e: Exception) -> HTTPException:
@@ -86,6 +105,14 @@ def add_setup_routes(
 
     def changed() -> None:
         state["changed"] = True
+
+    @app.get("/install/{key}")
+    async def install_script(key: str):
+        # No login: the machine fetching it has none. The unguessable, expiring link is the access.
+        found = _downloads.get(key)
+        if found is None or found[1] < time.monotonic():
+            raise HTTPException(404, "this setup link has expired; show the script on the setup page again")
+        return PlainTextResponse(found[0])
 
     @app.get("/setup")
     async def setup_page():
@@ -155,7 +182,10 @@ def add_setup_routes(
             async with lock:
                 tunnel = await asyncio.to_thread(_pending_tunnel, req)
         source = ob.bootstrap_source(req, public_key, allow, tunnel)
-        return {"script": ob.wrap(source), "source": source}
+        # A short download link, except for a tunnel: its script holds keys, and the machine usually
+        # can't reach the dashboard anyway (that's what the tunnel is for).
+        download = None if tunnel else _offer_download(source)
+        return {"script": ob.wrap(source), "source": source, "download": download}
 
     @app.post("/api/setup/connect")
     async def connect(req: ConnectRequest):
@@ -254,7 +284,7 @@ def add_setup_routes(
             raise HTTPException(404, "no such machine")
         fp = await asyncio.to_thread(ob.incus_cert_fingerprint, paths) if found[0] == "incus" else ""
         source = ob.uninstall_source(*found, fp)
-        return {"script": ob.wrap(source), "source": source}
+        return {"script": ob.wrap(source), "source": source, "download": _offer_download(source)}
 
     @app.get("/api/setup/config")
     async def get_config():
