@@ -12,12 +12,40 @@
     <h1>Homelab Manager</h1>
     <div class="toolbar">
       <a class="button" href="/setup" title="Add or remove machines, edit the config">+ Add machines</a>
+      <button id="backup" title="Download or restore an encrypted backup of the config, keys and history">Backup</button>
       <button id="refresh" title="Re-discover hosts and guests">Refresh inventory</button>
       <button id="test-notify" hidden title="Send a test message to every notify target">Test notification</button>
       <button id="check-all">Check all</button>
       <button id="update-selected" class="primary" disabled>Update selected</button>
     </div>
   </header>
+
+  <dialog id="backup-dialog">
+    <form id="backup-form" method="dialog">
+      <h3>Back up this dashboard</h3>
+      <p class="muted">One file with the config, the login, the dashboard's SSH key, API tokens, tunnel keys and the job history. It is encrypted with a passphrase you choose; without the passphrase it can't be opened, and it can't be recovered if you forget it.</p>
+      <label class="dlg-field">Passphrase <input type="password" id="backup-pass" autocomplete="new-password" minlength="12" placeholder="at least 12 characters"></label>
+      <label class="dlg-field">Repeat it <input type="password" id="backup-pass2" autocomplete="new-password"></label>
+      <p id="backup-msg" class="muted" role="status"></p>
+      <menu>
+        <button value="cancel" formnovalidate>Close</button>
+        <button type="button" id="backup-download" class="primary">Download backup</button>
+      </menu>
+      <hr>
+      <h3>Restore from a backup</h3>
+      <label class="dlg-field">Backup file <input type="file" id="restore-file" accept=".hlmbackup"></label>
+      <label class="dlg-field">Its passphrase <input type="password" id="restore-pass" autocomplete="off"></label>
+      <div id="restore-preview" hidden>
+        <p id="restore-summary"></p>
+        <label class="check-row"><input type="checkbox" id="restore-ack"> <span>Replace the current config, keys and job history with this backup and restart. What is there now is kept as an encrypted file in the data folder's <code>backups/</code>, with the same passphrase.</span></label>
+      </div>
+      <p id="restore-msg" class="muted" role="status"></p>
+      <menu>
+        <button type="button" id="restore-check">Open backup</button>
+        <button type="button" id="restore-go" class="danger" hidden disabled>Restore and restart</button>
+      </menu>
+    </form>
+  </dialog>
 
   <main>
     <div id="errors"></div>

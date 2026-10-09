@@ -69,6 +69,9 @@ Installing takes one compose file and a web page:
 2. The container's log prints a one-time link (`docker logs homelab-manager`, or the logs view
    of your container manager):
    `http://<this machine>:8080/setup#token=...`. Open it and create the admin login.
+   The link is only printed until the login exists. After that the log says
+   `Setup is done: open http://<this machine>:8080 and log in`, and the dashboard's Setup button
+   takes you back to the setup page.
 3. Add each machine: pick its type (Proxmox VE, Incus, or a Linux host such as a Raspberry Pi or
    a VPS), give it a name, and enter its IP address and SSH port.
 4. The page shows a short command for each machine, which downloads its script from the dashboard
@@ -156,6 +159,15 @@ one there instead): `config.yaml`, its SSH key, the pinned host keys, the Incus 
 and the check history. Back it up and you have backed up the whole install. Every file in it is
 readable only by the dashboard; edit the config on the setup page. Nothing else on the host (the
 compose file, an `.env`) is touched, so your container manager can still edit those.
+
+**Backups from the dashboard:** the **Backup** button downloads one file with the config, the
+login, every key and token, and the job history, encrypted with a passphrase you choose
+(AES-256-GCM, key from scrypt). Keep it off this server; without the passphrase nobody, including
+you, can open it. To restore, pick the file in the same dialog: it first shows what is in it, then
+replaces the current files and restarts once you confirm. What was there before is kept as an
+encrypted file in `/data/backups/`, with the same passphrase. Key files the backup doesn't have
+are left in place. Files outside `/data` (say a key file the config points at elsewhere) aren't
+in it.
 
 The container starts as root only long enough to sort out ownership, then switches user and keeps
 no Linux capabilities (that is what the `cap_add` lines in the compose file are for):
