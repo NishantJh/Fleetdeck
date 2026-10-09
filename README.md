@@ -59,9 +59,13 @@ HOMELAB_DEMO=1 python -m homelab   # http://localhost:8080
 Every push to `main` publishes `ghcr.io/nishantjh/homelab-manager:latest` (amd64 and arm64).
 Installing takes one compose file and a web page:
 
-1. Put [`docker-compose.yml`](docker-compose.yml) in a folder and run `docker compose up -d`.
+1. Run [`docker-compose.yml`](docker-compose.yml): `docker compose up -d` in a folder holding it,
+   or paste it into whatever manages your containers (Portainer, Dockge, Arcane, Komodo, ...) as a
+   new stack and deploy. Plain Docker works too:
+   `docker run -d --name homelab-manager -p 8080:8080 -v homelab-data:/data --restart unless-stopped ghcr.io/nishantjh/homelab-manager:latest`.
    Nothing else is needed: no `.env` file, no config file and no `chown`.
-2. The container's log prints a one-time link (`docker compose logs homelab-manager`):
+2. The container's log prints a one-time link (`docker logs homelab-manager`, or the logs view
+   of your container manager):
    `http://<this machine>:8080/setup#token=...`. Open it and create the admin login.
 3. Add each machine: pick its type (Proxmox VE, Incus, or a Linux host such as a Raspberry Pi or
    a VPS), give it a name, and enter its IP address and SSH port.
@@ -103,23 +107,20 @@ halfway through.
 
 ### The data folder
 
-Everything the dashboard keeps is in `./data`: `config.yaml`, its SSH key, the pinned host keys,
-the Incus client certificate and the check history. Back this folder up and you have backed up
-the whole install. Every file in it is readable only by the dashboard.
+Everything the dashboard keeps is in `/data` (the `homelab-data` volume, or a folder if you mount
+one there instead): `config.yaml`, its SSH key, the pinned host keys, the Incus client certificate
+and the check history. Back it up and you have backed up the whole install. Every file in it is
+readable only by the dashboard; edit the config on the setup page. Nothing else on the host (the
+compose file, an `.env`) is touched, so your container manager can still edit those.
 
-The container starts as root only long enough to give `./data` to its own user (uid 10001),
+The container starts as root only long enough to give `/data` to its own user (uid 10001),
 whoever owns the folder on the host. It then switches to that user and keeps no Linux
 capabilities. That is why the compose file adds `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID` and
 `SETGID`. To use another uid, set `PUID` and `PGID`.
 
-### With Arcane
-
-1. Create a project in Arcane, paste in `docker-compose.yml` and deploy it.
-2. Open the setup link from the container's logs in Arcane, then follow steps 2 to 5 above.
-3. While the repo is private, the image is too. Add `ghcr.io` as a registry in Arcane with your
-   GitHub username and a token that has `read:packages`.
-
-To pin a version instead of `latest`, use a release tag such as
+While the repo is private, the image is too: log in to `ghcr.io` (`docker login ghcr.io`, or
+add it as a registry in your container manager) with your GitHub username and a token that has
+`read:packages`. To pin a version instead of `latest`, use a release tag such as
 `ghcr.io/nishantjh/homelab-manager:0.2.0`.
 
 ### Upgrading from the `config/` folder install

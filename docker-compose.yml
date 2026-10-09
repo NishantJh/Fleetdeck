@@ -1,6 +1,6 @@
-# The whole install: `docker compose up -d` (or paste this into an Arcane project and deploy), then
-# open the setup link from the logs (`docker compose logs homelab-manager`, or the container's logs
-# in Arcane). Nothing else to create, copy or chown.
+# The whole install: `docker compose up -d`, or paste this into any compose manager (Portainer,
+# Dockge, Arcane, Komodo, ...) and deploy. Then open the setup link from the container's logs.
+# Nothing else to create, copy or chown.
 services:
   homelab-manager:
     # Pin a release (e.g. :0.2.0) rather than :latest so an update is something you choose.
@@ -13,8 +13,10 @@ services:
       # To listen on one interface only, prefix its IP: "192.168.1.50:8080:8080"
       - "8080:8080"
     volumes:
-      # Config, the dashboard's own keys and its history. Back this folder up; it is the whole install.
-      - ./data:/data
+      # Config, the dashboard's own keys and its history: the whole install, so back it up.
+      # A named volume works the same in every tool. To keep it in a folder instead, use e.g.
+      # `- ./data:/data` or `- /opt/homelab-manager:/data`; any owner works, the app fixes it.
+      - homelab-data:/data
     # Hardening: read-only filesystem, and only the capabilities needed to hand ./data to the app's
     # user (uid 10001) at start. The app drops them, and root, before it does anything else.
     read_only: true
@@ -30,3 +32,6 @@ services:
       - SETGID
     security_opt:
       - no-new-privileges:true
+
+volumes:
+  homelab-data:
