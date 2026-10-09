@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
+import secrets
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,14 +14,18 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from .config import AppConfig, load_config
+from .config import AppConfig, config_path, load_config
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
 from .models import CheckResult, Job, JobAction, Target
 from .notify import Notifier
+from .onboarding import Paths
 from .scheduler import Scheduler
 from .security import LoginThrottle, make_guard
+from .setup_routes import add_setup_routes
 from .store import Store
+from .tunnels import TunnelManager
+from .tunnels import manager as tunnel_manager
 
 log = logging.getLogger("homelab")
 STATIC = Path(__file__).parent / "static"
@@ -38,15 +46,26 @@ class ActionRequest(BaseModel):
     snapshot_first: bool = False
 
 
-def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None) -> FastAPI:
-    cfg = cfg or load_config()
-    if cfg.auth is None and cfg.has_real_targets and not cfg.allow_no_auth:
-        raise SystemExit(
-            "Refusing to start: no `auth:` in the config, so anyone who can reach the dashboard could update "
-            "and reboot your machines. Add auth (see config.example.yaml), or set `allow_no_auth: true` if "
-            "something in front of the dashboard already handles login."
-        )
-    inventory = inventory or Inventory(build_providers(cfg))
+def create_app(
+    cfg: AppConfig | None = None,
+    inventory: Inventory | None = None,
+    *,
+    config_file: str | None = None,
+    restart: Callable[[], None] | None = None,
+) -> FastAPI:
+    """``config_file`` is the file the setup page edits; ``restart`` reloads the app with it."""
+    cfg = cfg or load_config(config_file)
+    paths = Paths(Path(config_file or config_path()).absolute())
+    # No login yet (a fresh install): only the setup page works, and only with a one-time link from
+    # the logs, until it has created one. A demo without real machines stays usable, but its setup
+    # API still needs the link: it can SSH anywhere and write the config.
+    setup_token = None
+    if cfg.auth is None and not cfg.allow_no_auth:
+        setup_token = secrets.token_urlsafe(24)
+    locked = setup_token is not None and (cfg.has_real_targets or not cfg.demo)
+    if locked and cfg.has_real_targets:
+        log.warning("No `auth:` in the config: the dashboard stays locked until an admin login is set up.")
+    inventory = inventory or Inventory(build_providers(cfg) if not locked else [])
     store = _open_store(cfg.state_file)
     jobs = JobManager(inventory, cfg.max_parallel, store, cfg.snapshot_keep)
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
@@ -54,14 +73,30 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        if cfg.auth is None:
+        if locked:
+            log.warning(
+                "First run: open http://<this machine>:%s/setup#token=%s to create the admin login and add "
+                "machines. The link changes every time the container starts.",
+                _published_port(),
+                setup_token,
+            )
+        elif setup_token:
+            log.info("Setup page: http://<this machine>:%s/setup#token=%s", _published_port(), setup_token)
+        if cfg.auth is None and not locked:
             log.warning("No auth configured: anyone who can reach this dashboard can update your machines.")
             if not cfg.allowed_hosts:
                 log.warning("allowed_hosts is not set: without auth, web pages can reach the API via DNS rebinding.")
         if notifier is not None and not scheduler.interval:
             log.warning("Notifications are set up but schedule.check_every isn't, so nothing will be sent.")
+        # Tunnels to machines that can't be reached directly; restarted if one dies.
+        wanted = {h.name: h.tunnel for h in cfg.hosts if h.tunnel}
+        tunnels = tunnel_manager(paths.keys / "tunnels")
+        await asyncio.to_thread(tunnels.sync, wanted)
+        watchdog = asyncio.create_task(_keep_tunnels(tunnels, wanted)) if wanted else None
         scheduler.start()
         yield
+        if watchdog is not None:
+            watchdog.cancel()
         await scheduler.stop()  # first, so it can't queue checks during shutdown
         await jobs.shutdown()
         if notifier is not None:
@@ -77,8 +112,9 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
     app.state.jobs = jobs
     app.state.inventory = inventory
     app.state.scheduler = scheduler
+    app.state.setup_token = setup_token
 
-    app.middleware("http")(make_guard(cfg.auth, LoginThrottle()))
+    app.middleware("http")(make_guard(cfg.auth, LoginThrottle(), setup_token, locked))
     if cfg.allowed_hosts:
         # Added last so it runs first: a request for a foreign Host never reaches the API.
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=cfg.allowed_hosts)
@@ -172,12 +208,25 @@ def create_app(cfg: AppConfig | None = None, inventory: Inventory | None = None)
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
 
+    add_setup_routes(app, cfg, paths, restart, setup_token is not None)
+
     @app.get("/")
     async def index():
         return FileResponse(STATIC / "index.html")
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     return app
+
+
+async def _keep_tunnels(tunnels: TunnelManager, wanted: dict) -> None:
+    while True:
+        await asyncio.sleep(30)
+        await asyncio.to_thread(tunnels.sync, wanted)
+
+
+def _published_port() -> str:
+    """The port people open the dashboard on: the host side of the Docker mapping, when known."""
+    return os.environ.get("HOMELAB_PORT") or os.environ.get("PORT", "8080")
 
 
 def _open_store(path: str | None) -> Store | None:

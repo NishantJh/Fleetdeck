@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
 import itertools
+import os
 import secrets
 import time
 from urllib.parse import urlsplit
 
 from fastapi import Request
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 
 from .config import AuthConfig
 
@@ -73,18 +75,51 @@ class LoginThrottle:
             self._failures = dict(keep)
 
 
-def basic_auth_ok(header: str, username: str, password: str) -> bool:
+_SCRYPT = {"n": 2**15, "r": 8, "p": 1}
+
+
+def hash_password(password: str) -> str:
+    """``scrypt$n$r$p$salt$hash`` (base64), for ``auth.password_hash``."""
+    salt = os.urandom(16)
+    dk = hashlib.scrypt(password.encode(), salt=salt, maxmem=2**26, dklen=32, **_SCRYPT)
+    b64 = lambda b: base64.b64encode(b).decode()  # noqa: E731
+    return f"scrypt${_SCRYPT['n']}${_SCRYPT['r']}${_SCRYPT['p']}${b64(salt)}${b64(dk)}"
+
+
+def verify_password(password: bytes, encoded: str) -> bool:
+    try:
+        algo, n, r, p, salt, want = encoded.split("$")
+        if algo != "scrypt":
+            return False
+        dk = hashlib.scrypt(password, salt=base64.b64decode(salt), n=int(n), r=int(r), p=int(p), maxmem=2**26, dklen=32)
+    except (ValueError, binascii.Error):
+        return False
+    return secrets.compare_digest(dk, base64.b64decode(want))
+
+
+def _credentials(header: str) -> tuple[bytes, bytes] | None:
     scheme, _, encoded = header.partition(" ")
     if scheme.lower() != "basic":
-        return False
+        return None
     try:
         user, sep, pwd = base64.b64decode(encoded.strip(), validate=True).partition(b":")
     except (binascii.Error, ValueError):
+        return None
+    return (user, pwd) if sep else None
+
+
+def basic_auth_ok(header: str, auth: AuthConfig) -> bool:
+    creds = _credentials(header)
+    if creds is None:
         return False
-    # Compare both halves even when the first one fails so timing doesn't leak which was wrong.
-    user_ok = secrets.compare_digest(user, username.encode())
-    pwd_ok = secrets.compare_digest(pwd, password.encode())
-    return bool(sep) and user_ok and pwd_ok
+    user, pwd = creds
+    # Check both halves even when the first one fails so timing doesn't leak which was wrong.
+    user_ok = secrets.compare_digest(user, auth.username.encode())
+    if auth.password_hash:
+        pwd_ok = verify_password(pwd, auth.password_hash)
+    else:
+        pwd_ok = secrets.compare_digest(pwd, (auth.password or "").encode())
+    return user_ok and pwd_ok
 
 
 def cross_site(request: Request) -> bool:
@@ -100,7 +135,33 @@ def cross_site(request: Request) -> bool:
     return origin == "null" or urlsplit(origin).netloc.lower() != host.lower()
 
 
-def make_guard(auth: AuthConfig | None, throttle: LoginThrottle):
+SETUP_PATHS = ("/setup", "/static/")
+
+
+def make_guard(auth: AuthConfig | None, throttle: LoginThrottle, setup_token: str | None = None, locked: bool = True):
+    """``setup_token`` (when there is no login) makes the setup API need the one-time token printed in
+    the logs. ``locked`` is first-run mode: nothing but the setup page works until a login exists."""
+    # A password hash is deliberately slow to check, and the browser sends the login with every
+    # request; remember the headers that were right (by digest) instead of re-hashing each time.
+    good: set[str] = set()
+    # Each check takes 32 MB (scrypt); don't let a burst of wrong passwords take the memory.
+    hashing = asyncio.Semaphore(2)
+
+    async def auth_ok(header: str) -> bool:
+        if not auth.password_hash:
+            return basic_auth_ok(header, auth)
+        digest = hashlib.sha256(header.encode()).hexdigest()
+        if digest in good:
+            return True
+        async with hashing:
+            ok = await asyncio.to_thread(basic_auth_ok, header, auth)
+        if not ok:
+            return False
+        if len(good) > 64:
+            good.clear()
+        good.add(digest)
+        return True
+
     async def guard(request: Request, call_next):
         response = await _check(request, call_next)
         for k, v in SECURITY_HEADERS.items():
@@ -110,6 +171,21 @@ def make_guard(auth: AuthConfig | None, throttle: LoginThrottle):
     async def _check(request: Request, call_next):
         if cross_site(request):
             return Response("cross-site request refused", status_code=403)
+        if setup_token is not None:
+            path = request.url.path
+            if path.startswith("/api/setup"):
+                if secrets.compare_digest(request.headers.get("x-setup-token", ""), setup_token):
+                    return await call_next(request)
+                return Response(
+                    "setup link missing or out of date: open the link printed in the container logs",
+                    status_code=403,
+                )
+            if locked:
+                if path == "/":
+                    return RedirectResponse("/setup")
+                if path.startswith(SETUP_PATHS):
+                    return await call_next(request)
+                return Response("finish setup first: open /setup", status_code=403)
         if auth is not None:
             ip = request.client.host if request.client else "?"
             if (left := throttle.blocked_for(ip)) > 0:
@@ -119,7 +195,7 @@ def make_guard(auth: AuthConfig | None, throttle: LoginThrottle):
                     headers={"Retry-After": str(int(left) + 1)},
                 )
             header = request.headers.get("authorization", "")
-            if not basic_auth_ok(header, auth.username, auth.password):
+            if not await auth_ok(header):
                 if header:  # the browser's first, credential-less request isn't a failed guess
                     throttle.failed(ip, header)
                 return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="homelab"'})

@@ -1,4 +1,6 @@
-# Works as-is as an Arcane project (or plain `docker compose up -d`).
+# The whole install: `docker compose up -d`, or paste this into any compose manager (Portainer,
+# Dockge, Arcane, Komodo, ...) and deploy. Then open the setup link from the container's logs.
+# Nothing else to create, copy or chown.
 services:
   homelab-manager:
     # Pin a release (e.g. :0.2.0) rather than :latest so an update is something you choose.
@@ -8,24 +10,33 @@ services:
     container_name: homelab-manager
     restart: unless-stopped
     ports:
-      # To listen on one interface only, prefix its IP: "192.168.1.50:8080:8080"
-      - "8080:8080"
-    volumes:
-      # config.yaml, SSH key, known_hosts, Incus client cert. Must be readable by uid 10001
-      # (`sudo chown -R 10001:10001 config`).
-      - ./config:/config:ro
-      # Check results and job history (SQLite), kept across restarts and image updates. Must be
-      # writable by uid 10001: `mkdir -p data && sudo chown 10001:10001 data`.
-      - ./data:/data
+      # Port 8080 taken on this host? Set HOMELAB_PORT (e.g. 8081) in the environment or .env
+      # instead of editing this. To listen on one interface only: "192.168.1.50:${HOMELAB_PORT:-8080}:8080"
+      - "${HOMELAB_PORT:-8080}:8080"
     environment:
-      HOMELAB_PASSWORD: ${HOMELAB_PASSWORD}
-      PVE_TOKEN_SECRET: ${PVE_TOKEN_SECRET}
-    # Hardening: the app needs no privileges and writes nothing outside its volumes.
-    user: "10001:10001"
+      # Only so the setup link in the logs shows the right port.
+      HOMELAB_PORT: ${HOMELAB_PORT:-8080}
+    volumes:
+      # Config, the dashboard's own keys and its history: the whole install, so back it up.
+      # A named volume works the same in every tool. To keep it in a folder instead, use e.g.
+      # `- ./data:/data`. The app runs as the folder's owner, so it stays yours (a root-owned one
+      # goes to uid 10001). Rootless Docker/Podman: add `environment: {PUID: "0"}`.
+      - homelab-data:/data
+    # Hardening: read-only filesystem, and only the capabilities needed to sort out /data's owner at
+    # start. The app drops them, and root, before it does anything else.
     read_only: true
     tmpfs:
       - /tmp
     cap_drop:
       - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
     security_opt:
       - no-new-privileges:true
+
+volumes:
+  homelab-data:
