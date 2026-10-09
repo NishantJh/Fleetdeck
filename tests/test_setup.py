@@ -584,3 +584,29 @@ def test_port_free_check_runs_here():
         script = ob.PORT_FREE_SH + f"port_free tcp {used} && echo free || echo used; port_free tcp 1 && echo free\n"
         out = subprocess.run(["sh", "-c", script], capture_output=True, text=True).stdout.split()
     assert out == ["used", "free"]
+
+
+def test_script_download_link(configured):
+    client, _ = configured
+    m = {"kind": "host", "name": "pi4", "address": "192.168.1.30"}
+    r = client.post("/api/setup/script", json=m).json()
+    assert r["download"].startswith("/install/")
+    # The machine fetches it without a login; it runs the same script.
+    anon = TestClient(client.app)
+    got = anon.get(r["download"])
+    assert got.status_code == 200 and base64.b64decode(got.text.split("S=")[1].split()[0]).decode() == r["source"]
+    assert subprocess.run(["sh", "-n"], input=got.text, text=True).returncode == 0
+    assert anon.get("/install/not-a-real-link").status_code == 404
+    assert anon.get("/api/setup").status_code == 401
+    # A tunnel's script holds keys: no link.
+    tun = client.post("/api/setup/script", json={**m, "name": "vps", "tunnel": True}).json()
+    assert tun["download"] is None
+
+
+def test_downloaded_script_runs_and_removes_itself(tmp_path):
+    f = tmp_path / "homelab-setup.sh"
+    f.write_text(ob.download('echo "ran as $(id -u)"'))
+    if os.getuid() != 0 and not shutil.which("sudo"):
+        pytest.skip("needs root or sudo")
+    r = subprocess.run(["sh", str(f)], capture_output=True, text=True, timeout=30)
+    assert r.stdout.strip() == "ran as 0" and not f.exists()

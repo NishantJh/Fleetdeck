@@ -364,14 +364,16 @@ echo "Done. This machine's SSH host keys (compare with what the setup page shows
 for f in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$f" 2>/dev/null || true; done
 """
 
-# Runs the script as root from any login shell (sh, bash, zsh, fish, nushell, csh): the script travels as
-# base64, and sh picks sudo, doas or su. No `!` (csh history), backslashes (fish) or newlines (csh).
-_WRAPPER = (
-    'sh -c \'S=$1; if [ "$(id -u)" = 0 ]; then printf %s "$S" | base64 -d | sh; '
+# Runs the script ($S, base64) as root: directly, or through sudo, doas or su, whichever there is.
+_ELEVATE = (
+    'if [ "$(id -u)" = 0 ]; then printf %s "$S" | base64 -d | sh; '
     'elif command -v sudo >/dev/null 2>&1; then printf %s "$S" | base64 -d | sudo sh; '
     'elif command -v doas >/dev/null 2>&1; then printf %s "$S" | base64 -d | doas sh; '
-    'else echo "Enter the root password:" >&2; su root -c "printf %s $S | base64 -d | sh"; fi\' homelab-setup '
+    'else echo "Enter the root password:" >&2; su root -c "printf %s $S | base64 -d | sh"; fi'
 )
+# The same from any login shell (sh, bash, zsh, fish, nushell, csh). No `!` (csh history), backslashes
+# (fish) or newlines (csh).
+_WRAPPER = "sh -c 'S=$1; " + _ELEVATE + "' homelab-setup "
 
 
 def wrap(script: str) -> str:
@@ -379,6 +381,16 @@ def wrap(script: str) -> str:
     # The leading space keeps it out of the history in bash (HISTCONTROL=ignorespace/ignoreboth, Debian's
     # default) and zsh with histignorespace; it carries keys.
     return " " + _WRAPPER + base64.b64encode(script.encode()).decode() + "\n"
+
+
+def download(script: str) -> str:
+    """The script as a file the machine downloads and runs with `sh` (as any user); it deletes itself."""
+    return (
+        "# Homelab Manager setup (see the setup page for what it runs).\n"
+        'rm -f "$0" 2>/dev/null\n'
+        f"S={base64.b64encode(script.encode()).decode()}\n"
+        f"{_ELEVATE}\n"
+    )
 
 
 def bootstrap_source(machine: Machine, public_key: str, allow_from: list[str], tunnel: dict | None = None) -> str:

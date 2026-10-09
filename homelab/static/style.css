@@ -92,6 +92,8 @@ textarea { width: 100%; font: 12px/1.4 var(--mono); margin-top: 8px; }
 pre.code { margin: 6px 0 0; background: #0d1117; color: #d1d7e0; padding: 10px; border-radius: 6px; max-height: 360px; overflow: auto; font: 12px/1.4 var(--mono); white-space: pre; }
 pre.code[hidden], .script[hidden], .row[hidden] { display: none; }
 pre.code.connect-log { white-space: pre-wrap; }
+pre.code.wrap { white-space: pre-wrap; word-break: break-all; max-height: 160px; }
+.script .dl[hidden] { display: none; }
 .card-head .tun { flex-direction: row; align-items: center; gap: 4px; font-size: 12px; }
 .card-head .tun[hidden], .card-head .f-udp[hidden] { display: none; }
 .card-head .f-udp { width: 80px; }

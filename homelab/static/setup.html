@@ -76,8 +76,16 @@
       </div>
       <p class="hint muted small"></p>
       <div class="script" hidden>
-        <div class="row"><span class="muted small s-label"></span><button class="small b-copy">Copy</button></div>
-        <pre class="code s-code"></pre>
+        <p class="muted small s-label"></p>
+        <div class="dl" hidden>
+          <div class="row"><span class="muted small">Run this on the machine:</span><button class="small primary b-copy-dl">Copy</button></div>
+          <pre class="code wrap s-dl"></pre>
+        </div>
+        <details class="full">
+          <summary class="muted small s-full-label">The whole script in one line, if the machine can't reach this page</summary>
+          <div class="row"><span class="muted small">Paste this into a shell there:</span><button class="small b-copy">Copy</button></div>
+          <pre class="code wrap s-code"></pre>
+        </details>
         <details><summary class="muted small">What it runs</summary><pre class="code s-source"></pre></details>
       </div>
       <div class="row removed" hidden><button class="small b-close">Close</button></div>

@@ -123,6 +123,7 @@ function addCard(m = { kind: "host", name: "", address: "", port: 22 }, saved = 
   });
   $(".b-script", card).onclick = () => ($(".script", card).hidden ? showScript(card) : ($(".script", card).hidden = true));
   $(".b-copy", card).onclick = (e) => copy($(".s-code", card).textContent, e.currentTarget);
+  $(".b-copy-dl", card).onclick = (e) => copy($(".s-dl", card).textContent, e.currentTarget);
   $(".b-close", card).onclick = () => card.remove();
   $(".b-connect", card).onclick = () => connect(card);
   $(".b-trust", card).onclick = () => connect(card, card.dataset.fingerprint);
@@ -131,26 +132,35 @@ function addCard(m = { kind: "host", name: "", address: "", port: 22 }, saved = 
   return card;
 }
 
+// Shows a script: a short download command when there is one, else the whole script in one line.
+function setScript(card, label, r) {
+  $(".s-label", card).textContent = label;
+  $(".s-code", card).textContent = r ? r.script : "";
+  $(".s-source", card).textContent = r ? r.source : "";
+  const dl = r && r.download ? ` curl -fsSLo ~/homelab-setup.sh ${location.origin}${r.download} && sh ~/homelab-setup.sh` : "";
+  $(".s-dl", card).textContent = dl;
+  $(".dl", card).hidden = !dl;
+  $(".full", card).open = !!r && !dl;
+  $(".s-full-label", card).textContent = dl
+    ? "The whole script in one line, if the machine can't reach this page"
+    : "Paste this into a shell on the machine";
+}
+
 let scriptSeq = 0;
 async function showScript(card) {
   const m = machineOf(card);
-  const pre = $(".s-code", card);
   $(".script", card).hidden = false;
-  $(".s-label", card).textContent = `Paste this into a shell on ${m.name || m.address || "the machine"} (any shell; it asks for sudo, doas or the root password if needed). It checks first and stops before changing anything if something's in the way. A web console (noVNC, IPMI) may not paste a line this long: use SSH or, for a container, pct enter.`;
-  $(".s-source", card).textContent = "";
+  const label = `On ${m.name || m.address || "the machine"}, in any shell, as root or as a user with sudo, doas or the root password (it asks if needed). It checks first and stops before changing anything if something's in the way.`;
   if (!m.name || !m.address) {
-    pre.textContent = "Fill in a name and an address first.";
+    setScript(card, "Fill in a name and an address first.", null);
     return;
   }
   const seq = ++scriptSeq;
   try {
     const r = await api("/api/setup/script", { method: "POST", body: JSON.stringify({ ...m, allow_from: $("#allow-from").value }) });
-    if (seq === scriptSeq) {
-      pre.textContent = r.script;
-      $(".s-source", card).textContent = r.source;
-    }
+    if (seq === scriptSeq) setScript(card, label, r);
   } catch (e) {
-    if (seq === scriptSeq) pre.textContent = `Can't make the script: ${e.message}`;
+    if (seq === scriptSeq) setScript(card, `Can't make the script: ${e.message}`, null);
   }
 }
 
@@ -210,9 +220,7 @@ async function remove(card) {
     $(".connect-log", card).hidden = true;
     setStatus(card, "removed", "muted");
     $(".script", card).hidden = false;
-    $(".s-label", card).textContent = `Removed from the dashboard. To undo the setup on ${name} (its homelab user, sudo rule, API token or trust, tunnel), paste this into a shell there:`;
-    $(".s-code", card).textContent = undo.script;
-    $(".s-source", card).textContent = undo.source;
+    setScript(card, `Removed from the dashboard. To undo the setup on ${name} (its homelab user, sudo rule, API token or trust, tunnel), run this there:`, undo);
     $(".removed", card).hidden = false;
     delete card.dataset.saved;
     card.dataset.removed = "1";
