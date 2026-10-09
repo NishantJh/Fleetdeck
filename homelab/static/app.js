@@ -109,11 +109,11 @@ function rowHtml(v, withBackup) {
   let html = `<tr class="${t.kind === "host" ? "host" : "guest"}">
     <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${canUpgrade(t) ? "" : "disabled"}></td>
     <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
-    <td class="muted os">${esc(c?.os || "")}</td>
-    <td><span class="dot ${DOT[t.status] || ""}"></span>${esc(t.status)}</td>
-    ${withBackup ? `<td>${backupCell(t)}</td>` : ""}
-    <td>${updatesCell(v)} ${reboot}${notes}</td>
-    <td class="muted">${c ? ago(c.checked_at) : ""}</td>
+    <td class="muted os" data-label="OS">${esc(c?.os || "")}</td>
+    <td data-label="State"><span class="dot ${DOT[t.status] || ""}"></span>${esc(t.status)}</td>
+    ${withBackup ? `<td data-label="Last backup">${backupCell(t)}</td>` : ""}
+    <td data-label="Updates">${updatesCell(v)} ${reboot}${notes}</td>
+    <td class="muted" data-label="Checked">${c ? ago(c.checked_at) : ""}</td>
     <td class="actions">
       <button class="small" data-act="check" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Check</button>
       <button class="small ${pending && !t.check_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy ? "" : "disabled"} title="${t.check_only ? esc(t.note) : ""}">Update</button>
