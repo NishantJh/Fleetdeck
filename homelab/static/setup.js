@@ -70,6 +70,8 @@ function machineOf(card) {
     name: $(".f-name", card).value.trim(),
     address: $(".f-address", card).value.trim(),
     port: Number($(".f-port", card).value) || 22,
+    tunnel: $(".f-kind", card).value === "host" && $(".f-tunnel", card).checked,
+    udp_port: Number($(".f-udp", card).value) || 51821,
   };
 }
 
@@ -84,12 +86,16 @@ function setStatus(card, text, cls = "") {
   s.className = `status ${cls}`;
 }
 
+const TUNNEL_HINT = " Via tunnel: the dashboard dials out a WireGuard link to this machine on the UDP port shown (it must be free there; Pangolin uses 51820), so it works behind CGNAT and when the machine only accepts SSH from your PC. The script sets up the machine's end; open that UDP port in its provider's firewall.";
+
 function addCard(m = { kind: "host", name: "", address: "", port: 22 }, saved = false) {
   const card = $("#card-tpl").content.firstElementChild.cloneNode(true);
   $(".f-kind", card).value = m.kind;
   $(".f-name", card).value = m.name;
   $(".f-address", card).value = m.address;
   $(".f-port", card).value = m.port;
+  $(".f-tunnel", card).checked = !!m.tunnel;
+  $(".f-udp", card).value = m.udp_port || 51821;
   if (saved) {
     card.dataset.saved = m.name;
     // A saved machine is identified by its name; change anything else by removing and re-adding it.
@@ -98,7 +104,14 @@ function addCard(m = { kind: "host", name: "", address: "", port: 22 }, saved = 
     const running = state.running.includes(m.name);
     setStatus(card, running ? "connected" : "connected, not applied yet", running ? "ok" : "warn");
   }
-  const hint = () => ($(".hint", card).textContent = HINTS[$(".f-kind", card).value]);
+  const hint = () => {
+    const host = $(".f-kind", card).value === "host";
+    const tunnel = host && $(".f-tunnel", card).checked;
+    $(".tun", card).hidden = !host;
+    $(".f-udp", card).hidden = !tunnel;
+    $(".f-address", card).placeholder = tunnel ? "its public IP or host name" : "IP address or host name";
+    $(".hint", card).textContent = HINTS[$(".f-kind", card).value] + (tunnel ? TUNNEL_HINT : "");
+  };
   hint();
   card.addEventListener("input", () => {
     hint();

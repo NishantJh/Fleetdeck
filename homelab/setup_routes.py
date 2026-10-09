@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from . import onboarding as ob
+from . import tunnels
 from .config import AppConfig, check_username
 from .security import hash_password
 
@@ -54,6 +55,14 @@ def add_setup_routes(
 ) -> None:
     lock = asyncio.Lock()  # one config write at a time
     state = {"changed": False, "admin_created": False}
+    tunnel_manager = tunnels.manager(paths.keys / "tunnels")
+
+    def _pending_tunnel(req: ob.Machine) -> dict:
+        try:
+            used = ob.used_tunnels(ob.read_raw(paths))
+        except ValueError:
+            used = set()
+        return tunnels.pending(paths.keys, req.name, req.address, req.udp_port, req.port, used)
 
     def editable() -> None:
         if not paths.writable():
@@ -127,7 +136,11 @@ def add_setup_routes(
         except ValueError as e:
             raise HTTPException(400, str(e)) from None
         public_key = await asyncio.to_thread(ob.ensure_identity, paths)
-        return {"script": ob.bootstrap_script(req, public_key, allow)}
+        tunnel = None
+        if req.tunnel:
+            async with lock:
+                tunnel = await asyncio.to_thread(_pending_tunnel, req)
+        return {"script": ob.bootstrap_script(req, public_key, allow, tunnel)}
 
     @app.post("/api/setup/connect")
     async def connect(req: ConnectRequest):
@@ -136,7 +149,36 @@ def add_setup_routes(
         editable()
         await asyncio.to_thread(ob.ensure_identity, paths)
         machine = ob.Machine(kind=req.kind, name=req.name, address=req.address, port=req.port)
+        tunnel = None
+        if req.tunnel:
+            # SSH goes to the tunnel's local end; everything else (pinning, checks) is the same.
+            async with lock:
+                tunnel = tunnels.to_config(await asyncio.to_thread(_pending_tunnel, req))
+            try:
+                await asyncio.to_thread(tunnel_manager.ensure, req.name, tunnel)
+            except RuntimeError as e:
+                return {
+                    "ok": False,
+                    "log": [str(e)],
+                    "fingerprint": None,
+                    "host_key_changed": False,
+                    "needs_confirm": False,
+                }
+            machine = machine.model_copy(update={"address": "127.0.0.1", "port": tunnel.local_port})
         result, entry = await ob.connect(machine, paths, req.trust_fingerprint)
+        if tunnel is not None:
+            result.log = [
+                (
+                    f"No SSH answer through the tunnel to {req.address}. Check that the script ran there, and that "
+                    f"UDP {req.udp_port} is open in its firewall and its provider's firewall."
+                )
+                if line.startswith("can't reach SSH")
+                else line.replace(f"127.0.0.1:{tunnel.local_port}", req.address).replace("127.0.0.1", req.address)
+                for line in result.log
+            ]
+            if entry is not None:
+                entry["tunnel"] = tunnel.model_dump()
+                result.log.append(f"Connected through the WireGuard tunnel to {req.address} (UDP {req.udp_port})")
         if entry is not None:
             async with lock:
                 try:
@@ -175,6 +217,7 @@ def add_setup_routes(
                 endpoint = (str(ssh["host"]), int(ssh.get("port") or 22))
                 if endpoint not in ob.ssh_endpoints(data):
                     ob.forget_host_key(paths, *endpoint)
+        tunnels.forget(paths.keys, name)
         changed()
         log.info(
             "Removed %s. Its homelab user%s stay on the machine until removed there.",

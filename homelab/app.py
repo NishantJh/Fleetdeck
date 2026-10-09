@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import secrets
@@ -23,6 +24,8 @@ from .scheduler import Scheduler
 from .security import LoginThrottle, make_guard
 from .setup_routes import add_setup_routes
 from .store import Store
+from .tunnels import TunnelManager
+from .tunnels import manager as tunnel_manager
 
 log = logging.getLogger("homelab")
 STATIC = Path(__file__).parent / "static"
@@ -85,8 +88,15 @@ def create_app(
                 log.warning("allowed_hosts is not set: without auth, web pages can reach the API via DNS rebinding.")
         if notifier is not None and not scheduler.interval:
             log.warning("Notifications are set up but schedule.check_every isn't, so nothing will be sent.")
+        # Tunnels to machines that can't be reached directly; restarted if one dies.
+        wanted = {h.name: h.tunnel for h in cfg.hosts if h.tunnel}
+        tunnels = tunnel_manager(paths.keys / "tunnels")
+        await asyncio.to_thread(tunnels.sync, wanted)
+        watchdog = asyncio.create_task(_keep_tunnels(tunnels, wanted)) if wanted else None
         scheduler.start()
         yield
+        if watchdog is not None:
+            watchdog.cancel()
         await scheduler.stop()  # first, so it can't queue checks during shutdown
         await jobs.shutdown()
         if notifier is not None:
@@ -206,6 +216,12 @@ def create_app(
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
     return app
+
+
+async def _keep_tunnels(tunnels: TunnelManager, wanted: dict) -> None:
+    while True:
+        await asyncio.sleep(30)
+        await asyncio.to_thread(tunnels.sync, wanted)
 
 
 def _published_port() -> str:

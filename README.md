@@ -103,9 +103,18 @@ The same page (the **Setup** button on the dashboard) adds and removes machines 
 has an editor for `config.yaml` (schedule, notifications, `protect:`, everything in
 [`config.example.yaml`](config.example.yaml)), which checks the YAML before saving it.
 
-**Machines that only accept SSH from some addresses**, like a hardened VPS: allow the address the
-dashboard connects from (for a VPS, your home's public IP), or reach it over Tailscale or
-WireGuard and enter that address instead. If `sshd_config` has `AllowUsers` or `AllowGroups`,
+**Machines that only accept SSH from some addresses**, like a hardened VPS, or **a home network
+behind CGNAT** (no fixed public IP to allow): tick *via tunnel* on the machine's card (Linux hosts).
+The dashboard then dials out a WireGuard tunnel to the machine and connects over it, so the
+machine never needs to reach your home, and SSH stays closed to the internet. The script sets up
+the machine's end (interface `hm<n>`, subnet `10.99.<n>.0/30`, UDP port 51821 by default, since
+Pangolin uses 51820); if that port is taken it stops and tells you the next free one to enter
+instead. Allow that UDP port in your VPS provider's firewall too. The dashboard's end runs inside
+the container (wireproxy, no extra privileges or devices), and its keys, including the ones for the
+machine's end, are kept in `/data/keys/tunnels`. Removing the machine removes them; on the machine,
+`wg-quick down hm<n>` and deleting `/etc/wireguard/hm<n>.conf` removes its end. Otherwise allow
+the address the dashboard connects from (for a VPS, your home's public IP), or reach it over
+Tailscale and enter that address instead. If `sshd_config` has `AllowUsers` or `AllowGroups`,
 add `homelab` there; the script warns when this applies. The dashboard always connects out to
 your machines (there's no agent), so each one has to be reachable from it. Connecting before the
 script has run counts as failed logins, which fail2ban or CrowdSec may ban the dashboard for.

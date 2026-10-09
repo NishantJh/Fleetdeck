@@ -33,8 +33,9 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
+from . import tunnels
 from .config import AppConfig, SSHConfig, normalize_fingerprint, validate_raw
 from .executors import CONNECT_TIMEOUT, SSHExecutor
 
@@ -72,6 +73,15 @@ class Machine(BaseModel):
     name: str
     address: str
     port: int = Field(22, ge=1, le=65535)
+    # Reach it through a WireGuard tunnel the dashboard dials out (see tunnels.py), on this UDP port.
+    tunnel: bool = False
+    udp_port: int = Field(tunnels.DEFAULT_UDP_PORT, ge=1, le=65535)
+
+    @model_validator(mode="after")
+    def _tunnel_hosts_only(self) -> Machine:
+        if self.tunnel and self.kind != "host":
+            raise ValueError("a tunnel is only offered for Linux hosts")
+        return self
 
     @field_validator("name")
     @classmethod
@@ -251,13 +261,21 @@ for f in /etc/ssh/ssh_host_*_key.pub; do ssh-keygen -lf "$f" 2>/dev/null || true
 """
 
 
-def bootstrap_script(machine: Machine, public_key: str, allow_from: list[str]) -> str:
-    """The commands to paste on ``machine``, as root or as a user with sudo."""
+def bootstrap_script(machine: Machine, public_key: str, allow_from: list[str], tunnel: dict | None = None) -> str:
+    """The commands to paste on ``machine``, as root or as a user with sudo. With ``tunnel`` (from
+    :func:`tunnels.pending`) it also sets up the machine's end of the tunnel, and the key only works
+    through it."""
+    if tunnel is not None:
+        allow_from = [f"10.99.{tunnel['index']}.2/32"]
     options = ["restrict"]
     if allow_from:
         options.append(f'from="{",".join(allow_from)}"')
     key_line = f"{','.join(options)} {public_key}"
     body = _BOOTSTRAP.format(name=machine.name, user=SSH_USER, key=shlex.quote(key_line))
+    if tunnel is not None:
+        # First, so a port or subnet conflict stops the script before it changes anything else.
+        start = body.index("if ! command -v sudo")
+        body = body[:start] + PORT_FREE_SH + tunnels.vps_script(tunnel, machine.port) + body[start:]
     # One block that works pasted into any shell: root runs it directly, anyone else through sudo.
     return (
         "f=$(mktemp) && cat > \"$f\" <<'HOMELAB_SETUP'\n"
@@ -746,5 +764,28 @@ def machines(cfg: AppConfig) -> list[dict]:
         addr = i.ssh.host if i.ssh else (urlsplit(i.url).hostname if i.url else "local socket")
         out.append({"kind": "incus", "name": i.name, "address": addr, "port": i.ssh.port if i.ssh else 22})
     for h in cfg.hosts:
-        out.append({"kind": "host", "name": h.name, "address": h.host, "port": h.port})
+        if h.tunnel:
+            t = h.tunnel
+            out.append(
+                {
+                    "kind": "host",
+                    "name": h.name,
+                    "address": t.endpoint,
+                    "port": t.target_port,
+                    "tunnel": True,
+                    "udp_port": t.port,
+                }
+            )
+        else:
+            out.append({"kind": "host", "name": h.name, "address": h.host, "port": h.port})
+    return out
+
+
+def used_tunnels(data: dict) -> set[int]:
+    """Tunnel numbers taken by machines in a raw config."""
+    out = set()
+    for h in data.get("hosts") or []:
+        addr = (h.get("tunnel") or {}).get("peer_address", "")
+        if addr.count(".") == 3 and addr.split(".")[2].isdigit():
+            out.add(int(addr.split(".")[2]))
     return out

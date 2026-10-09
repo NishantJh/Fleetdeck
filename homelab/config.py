@@ -109,10 +109,26 @@ class IncusConfig(BaseModel):
         return self
 
 
+class TunnelConfig(BaseModel):
+    """A WireGuard link the dashboard dials out to a machine it can't reach directly (see tunnels.py).
+
+    The machine's SSH is then at 127.0.0.1:local_port, which is what host/port of the entry say."""
+
+    endpoint: str  # the machine's public address
+    port: int = Field(51821, ge=1, le=65535)  # its WireGuard UDP port
+    target_port: int = Field(22, ge=1, le=65535)  # its sshd port
+    private_key: str
+    peer_public_key: str
+    address: str  # the dashboard's tunnel IP
+    peer_address: str  # the machine's tunnel IP
+    local_port: int = Field(ge=1024, le=65535)
+
+
 class HostConfig(SSHConfig):
     """A plain machine reached over SSH (e.g. a Raspberry Pi)."""
 
     name: str
+    tunnel: TunnelConfig | None = None
 
 
 def check_username(v: str) -> str:

@@ -66,6 +66,8 @@
         <input class="f-name" placeholder="name, e.g. pve" spellcheck="false">
         <input class="f-address" placeholder="IP address or host name" spellcheck="false">
         <input class="f-port" type="number" min="1" max="65535" value="22" title="SSH port">
+        <label class="tun" title="For a machine the dashboard can't reach directly: a VPS that only accepts SSH from some addresses, or when this network is behind CGNAT. The dashboard dials out a WireGuard tunnel to it."><input type="checkbox" class="f-tunnel"> via tunnel</label>
+        <input class="f-udp" type="number" min="1" max="65535" value="51821" title="WireGuard UDP port on the machine (Pangolin uses 51820)" hidden>
         <span class="status"></span>
         <span class="grow"></span>
         <button class="small b-script">Show script</button>
