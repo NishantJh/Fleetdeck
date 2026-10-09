@@ -98,6 +98,9 @@ class DemoProvider:
             "pihole": BackupInfo(last=now - timedelta(hours=5), storage="pbs", count=14, in_job=True, verified=True),
             "alpine-dns": BackupInfo(last=now - timedelta(days=4), storage="local", count=3, stale=True, in_job=True),
             "docker-vm": BackupInfo(stale=True, in_job=False),
+            "web": BackupInfo(last=now - timedelta(hours=20), storage="snapshot", count=7, in_job=True),
+            "fedora-vm": BackupInfo(last=now - timedelta(days=9), storage="export", count=1, stale=True),
+            "pi4": BackupInfo(last=now - timedelta(hours=11), storage="restic", count=30),
         }
         found: Discovered = []
         for platform, name, kind, parent, pm, os_name, lines in items:

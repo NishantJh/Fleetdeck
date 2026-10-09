@@ -419,3 +419,58 @@ async def test_pve_node_check_flags_security_updates_over_ssh():
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://pve:8006/api2/json")
     res = await PveNodeExecutor(client, "pve", FakeSSH()).check()
     assert {p.name: p.security for p in res.packages} == {"openssl": True, "pve-manager": False}
+
+
+async def test_incus_backups_from_snapshots_and_exports():
+    from datetime import UTC, datetime, timedelta
+
+    p = IncusProvider(IncusConfig(name="incus01", socket="/nonexistent"))
+    now = datetime.now(UTC)
+    iso = lambda h: (now - timedelta(hours=h)).isoformat().replace("+00:00", "Z")  # noqa: E731
+    data = {
+        "/1.0/instances": [
+            {
+                "name": "web",
+                "project": "default",
+                "type": "container",
+                "status": "Running",
+                "expanded_config": {"snapshots.schedule": "@daily"},
+            },
+            {"name": "old", "project": "default", "type": "container", "status": "Running"},
+            {"name": "none", "project": "default", "type": "container", "status": "Running"},
+        ],
+        "/1.0/instances/web/snapshots": [
+            {"name": "snap0", "created_at": iso(30)},
+            {"name": "snap1", "created_at": iso(5)},
+        ],
+        "/1.0/instances/web/backups": [{"name": "b0", "created_at": iso(50)}],
+        # Only the dashboard's own pre-upgrade snapshot, which doesn't count, and an old export.
+        "/1.0/instances/old/snapshots": [{"name": "homelab_20261009_101010", "created_at": iso(1)}],
+        "/1.0/instances/old/backups": [{"name": "b0", "created_at": iso(100)}],
+        "/1.0/instances/none/snapshots": [],
+        "/1.0/instances/none/backups": [],
+    }
+    p.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"metadata": data[req.url.path]})),
+        base_url="http://incus",
+    )
+    found = {t.name: t.backup for t, _ in await p.discover()}
+    assert found["incus01"] is None
+    web, old, none = found["web"], found["old"], found["none"]
+    assert web.storage == "snapshot" and web.count == 3 and not web.stale and web.in_job
+    assert old.storage == "export" and old.count == 1 and old.stale and old.in_job is None
+    assert none.last is None and none.stale and none.note is None
+
+
+async def test_incus_backups_unreadable_is_unknown_not_none():
+    p = IncusProvider(IncusConfig(name="incus01", socket="/nonexistent"))
+
+    def handler(req):
+        if req.url.path == "/1.0/instances":
+            return httpx.Response(200, json={"metadata": [{"name": "web", "type": "container", "status": "Running"}]})
+        return httpx.Response(403, json={"error": "not authorized"})
+
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://incus")
+    found = {t.name: t for t, _ in await p.discover()}
+    b = found["web"].backup
+    assert b.last is None and not b.stale and "could not list snapshots" in b.note

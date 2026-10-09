@@ -96,6 +96,8 @@ class IncusConfig(BaseModel):
     ssh: SSHConfig | None = None
     # Instance names ("project/name" or "name") to hide.
     exclude: list[str] = Field(default_factory=list)
+    # Flag an instance whose newest snapshot or export is older than this many hours. 0 turns it off.
+    backup_max_age_hours: int = Field(48, ge=0)
 
     @field_validator("tls_fingerprint")
     @classmethod
@@ -124,11 +126,37 @@ class TunnelConfig(BaseModel):
     local_port: int = Field(ge=1024, le=65535)
 
 
+class HostBackupConfig(BaseModel):
+    """Where to look for this machine's newest backup. Only ever read, never written or locked."""
+
+    # path: the newest file under `path` (a folder rsync/tar/etc. write to, or one backup file).
+    # restic / borg: the newest snapshot/archive in `repository`.
+    type: Literal["path", "restic", "borg"]
+    path: str | None = None
+    # Repository as restic -r / borg take it. May be left out if env_file sets it
+    # (RESTIC_REPOSITORY / BORG_REPO).
+    repository: str | None = None
+    # A file on the machine with the repository's settings as VAR=value lines, e.g. RESTIC_PASSWORD_FILE
+    # or BORG_PASSPHRASE; read before restic/borg runs, so the password stays on the machine.
+    env_file: str | None = None
+    # Flag the backup once it's older than this many hours.
+    max_age_hours: int = Field(48, ge=1)
+
+    @model_validator(mode="after")
+    def _where(self) -> HostBackupConfig:
+        if self.type == "path" and not self.path:
+            raise ValueError("backup type path needs path")
+        if self.type != "path" and not (self.repository or self.env_file):
+            raise ValueError(f"backup type {self.type} needs repository (or an env_file that sets it)")
+        return self
+
+
 class HostConfig(SSHConfig):
     """A plain machine reached over SSH (e.g. a Raspberry Pi)."""
 
     name: str
     tunnel: TunnelConfig | None = None
+    backup: HostBackupConfig | None = None
 
 
 def check_username(v: str) -> str:

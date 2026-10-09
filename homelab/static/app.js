@@ -87,6 +87,8 @@ function backupCell(t) {
   if (b.last) {
     const tip = `${new Date(b.last).toLocaleString()} on ${b.storage} · ${b.count} backup${b.count > 1 ? "s" : ""}`;
     html = `<span class="${b.stale ? "warn" : ""}" title="${esc(tip)}">${ago(b.last)}</span>`;
+  } else if (b.not_set_up) {
+    html = `<span class="muted" title="${esc(b.note)}">not set up ⓘ</span>`;
   } else if (b.note) {
     html = `<span class="muted" title="${esc(b.note)}">?</span>`;
   } else {
@@ -147,7 +149,7 @@ function render() {
     <div class="stat"><b class="${secMachines ? "bad" : ""}">${secMachines}</b><span class="muted">have security updates</span></div>
     <div class="stat"><b class="${reboot ? "warn" : ""}">${reboot}</b><span class="muted">need a reboot</span></div>
     <div class="stat"><b>${unchecked}</b><span class="muted">not checked yet</span></div>
-    ${withBackups.length ? `<div class="stat"><b class="${staleBackups ? "warn" : "ok"}">${staleBackups}</b><span class="muted">guests with old or no backups</span></div>` : ""}
+    ${withBackups.length ? `<div class="stat"><b class="${staleBackups ? "warn" : "ok"}">${staleBackups}</b><span class="muted">machines with old or no backups</span></div>` : ""}
     ${scheduleStat()}`;
   $("#test-notify").hidden = !state.schedule?.notify_targets;
 

@@ -109,6 +109,8 @@ incus:
       key_file: /config/id_ed25519
       sudo: true
     exclude: [] # "name" or "project/name"
+    # Last backup = newest snapshot or export (incus export / incus backup) of each instance.
+    backup_max_age_hours: 48 # 0 = don't track
 
 # Standalone machines over SSH.
 hosts:
@@ -117,6 +119,14 @@ hosts:
     user: pi
     key_file: /config/id_ed25519
     sudo: true # non-root user with passwordless sudo
+    # Where this machine's backups are, for the "Last backup" column. Only read, never locked.
+    backup:
+      type: path # newest file in a folder (rsync, tar, ...)
+      path: /mnt/backup/pi4
+      # type: restic # or borg
+      # repository: sftp:nas:/srv/restic/pi4
+      # env_file: /root/restic.env # RESTIC_PASSWORD_FILE=... / BORG_PASSPHRASE=..., stays on the machine
+      max_age_hours: 48
   - name: vps
     host: my-vps.example.com # public IP/hostname, or its Tailscale/WireGuard address
     port: 22
