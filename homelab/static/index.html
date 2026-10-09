@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Homelab Manager</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/theme.js"></script>
+  <link rel="stylesheet" href="/static/style.css?v=4">
+  <script src="/static/theme.js?v=4"></script>
 </head>
 <body>
   <header>
     <h1>Homelab Manager</h1>
     <div class="toolbar">
-      <a class="button" href="/setup" title="Add or remove machines, edit the config">Setup</a>
+      <a class="button" href="/setup" title="Add or remove machines, edit the config">+ Add machines</a>
       <button id="backup" title="Download or restore an encrypted backup of the config, keys and history">Backup</button>
       <button id="refresh" title="Re-discover hosts and guests">Refresh inventory</button>
       <button id="test-notify" hidden title="Send a test message to every notify target">Test notification</button>
@@ -81,6 +81,6 @@
     </form>
   </dialog>
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=4"></script>
 </body>
 </html>

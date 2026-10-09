@@ -148,6 +148,10 @@ Press *Reconnect* once you've run it there. Put the VMID of the LXC that runs th
 `protect:` (in the config editor), so upgrading Docker inside it can't restart the dashboard
 halfway through.
 
+**The page looks unstyled or out of date after an upgrade?** Your browser is holding an old copy.
+Do a hard reload: `Ctrl+Shift+R` (Windows, Linux), `Cmd+Shift+R` (Mac, Chrome and Firefox) or
+`Cmd+Option+R` (Mac, Safari).
+
 ### The data folder
 
 Everything the dashboard keeps is in `/data` (the `homelab-data` volume, or a folder if you mount

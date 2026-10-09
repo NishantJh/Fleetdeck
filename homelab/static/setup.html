@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Homelab Manager setup</title>
-  <link rel="stylesheet" href="/static/style.css">
-  <script src="/static/theme.js"></script>
+  <link rel="stylesheet" href="/static/style.css?v=4">
+  <script src="/static/theme.js?v=4"></script>
 </head>
 <body>
   <header>
@@ -32,10 +32,11 @@
     <section id="machines" class="panel" hidden>
       <h2>Machines</h2>
       <p class="muted">For each machine: fill in its details, run the script it shows on that machine (in any shell, as root or as a user who can use sudo, doas or su), then press <b>Connect</b>. The dashboard does the rest over SSH.</p>
-      <label class="wide">Only accept the dashboard's key from these addresses (optional)
-        <input id="allow-from" placeholder="e.g. 192.168.1.50, 203.0.113.7" spellcheck="false">
-        <span class="muted small">The address(es) machines see the dashboard connect from: this Docker host's LAN IP, and your home's public IP for a VPS. Leave empty to allow any. Changing it changes the scripts.</span>
-      </label>
+      <div class="field wide">
+        <label for="allow-from">Only accept the dashboard's key from these addresses <span class="opt">optional</span></label>
+        <input id="allow-from" placeholder="192.168.1.50, 203.0.113.7" spellcheck="false" autocomplete="off">
+        <p class="help">The address(es) machines see the dashboard connect from: this Docker host's LAN IP, and your home's public IP for a VPS. Leave empty to allow any. Changing it changes the scripts.</p>
+      </div>
       <div id="cards"></div>
       <div class="row">
         <button id="add-machine">Add a machine</button>
@@ -49,33 +50,62 @@
     </section>
 
     <details id="advanced" class="panel" hidden>
-      <summary>Edit config.yaml (schedule, notifications, protected guests, everything else)</summary>
+      <summary>Advanced: edit config.yaml <span class="muted small">schedule, notifications, protected guests, everything else</span></summary>
       <p class="muted">Checked before it's saved. See <code>config.example.yaml</code> in the repository for every setting.</p>
       <textarea id="config-text" spellcheck="false" rows="24"></textarea>
-      <div class="row"><button id="config-save">Save</button> <span id="config-status" class="muted"></span></div>
+      <div class="row"><button id="config-save" class="primary">Save</button> <span id="config-status" class="muted"></span></div>
     </details>
   </main>
 
   <template id="card-tpl">
     <div class="card">
-      <div class="card-head">
-        <select class="f-kind">
-          <option value="proxmox">Proxmox VE</option>
-          <option value="incus">Incus / LXD</option>
-          <option value="host">Linux host (Pi, VPS, ...)</option>
-        </select>
-        <input class="f-name" placeholder="name, e.g. pve" spellcheck="false">
-        <input class="f-address" placeholder="IP address or host name" spellcheck="false">
-        <input class="f-port" type="number" min="1" max="65535" value="22" title="SSH port">
-        <label class="tun" title="For a machine the dashboard can't reach directly: a VPS that only accepts SSH from some addresses, or when this network is behind CGNAT. The dashboard dials out a WireGuard tunnel to it."><input type="checkbox" class="f-tunnel"> via tunnel</label>
-        <input class="f-udp" type="number" min="1" max="65535" value="51821" title="WireGuard UDP port on the machine (Pangolin uses 51820)" hidden>
+      <div class="card-top">
+        <span class="card-title">New machine</span>
         <span class="status"></span>
         <span class="grow"></span>
-        <button class="small b-script">Show script</button>
-        <button class="small primary b-connect">Connect</button>
-        <button class="small b-remove" title="Remove">✕</button>
+        <button class="small icon-btn b-remove" title="Remove" aria-label="Remove">✕</button>
+      </div>
+      <div class="fields">
+        <div class="field">
+          <label>Type
+            <select class="f-kind">
+              <option value="proxmox">Proxmox VE</option>
+              <option value="incus">Incus / LXD</option>
+              <option value="host">Linux host (Pi, VPS, ...)</option>
+            </select>
+          </label>
+        </div>
+        <div class="field">
+          <label>Name <input class="f-name" placeholder="e.g. pve" spellcheck="false" autocomplete="off"></label>
+        </div>
+        <div class="field f-grow">
+          <label>Address <input class="f-address" placeholder="IP address or host name" spellcheck="false" autocomplete="off"></label>
+          <p class="field-error" hidden></p>
+        </div>
+        <div class="field f-narrow">
+          <label>SSH port <input class="f-port" type="number" min="1" max="65535" value="22"></label>
+        </div>
+        <div class="field f-narrow udp-field" hidden>
+          <label title="Pangolin uses 51820">Tunnel UDP port <input class="f-udp" type="number" min="1" max="65535" value="51821"></label>
+        </div>
+      </div>
+      <label class="tun check" title="For a machine the dashboard can't reach directly: a VPS that only accepts SSH from some addresses, or when this network is behind CGNAT. The dashboard dials out a WireGuard tunnel to it."><input type="checkbox" class="f-tunnel"> Connect via tunnel <span class="muted small">(VPS behind an allowlist, or this network is behind CGNAT)</span></label>
+      <div class="tunnel-steps" hidden>
+        <h3>Setting up a machine over a tunnel</h3>
+        <p class="muted">A tunnel is a private WireGuard link the dashboard opens <b>out</b> to this machine. Use it when the machine only accepts SSH from certain addresses (a hardened VPS), or when this network has no public IP (CGNAT). Nothing has to be allowed in for SSH.</p>
+        <ol>
+          <li><b>Open the UDP port</b> <b class="udp-num">51821</b> in the machine's firewall. On a VPS that is your provider's web firewall (security group), not only the machine's own.</li>
+          <li>Press <b>Show script</b> below. Under it, open <i>The whole script in one line</i> and press <b>Copy</b>.</li>
+          <li>Log in to the machine (the provider's web console works) and <b>paste</b> it into a shell. It checks first and stops if something is in the way. If you change the name or address afterwards, copy the script again.</li>
+          <li>Press <b>Connect</b>. It worked when the status shows <b>connected</b>.</li>
+        </ol>
+        <p class="muted small">No answer? Check that the UDP port is open and that the script finished without an error. Another WireGuard service on the machine (Pangolin uses 51820) needs a different port.</p>
       </div>
       <p class="hint muted small"></p>
+      <div class="card-actions">
+        <button class="b-script">Show script</button>
+        <button class="primary b-connect">Connect</button>
+      </div>
       <div class="script" hidden>
         <p class="muted small s-label"></p>
         <div class="dl" hidden>
@@ -96,6 +126,6 @@
     </div>
   </template>
 
-  <script src="/static/setup.js"></script>
+  <script src="/static/setup.js?v=4"></script>
 </body>
 </html>
