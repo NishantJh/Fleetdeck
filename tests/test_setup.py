@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import json
 import os
 import re
@@ -590,10 +591,11 @@ def test_script_download_link(configured):
     client, _ = configured
     m = {"kind": "host", "name": "pi4", "address": "192.168.1.30"}
     r = client.post("/api/setup/script", json=m).json()
-    assert r["download"].startswith("/install/")
+    assert r["download"]["path"].startswith("/install/")
     # The machine fetches it without a login; it runs the same script.
     anon = TestClient(client.app)
-    got = anon.get(r["download"])
+    got = anon.get(r["download"]["path"])
+    assert hashlib.sha256(got.content).hexdigest() == r["download"]["sha256"]
     assert got.status_code == 200 and base64.b64decode(got.text.split("S=")[1].split()[0]).decode() == r["source"]
     assert subprocess.run(["sh", "-n"], input=got.text, text=True).returncode == 0
     assert anon.get("/install/not-a-real-link").status_code == 404
