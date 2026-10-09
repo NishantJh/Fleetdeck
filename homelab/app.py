@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import secrets
+import socket
 from collections.abc import Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -21,6 +22,7 @@ from .jobs import JobManager
 from .models import CheckResult, Job, JobAction, Target
 from .notify import Notifier
 from .onboarding import Paths
+from .providers.proxmox import PROTECTED_NOTE
 from .scheduler import Scheduler
 from .security import LoginThrottle, make_guard
 from .setup_routes import add_setup_routes
@@ -36,6 +38,9 @@ class TargetView(BaseModel):
     target: Target
     check: CheckResult | None = None
     active_job: Job | None = None
+    hidden: bool = False
+    # Looks like the machine this dashboard runs on: the dashboard suggests hiding it.
+    runs_dashboard: bool = False
 
 
 class ActionRequest(BaseModel):
@@ -45,6 +50,19 @@ class ActionRequest(BaseModel):
     reboot_if_required: bool = False
     # Upgrade only: snapshot guests first.
     snapshot_first: bool = False
+
+
+class HideRequest(BaseModel):
+    target_ids: list[str] = Field(max_length=1000)
+    hidden: bool = True
+
+
+def _runs_dashboard(target: Target, check: CheckResult | None, hostname: str) -> bool:
+    """Whether the target is (or holds) this dashboard: found by the check, protected in the Proxmox
+    config for that reason, or named like the machine we run on (when not in a container)."""
+    if check is not None and check.runs_dashboard:
+        return True
+    return target.note == PROTECTED_NOTE or target.name.lower() == hostname
 
 
 def create_app(
@@ -128,11 +146,19 @@ def create_app(
         # Added last so it runs first: a request for a foreign Host never reaches the API.
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=cfg.allowed_hosts)
 
+    hostname = socket.gethostname().split(".")[0].lower()
+
     @app.get("/api/targets")
     async def list_targets(refresh: bool = False):
         await inventory.refresh(force=refresh)
         views = [
-            TargetView(target=t, check=jobs.checks.get(t.id), active_job=_light(jobs.active_job(t.id)))
+            TargetView(
+                target=t,
+                check=(check := jobs.checks.get(t.id)),
+                active_job=_light(jobs.active_job(t.id)),
+                hidden=t.id in jobs.hidden,
+                runs_dashboard=_runs_dashboard(t, check, hostname),
+            )
             for t, _ in inventory.targets.values()
         ]
         return {
@@ -157,6 +183,18 @@ def create_app(
             except ValueError as e:
                 rejected[tid] = str(e)
         return {"jobs": submitted, "rejected": rejected}
+
+    @app.post("/api/hidden")
+    async def set_hidden(req: HideRequest):
+        """Hide machines from the dashboard (and from scheduled checks), or show them again."""
+        ids = list(dict.fromkeys(req.target_ids))
+        if req.hidden:
+            await inventory.refresh()
+            unknown = [t for t in ids if t not in inventory.targets]
+            if unknown:
+                raise HTTPException(404, f"unknown target: {', '.join(unknown)}")
+        jobs.set_hidden(ids, req.hidden)
+        return {"hidden": sorted(jobs.hidden)}
 
     @app.get("/api/jobs")
     async def list_jobs(limit: int = Query(50, ge=1, le=500)):

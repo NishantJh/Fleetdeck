@@ -49,6 +49,9 @@ button.icon { padding: 7px 9px; line-height: 0; }
 button.icon svg { width: 16px; height: 16px; }
 .muted { color: var(--muted); }
 .error-banner { background: color-mix(in srgb, var(--bad) 10%, var(--panel)); border: 1px solid color-mix(in srgb, var(--bad) 40%, var(--border)); padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 12px; }
+.hint-banner { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border)); padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 12px; }
+button.ghost { background: transparent; border-color: transparent; color: var(--muted); }
+tr.is-hidden > td { opacity: .55; }
 
 /* Summary tiles */
 .summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 14px; margin-bottom: 20px; }

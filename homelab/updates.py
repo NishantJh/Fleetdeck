@@ -12,6 +12,7 @@ Check output on stdout looks like::
     <package manager's list of upgradable packages>
     __END__
     __REBOOT__=yes|no|unknown
+    __SELF__=yes            (only on the machine whose Docker/Podman runs this dashboard)
 
 Refresh logs go to stderr so they never pollute the package list.
 """
@@ -20,6 +21,7 @@ from __future__ import annotations
 
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 
 from .models import CheckResult, ExecResult, Package
 
@@ -63,6 +65,53 @@ elif command -v needs-restarting >/dev/null 2>&1; then
 else echo "__REBOOT__=no"; fi
 """
 
+_CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
+_SAFE_PATH = re.compile(r"^/[A-Za-z0-9/._-]+$")
+# Where Docker and Podman keep a container's files (root and rootless snap/Docker defaults).
+_CONTAINER_DIRS = (
+    "/var/lib/docker/containers/{}",
+    "/var/snap/docker/common/var-lib-docker/containers/{}",
+    "/var/lib/containers/storage/overlay-containers/{}",
+)
+
+
+def self_script(mountinfo: str) -> str:
+    """Shell that prints ``__SELF__=yes`` on the machine running this dashboard's container.
+
+    Docker and Podman bind-mount the container's /etc/hostname from a folder named after the
+    container's ID, so that ID is in our own mountinfo. Only the machine whose container engine runs
+    us has that folder. Empty when we don't run in such a container (or the ID can't be found).
+    """
+    dirs: list[str] = []
+    for line in mountinfo.splitlines():
+        fields = line.split()
+        if len(fields) < 5 or fields[4] != "/etc/hostname":
+            continue
+        root = fields[3]
+        m = _CONTAINER_ID.search(root)
+        if not m:
+            continue
+        cid = m[0]
+        # The source path as the engine's host sees it, when the engine's folder is on its root filesystem.
+        own = root[: m.end()]
+        if _SAFE_PATH.match(own):
+            dirs.append(own)
+        dirs += [d.format(cid) for d in _CONTAINER_DIRS]
+    if not dirs:
+        return ""
+    paths = " ".join(dict.fromkeys(dirs))
+    return f'for d in {paths}; do if [ -d "$d" ]; then echo __SELF__=yes; break; fi; done\n'
+
+
+def _own_mountinfo() -> str:
+    try:
+        return Path("/proc/self/mountinfo").read_text()
+    except OSError:
+        return ""
+
+
+SELF_SCRIPT = self_script(_own_mountinfo())
+
 CHECK_SCRIPT = (
     _PRELUDE
     + r"""
@@ -101,6 +150,7 @@ case "$PM" in
 esac
 """
     + REBOOT_SCRIPT
+    + SELF_SCRIPT
     + "exit $rc\n"
 )
 
@@ -269,6 +319,7 @@ def parse_check(result: ExecResult) -> CheckResult:
         reboot_required=_reboot(meta),
         checked_at=now,
         error=error,
+        runs_dashboard=meta.get("SELF") == "yes",
     )
 
 
