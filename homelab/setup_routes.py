@@ -184,8 +184,9 @@ def add_setup_routes(
         if tunnel is not None:
             result.log = [
                 (
-                    f"No SSH answer through the tunnel to {req.address}. Check that the script ran there, and that "
-                    f"UDP {req.udp_port} is open in its firewall and its provider's firewall."
+                    f"No SSH answer through the tunnel to {req.address}. Run the script shown now there again (a "
+                    f"tunnel not connected within a day gets new keys), and check that UDP {req.udp_port} is open "
+                    "in its firewall and its provider's firewall."
                 )
                 if line.startswith("can't reach SSH")
                 else line.replace(f"127.0.0.1:{tunnel.local_port}", req.address).replace("127.0.0.1", req.address)
