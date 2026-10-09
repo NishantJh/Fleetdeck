@@ -516,3 +516,30 @@ async def test_nodes_and_incus_host_run_their_own_backup_check(monkeypatch):
     ((host, _),) = await inc.discover()
     assert host.backup.storage == "/b"
     assert seen == [("pve", "/b", "10.0.0.5"), ("incus01", "/b", "10.0.0.5")]
+
+
+async def test_incus_backup_failure_retries_only_that_instance(monkeypatch):
+    from homelab.providers import incus as incus_mod
+
+    p = IncusProvider(IncusConfig(name="incus01", socket="/nonexistent"))
+    calls = []
+
+    def handler(req):
+        if req.url.path == "/1.0/instances":
+            insts = [{"name": n, "type": "container", "status": "Running"} for n in ("good", "bad")]
+            return httpx.Response(200, json={"metadata": insts})
+        calls.append(req.url.path)
+        if "/bad/" in req.url.path:
+            return httpx.Response(403, json={"error": "not authorized"})
+        return httpx.Response(200, json={"metadata": []})
+
+    p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://incus")
+    await p.discover()
+    assert len(calls) == 4
+    calls.clear()
+    await p.discover()
+    assert calls == []  # the failure is kept for a short while too
+    monkeypatch.setattr(incus_mod, "BACKUP_RETRY", 0.0)
+    found = {t.name: t.backup for t, _ in await p.discover()}
+    assert sorted(calls) == ["/1.0/instances/bad/backups", "/1.0/instances/bad/snapshots"]
+    assert found["good"].note is None and "could not list" in found["bad"].note

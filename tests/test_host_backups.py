@@ -28,6 +28,37 @@ def test_config_needs_a_place():
     with pytest.raises(ValueError):
         HostBackupConfig(type="restic")
     HostBackupConfig(type="borg", env_file="/root/borg.env")
+    for bad in ({"type": "path", "path": "backups"}, {"type": "path", "path": "-delete"}):
+        with pytest.raises(ValueError, match="full path"):
+            HostBackupConfig(**bad)
+    with pytest.raises(ValueError, match="full path"):
+        HostBackupConfig(type="restic", repository="/r", env_file="restic.env")
+
+
+async def test_symlinked_folder_is_followed(tmp_path):
+    (tmp_path / "real").mkdir()
+    (tmp_path / "real" / "a.tar").write_text("x")
+    (tmp_path / "link").symlink_to(tmp_path / "real")
+    info = await host_backups.read(HostBackupConfig(type="path", path=str(tmp_path / "link")), FakeExecutor(local=True))
+    assert info.count == 1 and not info.stale
+
+
+async def test_repository_checks_never_wait_for_input():
+    for cfg in (HostBackupConfig(type="restic", repository="/r"), HostBackupConfig(type="borg", repository="/r")):
+        s = host_backups.script(cfg)
+        assert s.startswith("exec </dev/null;") and "BORG_RELOCATED_REPO_ACCESS_IS_OK=no" in s
+    # A prompt reading stdin gets end-of-file at once instead of waiting.
+    r = await FakeExecutor(local=True).run(host_backups.NO_PROMPTS + "read answer; echo $?")
+    assert r.stdout.strip() == "1"
+
+
+async def test_timeout_says_so():
+    class Hangs:
+        async def run(self, script, on_line=None, timeout=0):
+            raise TimeoutError
+
+    info = await host_backups.read(HostBackupConfig(type="restic", repository="/r"), Hangs())
+    assert info.note == "could not read restic: no answer after 60 s"
 
 
 async def test_path_reads_newest_file(tmp_path):

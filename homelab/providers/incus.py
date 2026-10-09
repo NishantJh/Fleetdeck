@@ -19,6 +19,8 @@ log = logging.getLogger(__name__)
 
 # Snapshots and exports are listed per instance, so they're read less often than discovery.
 BACKUP_TTL = 300.0
+# An instance whose lists couldn't be read is tried again sooner, on its own.
+BACKUP_RETRY = 60.0
 
 
 class IncusProvider:
@@ -28,8 +30,8 @@ class IncusProvider:
         self.cfg = cfg
         self.name = cfg.name
         self.snapshots: dict[str, IncusSnapshots] = {}
-        self._backups: dict[str, BackupInfo] = {}
-        self._backups_at = 0.0
+        # Target id -> (when it was read, what was found), kept per instance.
+        self._backups: dict[str, tuple[float, BackupInfo]] = {}
         self.host_backups = HostBackups()
         if cfg.socket:
             self.client = httpx.AsyncClient(
@@ -93,15 +95,19 @@ class IncusProvider:
         return BackupInfo(last=last, storage=label, count=len(found), stale=stale, in_job=in_job, note=note)
 
     async def _backup_index(self, instances: list[tuple[dict, str, str]]) -> dict[str, BackupInfo]:
-        fresh = time.monotonic() - self._backups_at < BACKUP_TTL
-        if fresh and set(self._backups) == {tid for _, _, tid in instances}:
-            return self._backups
-        infos = await asyncio.gather(*(self._backup(inst, project) for inst, project, _ in instances))
-        index = {tid: info for (_, _, tid), info in zip(instances, infos, strict=True)}
-        # Don't keep failures: the next discovery tries again.
-        if not any(i.note for i in infos):
-            self._backups, self._backups_at = index, time.monotonic()
-        return index
+        now = time.monotonic()
+
+        def fresh(tid: str) -> bool:
+            at, info = self._backups.get(tid, (float("-inf"), None))
+            return now - at < (BACKUP_RETRY if info and info.note else BACKUP_TTL)
+
+        due = [(inst, project, tid) for inst, project, tid in instances if not fresh(tid)]
+        infos = await asyncio.gather(*(self._backup(inst, project) for inst, project, _ in due))
+        for (_, _, tid), info in zip(due, infos, strict=True):
+            self._backups[tid] = (now, info)
+        # Forget instances that are gone.
+        self._backups = {tid: self._backups[tid] for _, _, tid in instances}
+        return {tid: info for tid, (_, info) in self._backups.items()}
 
     async def discover(self) -> Discovered:
         found: Discovered = []

@@ -23,8 +23,8 @@ log = logging.getLogger(__name__)
 # Reading a repository can take a while, so the answer is kept this long.
 TTL = 300.0
 # How long discovery waits for a first answer before showing "checking" and carrying on.
-FIRST_WAIT = 10.0
-RUN_TIMEOUT = 180.0
+FIRST_WAIT = 3.0
+RUN_TIMEOUT = 60.0
 NOT_SET_UP = (
     "Not set up. Add a backup: entry to this machine's SSH settings in config.yaml: a folder your "
     "backups go to (type: path), or a restic or borg repository."
@@ -32,27 +32,34 @@ NOT_SET_UP = (
 NO_SSH = "Not set up. Add SSH settings for this machine, then a backup: entry under them in config.yaml."
 
 
+# Nothing may wait for an answer: stdin is closed, and borg is told to say "no" to its questions
+# (a moved or unencrypted repository) instead of asking.
+NO_PROMPTS = (
+    "exec </dev/null; export BORG_RELOCATED_REPO_ACCESS_IS_OK=no BORG_UNKNOWN_UNENCRYPTED_REPO_ACCESS_IS_OK=no; "
+)
+
+
 def _env(cfg: HostBackupConfig) -> str:
-    # `set -a` exports what the file sets; `. ./file` keeps a bare name from being looked up in $PATH.
+    # `set -a` exports what the file sets.
     if not cfg.env_file:
         return ""
-    f = shlex.quote(cfg.env_file if "/" in cfg.env_file else f"./{cfg.env_file}")
-    return f"set -a; . {f} || exit 3; set +a; "
+    return f"set -a; . {shlex.quote(cfg.env_file)} || exit 3; set +a; "
 
 
 def script(cfg: HostBackupConfig) -> str:
     if cfg.type == "path":
         p = shlex.quote(cfg.path or "")
         # Prints "<count> <newest mtime as epoch seconds>".
+        # -H: follow the path itself when it's a symlink (a linked NAS mount, latest.tar.gz -> ...).
         return (
             f"[ -e {p} ] || {{ echo 'not found' >&2; exit 3; }}; "
-            f"find {p} -type f -printf '%T@\\n' | sort -n | awk 'END {{ print NR, $0 }}'"
+            f"find -H {p} -type f -printf '%T@\\n' | sort -n | awk 'END {{ print NR, $0 }}'"
         )
     repo = shlex.quote(cfg.repository) if cfg.repository else None
     if cfg.type == "restic":
-        return _env(cfg) + f"restic {f'-r {repo} ' if repo else ''}snapshots --json --no-lock"
+        return NO_PROMPTS + _env(cfg) + f"restic {f'-r {repo} ' if repo else ''}snapshots --json --no-lock"
     # borg 1.x prints local times without an offset, so print the machine's offset first.
-    return _env(cfg) + f"date +%z; borg list --json --bypass-lock {repo or ''}".rstrip()
+    return NO_PROMPTS + _env(cfg) + f"date +%z; borg list --json --bypass-lock {repo or ''}".rstrip()
 
 
 _FRACTION = re.compile(r"(\.\d{6})\d+")
@@ -89,8 +96,10 @@ async def read(cfg: HostBackupConfig, ex: Executor) -> BackupInfo:
             err = (r.stderr.strip() or r.stdout.strip()).splitlines()
             return BackupInfo(note=f"could not read {where}: {err[-1] if err else f'exit code {r.rc}'}")
         last, count = parse(cfg, r.stdout)
+    except TimeoutError:
+        return BackupInfo(note=f"could not read {where}: no answer after {RUN_TIMEOUT:.0f} s")
     except Exception as e:  # noqa: BLE001 - backups are extra; never hide the machine
-        return BackupInfo(note=f"could not read {where}: {e}")
+        return BackupInfo(note=f"could not read {where}: {e or type(e).__name__}")
     stale = last is None or datetime.now(UTC) - last > timedelta(hours=cfg.max_age_hours)
     return BackupInfo(last=last, storage=where, count=count, stale=stale)
 
