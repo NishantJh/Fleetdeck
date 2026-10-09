@@ -82,6 +82,14 @@ def create_app(
             )
         elif setup_token:
             log.info("Setup page: http://<this machine>:%s/setup#token=%s", _published_port(), setup_token)
+        elif cfg.auth is not None:
+            # Setup is done: the one-time link is gone, so say where to go instead.
+            log.info(
+                "Setup is done: open http://<this machine>:%s and log in as %r. "
+                "Add or remove machines with its Setup button.",
+                _published_port(),
+                cfg.auth.username,
+            )
         if cfg.auth is None and not locked:
             log.warning("No auth configured: anyone who can reach this dashboard can update your machines.")
             if not cfg.allowed_hosts:
