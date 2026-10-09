@@ -219,6 +219,9 @@ _CHECKS = r"""# Homelab Manager: let the dashboard manage this machine ({name}).
 # It creates the user {user}, which logs in only with the dashboard's key and has passwordless sudo.
 # First it checks everything and changes nothing; then it lists the changes and makes them.
 set -eu
+# `su root -c` (not a login shell) keeps the user's PATH, which lacks the sbin folders on Debian.
+PATH=$PATH:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+export PATH
 U={user}
 KEY={key}
 SUDOERS=/etc/sudoers.d/homelab-manager
@@ -296,6 +299,8 @@ upgrade other packages). Run
 first), then run this again."
   else stop "sudo isn't installed. Install it ($(pkg_hint sudo)), then run this again."
   fi
+elif ! command -v visudo >/dev/null 2>&1; then
+  stop "sudo is installed but visudo isn't, so the sudo rule can't be checked."
 elif ! grep -Eqs '^[[:space:]]*[#@]includedir[[:space:]]+/etc/sudoers\.d/?[[:space:]]*$' /etc/sudoers; then
   stop "sudo here doesn't read /etc/sudoers.d (no includedir line in /etc/sudoers), so it can't be set up."
 fi
@@ -318,7 +323,9 @@ fi
 fi
 # No password at all, but not "locked": sshd refuses key logins to locked accounts on some systems.
 if command -v usermod >/dev/null 2>&1; then usermod -p '*' "$U"
-else cp -p /etc/shadow /etc/shadow.homelab-bak && sed -i "s/^$U:!*:/$U:*:/" /etc/shadow; fi
+else
+  cp -p /etc/shadow /etc/shadow.homelab-bak && sed -i "s/^$U:!*:/$U:*:/" /etc/shadow && rm -f /etc/shadow.homelab-bak
+fi
 H=$(getent passwd "$U" | cut -d: -f6)
 G=$(id -gn "$U")
 install -d -m 700 -o "$U" -g "$G" "$H/.ssh"
@@ -369,7 +376,9 @@ _WRAPPER = (
 
 def wrap(script: str) -> str:
     """One line to paste into a shell on the machine, as root or as a user with sudo, doas or su."""
-    return _WRAPPER + base64.b64encode(script.encode()).decode() + "\n"
+    # The leading space keeps it out of the history in bash (HISTCONTROL=ignorespace/ignoreboth, Debian's
+    # default) and zsh with histignorespace; it carries keys.
+    return " " + _WRAPPER + base64.b64encode(script.encode()).decode() + "\n"
 
 
 def bootstrap_source(machine: Machine, public_key: str, allow_from: list[str], tunnel: dict | None = None) -> str:

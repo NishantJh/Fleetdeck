@@ -101,3 +101,22 @@ def test_manager_runs_and_stops_a_process(tmp_path, monkeypatch):
     m.sync({})
     assert proc.poll() is not None and not m._procs
     assert oct(Path(tmp_path / "vps.wireproxy.conf").stat().st_mode & 0o777) == "0o600"
+
+
+def test_tunnels_typed_on_the_way_are_dropped(tmp_path):
+    for name in ("v", "vp", "vps"):
+        tun.pending(tmp_path, name, "203.0.113.7", 51821, 22, used=set())
+    assert sorted(p.stem for p in tun.tunnel_dir(tmp_path).iterdir()) == ["vps"]
+    # A connected machine's tunnel stays, whatever else is typed.
+    tun.pending(tmp_path, "other", "203.0.113.7", 51821, 22, used=set(), connected=frozenset({"vps"}))
+    assert sorted(p.stem for p in tun.tunnel_dir(tmp_path).iterdir()) == ["other", "vps"]
+
+
+def test_tunnel_checks_come_first(tmp_path):
+    data = tun.pending(tmp_path, "vps", "vps.example.com", 51821, 22, used=set())
+    m = ob.Machine(kind="host", name="vps", address="vps.example.com", tunnel=True)
+    script = ob.bootstrap_source(m, "ssh-ed25519 AAAA x", [], data)
+    changes = script.index("# --- changes ---")
+    for check in ("type wireguard", "listenaddress", "port_free udp"):
+        assert script.index(check) < changes
+    assert "|| tunnel_rollback" in script[changes:]

@@ -47,15 +47,27 @@ def tunnel_dir(keys: Path) -> Path:
     return keys / "tunnels"
 
 
-def pending(keys: Path, name: str, endpoint: str, udp_port: int, target_port: int, used: set[int]) -> dict:
+PENDING_TTL = 24 * 3600  # a tunnel whose script was shown but never connected
+
+
+def pending(
+    keys: Path,
+    name: str,
+    endpoint: str,
+    udp_port: int,
+    target_port: int,
+    used: set[int],
+    connected: frozenset[str] = frozenset(),
+) -> dict:
     """The tunnel for machine ``name``, created on first use and kept (same keys and subnet) after.
 
     It holds the VPS's private key too, because the setup script that configures the VPS is made
     from it (kept with the dashboard's other keys, removed with the machine). ``used`` are tunnel
-    numbers already taken by connected machines.
+    numbers already taken by connected machines, and ``connected`` their names.
     """
     from .onboarding import _write_private  # noqa: PLC0415 (avoids an import cycle)
 
+    _prune(keys, name, endpoint, connected)
     path = tunnel_dir(keys) / f"{name}.json"
     data = json.loads(path.read_text()) if path.exists() else None
     if data is None:
@@ -75,6 +87,22 @@ def pending(keys: Path, name: str, endpoint: str, udp_port: int, target_port: in
     data |= {"endpoint": endpoint, "port": udp_port, "target_port": target_port}
     _write_private(path, json.dumps(data, indent=2))
     return data
+
+
+def _prune(keys: Path, name: str, endpoint: str, connected: frozenset[str]) -> None:
+    """Drop tunnels never connected: those of names typed on the way to this one (same machine),
+    and old ones, so their keys don't linger and their numbers come free."""
+    for p in tunnel_dir(keys).glob("*.json"):
+        if p.stem == name or p.stem in connected:
+            continue
+        try:
+            stale = (
+                json.loads(p.read_text()).get("endpoint") == endpoint or time.time() - p.stat().st_mtime > PENDING_TTL
+            )
+        except (ValueError, OSError):
+            continue
+        if stale:
+            p.unlink(missing_ok=True)
 
 
 def _all_pending(keys: Path) -> list[dict]:
@@ -140,7 +168,12 @@ fi
 ours=no; if [ -f "$WG_CONF" ] && grep -q "Homelab Manager" "$WG_CONF"; then ours=yes; fi
 if [ -f "$WG_CONF" ] && [ "$ours" = no ]; then stop "$WG_CONF exists and isn't ours."; fi
 # Our own tunnel, already up from an earlier run, holds the port and subnet itself.
-if ! port_free udp {port} && [ "$(wg show {iface} listen-port 2>/dev/null || true)" != {port} ]; then
+held_by_us=no
+if [ "$(wg show {iface} listen-port 2>/dev/null || true)" = {port} ]; then held_by_us=yes
+elif [ "$ours" = yes ] && ip link show {iface} >/dev/null 2>&1 && grep -q "^ListenPort = {port}$" "$WG_CONF"; then
+  held_by_us=yes  # wireguard-go may report port 0
+fi
+if ! port_free udp {port} && [ "$held_by_us" = no ]; then
   p={port}; while ! port_free udp $p; do p=$((p + 1)); done
   stop "UDP port {port} is already in use here (Pangolin uses 51820). Set the tunnel port to $p on the
 setup page, then run the new script."
@@ -148,6 +181,20 @@ fi
 if ip -o addr 2>/dev/null | awk -v i={iface} '$2 != i && $4 ~ /^10\\.99\\.{n}\\./' | grep -q .; then
   stop "10.99.{n}.0/30 is already used on this machine; remove that address, then run this again."
 fi
+# The kernel needs WireGuard (OpenVZ and some LXC VPSes have none), unless wireguard-go is there.
+if ! ip link show {iface} >/dev/null 2>&1 && ! command -v wireguard-go >/dev/null 2>&1; then
+  if ip link add hm-wgtest type wireguard 2>/dev/null; then ip link del hm-wgtest
+  else stop "this machine's kernel has no WireGuard (common on OpenVZ or LXC VPSes), so the tunnel can't run here."
+  fi
+fi
+# sshd has to listen on the tunnel's address.
+la=$(v listenaddress)
+case " $la " in
+  "  "|*" 0.0.0.0:"*|*" [::]:"*|*" 10.99.{n}.1:"*) ;;
+  *) stop "sshd only listens on $la, so it can't be reached through the tunnel. Add ListenAddress 10.99.{n}.1
+to /etc/ssh/sshd_config, and since the tunnel comes up after sshd at boot, also set
+net.ipv4.ip_nonlocal_bind=1 in /etc/sysctl.d/ (or remove ListenAddress); then run this again." ;;
+esac
 """
 
 
@@ -162,7 +209,17 @@ def vps_plan(data: dict) -> str:
 def vps_changes(data: dict, ssh_port: int) -> str:
     n, port = data["index"], data["port"]
     iface = f"hm{n}"
-    return f"""(
+    return f"""# If the tunnel doesn't come up, take it out again, unless it was there before.
+tunnel_rollback() {{
+  if [ "$ours" = no ]; then
+    systemctl disable --now wg-quick@{iface} >/dev/null 2>&1 || true
+    wg-quick down {iface} >/dev/null 2>&1 || true
+    rm -f "$WG_CONF"
+  fi
+  echo "The tunnel didn't come up, so it was taken out again; nothing else was changed." >&2
+  exit 1
+}}
+(
 umask 077
 mkdir -p /etc/wireguard
 cat > "$WG_CONF" <<'WG'
@@ -178,11 +235,11 @@ AllowedIPs = 10.99.{n}.2/32
 WG
 )
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-  systemctl enable wg-quick@{iface} >/dev/null 2>&1
-  systemctl restart wg-quick@{iface}
+  systemctl enable wg-quick@{iface} >/dev/null 2>&1 || tunnel_rollback
+  systemctl restart wg-quick@{iface} || tunnel_rollback
 else
   wg-quick down {iface} >/dev/null 2>&1 || true
-  wg-quick up {iface}
+  wg-quick up {iface} || tunnel_rollback
   echo "NOTE: no systemd; bring the tunnel up at boot yourself (wg-quick up {iface})."
 fi
 if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active"; then
@@ -246,17 +303,20 @@ class TunnelManager:
 
             path = self.workdir / f"{name}.wireproxy.conf"
             _write_private(path, conf)
-            proc = subprocess.Popen(  # noqa: S603 - fixed binary, our own config file
-                [WIREPROXY, "--silent", "--config", str(path)],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-            )
+            # Its errors go to a file: a pipe nobody reads would fill up and block it.
+            errlog = self.workdir / f"{name}.wireproxy.log"
+            with open(errlog, "wb") as err:
+                proc = subprocess.Popen(  # noqa: S603 - fixed binary, our own config file
+                    [WIREPROXY, "--silent", "--config", str(path)],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=err,
+                )
             self._procs[name] = (conf, proc)
         deadline = time.monotonic() + wait
         while time.monotonic() < deadline:
             if proc.poll() is not None:
-                err = (proc.stderr.read() or b"").decode(errors="replace").strip() if proc.stderr else ""
+                err = errlog.read_text(errors="replace").strip()[-500:] if errlog.exists() else ""
                 raise RuntimeError(f"tunnel {name} stopped: {err or f'exit code {proc.returncode}'}")
             if not local_port_free(t.local_port):
                 return

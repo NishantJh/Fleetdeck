@@ -59,10 +59,13 @@ def add_setup_routes(
 
     def _pending_tunnel(req: ob.Machine) -> dict:
         try:
-            used = ob.used_tunnels(ob.read_raw(paths))
+            data = ob.read_raw(paths)
         except ValueError:
-            used = set()
-        return tunnels.pending(paths.keys, req.name, req.address, req.udp_port, req.port, used)
+            data = {}
+        connected = frozenset(h.get("name", "") for h in data.get("hosts") or [] if h.get("tunnel"))
+        return tunnels.pending(
+            paths.keys, req.name, req.address, req.udp_port, req.port, ob.used_tunnels(data), connected
+        )
 
     def _tokens_in_use(name: str) -> frozenset[str]:
         """Proxmox token names of this machine that the running dashboard or the saved config use."""

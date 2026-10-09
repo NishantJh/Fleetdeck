@@ -113,10 +113,13 @@ function addCard(m = { kind: "host", name: "", address: "", port: 22 }, saved = 
     $(".hint", card).textContent = HINTS[$(".f-kind", card).value] + (tunnel ? TUNNEL_HINT : "");
   };
   hint();
+  let regen;
   card.addEventListener("input", () => {
     hint();
     saveDrafts();
-    if (!$(".script", card).hidden) showScript(card);
+    // Once typing pauses: a tunnel's script carries keys made for that name.
+    clearTimeout(regen);
+    if (!$(".script", card).hidden) regen = setTimeout(() => showScript(card), 700);
   });
   $(".b-script", card).onclick = () => ($(".script", card).hidden ? showScript(card) : ($(".script", card).hidden = true));
   $(".b-copy", card).onclick = (e) => copy($(".s-code", card).textContent, e.currentTarget);
@@ -133,7 +136,7 @@ async function showScript(card) {
   const m = machineOf(card);
   const pre = $(".s-code", card);
   $(".script", card).hidden = false;
-  $(".s-label", card).textContent = `Paste this into a shell on ${m.name || m.address || "the machine"} (any shell; it asks for sudo, doas or the root password if needed). It checks first and stops before changing anything if something's in the way:`;
+  $(".s-label", card).textContent = `Paste this into a shell on ${m.name || m.address || "the machine"} (any shell; it asks for sudo, doas or the root password if needed). It checks first and stops before changing anything if something's in the way. A web console (noVNC, IPMI) may not paste a line this long: use SSH or, for a container, pct enter.`;
   $(".s-source", card).textContent = "";
   if (!m.name || !m.address) {
     pre.textContent = "Fill in a name and an address first.";
