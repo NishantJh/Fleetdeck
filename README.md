@@ -156,6 +156,15 @@ and the check history. Back it up and you have backed up the whole install. Ever
 readable only by the dashboard; edit the config on the setup page. Nothing else on the host (the
 compose file, an `.env`) is touched, so your container manager can still edit those.
 
+**Backups from the dashboard:** the **Backup** button downloads one file with the config, the
+login, every key and token, and the job history, encrypted with a passphrase you choose
+(AES-256-GCM, key from scrypt). Keep it off this server; without the passphrase nobody, including
+you, can open it. To restore, pick the file in the same dialog: it first shows what is in it, then
+replaces the current files and restarts once you confirm. What was there before is kept as an
+encrypted file in `/data/backups/`, with the same passphrase. Key files the backup doesn't have
+are left in place. Files outside `/data` (say a key file the config points at elsewhere) aren't
+in it.
+
 The container starts as root only long enough to sort out ownership, then switches user and keeps
 no Linux capabilities (that is what the `cap_add` lines in the compose file are for):
 

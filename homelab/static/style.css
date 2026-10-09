@@ -96,6 +96,13 @@ input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px;
 .log-title { font-weight: 600; }
 .check-row { display: flex; gap: 8px; align-items: center; margin: 10px 0; }
 .check-row[hidden] { display: none; }
+#backup-dialog .dlg-field { margin: 10px 0; }
+#backup-dialog hr { border: 0; border-top: 1px solid var(--border); margin: 18px 0 4px; }
+#backup-dialog .check-row { align-items: flex-start; flex-direction: row; }
+#backup-dialog [hidden] { display: none; }
+.bad-text { color: var(--bad); }
+button.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+button.danger:hover:not(:disabled) { background: var(--bad); filter: brightness(1.1); }
 pre#log { margin: 0; background: #0a0e17; color: #cbd5e1; padding: 12px; border-radius: 10px; height: 320px; overflow: auto; font: 12px/1.5 var(--mono); white-space: pre-wrap; border: 1px solid var(--border); }
 dialog { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); color: var(--text); max-width: 480px; width: calc(100% - 32px); box-shadow: 0 20px 60px rgba(0, 0, 0, .35); }
 dialog::backdrop { background: rgba(8, 12, 24, .55); backdrop-filter: blur(3px); }

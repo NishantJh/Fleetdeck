@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from .backup import add_backup_routes
 from .config import AppConfig, config_path, load_config
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
@@ -217,6 +218,7 @@ def create_app(
             raise HTTPException(400, str(e)) from None
 
     add_setup_routes(app, cfg, paths, restart, setup_token is not None)
+    add_backup_routes(app, cfg, paths, store, restart)
 
     @app.get("/")
     async def index():
