@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from homelab.app import create_app
-from homelab.config import AppConfig
+from homelab.config import AppConfig, AuthConfig
 from homelab.models import ExecResult
 from homelab.updates import CHECK_SCRIPT, UPGRADE_SCRIPT
 
@@ -45,7 +45,6 @@ def test_demo_check_then_upgrade():
 
 
 def test_basic_auth():
-    from homelab.config import AuthConfig
 
     with TestClient(create_app(AppConfig(demo=True, auth=AuthConfig(password="s3cret")))) as client:
         assert client.get("/api/targets").status_code == 401
@@ -132,3 +131,12 @@ def test_check_script_uses_documented_apk_and_apt_lock_options():
     for script in (CHECK_SCRIPT, UPGRADE_SCRIPT):
         assert "DPkg::Lock::Timeout" in script
     assert "yum) yum -y upgrade ;;" in UPGRADE_SCRIPT  # yum has no --refresh
+
+
+def test_start_log_says_where_to_go_once_setup_is_done(caplog):
+    # The one-time setup link is gone once a login exists; the log still says what to open.
+    cfg = AppConfig(demo=True, auth=AuthConfig(username="nishant", password="s3cret"))
+    with caplog.at_level("INFO", logger="homelab"), TestClient(create_app(cfg)):
+        pass
+    assert "Setup is done: open http://<this machine>:" in caplog.text and "'nishant'" in caplog.text
+    assert "setup#token" not in caplog.text

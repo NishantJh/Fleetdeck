@@ -69,6 +69,9 @@ Installing takes one compose file and a web page:
 2. The container's log prints a one-time link (`docker logs homelab-manager`, or the logs view
    of your container manager):
    `http://<this machine>:8080/setup#token=...`. Open it and create the admin login.
+   The link is only printed until the login exists. After that the log says
+   `Setup is done: open http://<this machine>:8080 and log in`, and the dashboard's Setup button
+   takes you back to the setup page.
 3. Add each machine: pick its type (Proxmox VE, Incus, or a Linux host such as a Raspberry Pi or
    a VPS), give it a name, and enter its IP address and SSH port.
 4. The page shows a short command for each machine, which downloads its script from the dashboard
