@@ -138,12 +138,14 @@ def cross_site(request: Request) -> bool:
 SETUP_PATHS = ("/setup", "/static/")
 
 
-def make_guard(auth: AuthConfig | None, throttle: LoginThrottle, setup_token: str | None = None):
-    """``setup_token`` puts the app in first-run mode: only the setup page works, and its API only
-    with the one-time token printed in the logs, until it has created an admin login."""
+def make_guard(auth: AuthConfig | None, throttle: LoginThrottle, setup_token: str | None = None, locked: bool = True):
+    """``setup_token`` (when there is no login) makes the setup API need the one-time token printed in
+    the logs. ``locked`` is first-run mode: nothing but the setup page works until a login exists."""
     # A password hash is deliberately slow to check, and the browser sends the login with every
     # request; remember the headers that were right (by digest) instead of re-hashing each time.
     good: set[str] = set()
+    # Each check takes 32 MB (scrypt); don't let a burst of wrong passwords take the memory.
+    hashing = asyncio.Semaphore(2)
 
     async def auth_ok(header: str) -> bool:
         if not auth.password_hash:
@@ -151,7 +153,9 @@ def make_guard(auth: AuthConfig | None, throttle: LoginThrottle, setup_token: st
         digest = hashlib.sha256(header.encode()).hexdigest()
         if digest in good:
             return True
-        if not await asyncio.to_thread(basic_auth_ok, header, auth):
+        async with hashing:
+            ok = await asyncio.to_thread(basic_auth_ok, header, auth)
+        if not ok:
             return False
         if len(good) > 64:
             good.clear()
@@ -169,10 +173,6 @@ def make_guard(auth: AuthConfig | None, throttle: LoginThrottle, setup_token: st
             return Response("cross-site request refused", status_code=403)
         if setup_token is not None:
             path = request.url.path
-            if path == "/":
-                return RedirectResponse("/setup")
-            if path.startswith(SETUP_PATHS):
-                return await call_next(request)
             if path.startswith("/api/setup"):
                 if secrets.compare_digest(request.headers.get("x-setup-token", ""), setup_token):
                     return await call_next(request)
@@ -180,7 +180,12 @@ def make_guard(auth: AuthConfig | None, throttle: LoginThrottle, setup_token: st
                     "setup link missing or out of date: open the link printed in the container logs",
                     status_code=403,
                 )
-            return Response("finish setup first: open /setup", status_code=403)
+            if locked:
+                if path == "/":
+                    return RedirectResponse("/setup")
+                if path.startswith(SETUP_PATHS):
+                    return await call_next(request)
+                return Response("finish setup first: open /setup", status_code=403)
         if auth is not None:
             ip = request.client.host if request.client else "?"
             if (left := throttle.blocked_for(ip)) > 0:

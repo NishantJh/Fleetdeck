@@ -115,11 +115,23 @@ class HostConfig(SSHConfig):
     name: str
 
 
+def check_username(v: str) -> str:
+    # Basic auth splits user and password at the first ":", so such a name could never log in.
+    if ":" in v or any(ord(c) < 32 or ord(c) == 127 for c in v):
+        raise ValueError("the username can't contain ':' or control characters")
+    return v
+
+
 class AuthConfig(BaseModel):
     username: str = Field("admin", min_length=1)
     # Either the password itself (e.g. ${HOMELAB_PASSWORD}), or a hash of it as the setup page writes it.
     password: str | None = Field(None, min_length=1)
     password_hash: str | None = None
+
+    @field_validator("username")
+    @classmethod
+    def _username(cls, v: str) -> str:
+        return check_username(v)
 
     @model_validator(mode="after")
     def _one_password(self) -> AuthConfig:

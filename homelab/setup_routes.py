@@ -9,10 +9,10 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from . import onboarding as ob
-from .config import AppConfig
+from .config import AppConfig, check_username
 from .security import hash_password
 
 log = logging.getLogger(__name__)
@@ -23,13 +23,19 @@ class AdminRequest(BaseModel):
     username: str = Field("admin", min_length=1, max_length=64)
     password: str = Field(min_length=10, max_length=1024)
 
+    @field_validator("username")
+    @classmethod
+    def _username(cls, v: str) -> str:
+        return check_username(v)
+
 
 class ScriptRequest(ob.Machine):
     allow_from: str = ""
 
 
 class ConnectRequest(ob.Machine):
-    replace_host_key: bool = False
+    # The host key fingerprint the user confirmed (first contact, or a changed key).
+    trust_fingerprint: str | None = None
 
 
 class ConfigText(BaseModel):
@@ -130,12 +136,12 @@ def add_setup_routes(
         editable()
         await asyncio.to_thread(ob.ensure_identity, paths)
         machine = ob.Machine(kind=req.kind, name=req.name, address=req.address, port=req.port)
-        result, entry = await ob.connect(machine, paths, req.replace_host_key)
+        result, entry = await ob.connect(machine, paths, req.trust_fingerprint)
         if entry is not None:
             async with lock:
-                data = ob.upsert(ob.read_raw(paths), machine.kind, entry)
-                data.setdefault("known_hosts", str(paths.known_hosts))
                 try:
+                    data = ob.upsert(ob.read_raw(paths), machine.kind, entry)
+                    data.setdefault("known_hosts", str(paths.known_hosts))
                     ob.write_raw(paths, data)
                 except (ValueError, ValidationError) as e:
                     raise _error(e) from None
@@ -145,6 +151,7 @@ def add_setup_routes(
             "log": result.log,
             "fingerprint": result.fingerprint,
             "host_key_changed": result.host_key_changed,
+            "needs_confirm": result.needs_confirm,
         }
 
     @app.delete("/api/setup/machines/{name}")
@@ -153,14 +160,27 @@ def add_setup_routes(
             raise HTTPException(409, "create the admin login first")
         editable()
         async with lock:
-            data = ob.read_raw(paths)
-            if not ob.remove(data, name):
-                raise HTTPException(404, "no such machine")
             try:
+                data = ob.read_raw(paths)
+                entry = ob.remove(data, name)
+                if entry is None:
+                    raise HTTPException(404, "no such machine")
                 ob.write_raw(paths, data)
             except (ValueError, ValidationError) as e:
                 raise _error(e) from None
+            # Forget its host key too (unless another entry uses the same address), so re-adding a
+            # reinstalled machine starts from a fresh confirmation.
+            ssh = entry if "host" in entry else entry.get("ssh") or {}
+            if ssh.get("host"):
+                endpoint = (str(ssh["host"]), int(ssh.get("port") or 22))
+                if endpoint not in ob.ssh_endpoints(data):
+                    ob.forget_host_key(paths, *endpoint)
         changed()
+        log.info(
+            "Removed %s. Its homelab user%s stay on the machine until removed there.",
+            name,
+            ", API token" if "token_id" in entry else ", certificate trust" if "client_cert" in entry else "",
+        )
         return {"removed": name}
 
     @app.get("/api/setup/config")

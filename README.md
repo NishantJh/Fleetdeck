@@ -82,13 +82,17 @@ is harmless.
 
 **What Connect does:**
 
-* It records the machine's SSH host key the first time it sees it, and shows the fingerprint.
-  Compare it with what the script printed. The key is pinned from then on, and if it ever changes
-  the dashboard refuses to connect until you trust the new one.
+* The first time, it only shows the machine's SSH host key fingerprint. Compare it with what the
+  script printed and press *It matches, connect*; nothing is pinned or changed on the machine
+  before that. The key is pinned from then on, and if it ever changes the dashboard refuses to
+  connect until you confirm the new one.
 * It checks that it can log in and that sudo works.
 * **Proxmox:** it creates a `homelab@pve` user, a `HomelabManager` role with only what the
-  dashboard uses (PVE 8 and 9 alike), and an API token, and pins the API's TLS certificate.
-* **Incus:** it turns on the HTTPS API (port 8443) if it's off, trusts the dashboard's own client
+  dashboard uses (PVE 8 and 9 alike), and an API token of its own for each node you add, and pins
+  the API's TLS certificate. If the node serves a custom (e.g. ACME) certificate, that exact one is
+  pinned, so press *Reconnect* after it renews.
+* **Incus:** it turns on the HTTPS API (port 8443) if it's off, listening only on the address
+  you entered when that is an IP (on every interface for a host name), trusts the dashboard's own client
   certificate (restricted to the `default` project), and pins the server certificate.
 
 The same page (the **Setup** button on the dashboard) adds and removes machines later. It also
@@ -128,7 +132,14 @@ add it as a registry in your container manager) with your GitHub username and a 
 An install that mounts `./config:/config:ro` keeps working unchanged: the dashboard uses
 `/config/config.yaml` when `/data` has no config, and the setup page shows it as read-only. To
 switch, remove the `config` volume and `user:` from the compose file, deploy, and set the
-machines up again from the setup page (the old `homelab@pve` token is replaced).
+machines up again from the setup page.
+
+The compose file now uses a named volume (`homelab-data`). If yours mounts `./data:/data`, keep
+that line instead, or the check history in it is left behind.
+
+Removing a machine on the setup page leaves the machine itself as it is: delete the `homelab`
+user and `/etc/sudoers.d/homelab-manager` there, and on Proxmox the `homelab@pve` token (or on
+Incus the `homelab-manager` trust entry), if you no longer want them.
 
 ## Configuring by hand
 

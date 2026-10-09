@@ -54,13 +54,15 @@ def create_app(
     cfg = cfg or load_config(config_file)
     paths = Paths(Path(config_file or config_path()).absolute())
     # No login yet (a fresh install): only the setup page works, and only with a one-time link from
-    # the logs, until it has created one. A demo without real machines has nothing to protect.
+    # the logs, until it has created one. A demo without real machines stays usable, but its setup
+    # API still needs the link: it can SSH anywhere and write the config.
     setup_token = None
-    if cfg.auth is None and not cfg.allow_no_auth and (cfg.has_real_targets or not cfg.demo):
+    if cfg.auth is None and not cfg.allow_no_auth:
         setup_token = secrets.token_urlsafe(24)
-    if setup_token and cfg.has_real_targets:
+    locked = setup_token is not None and (cfg.has_real_targets or not cfg.demo)
+    if locked and cfg.has_real_targets:
         log.warning("No `auth:` in the config: the dashboard stays locked until an admin login is set up.")
-    inventory = inventory or Inventory(build_providers(cfg) if not setup_token else [])
+    inventory = inventory or Inventory(build_providers(cfg) if not locked else [])
     store = _open_store(cfg.state_file)
     jobs = JobManager(inventory, cfg.max_parallel, store, cfg.snapshot_keep)
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
@@ -68,14 +70,16 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        if setup_token:
+        if locked:
             log.warning(
                 "First run: open http://<this machine>:%s/setup#token=%s to create the admin login and add "
                 "machines. The link changes every time the container starts.",
                 os.environ.get("PORT", "8080"),
                 setup_token,
             )
-        elif cfg.auth is None:
+        elif setup_token:
+            log.info("Setup page: http://<this machine>:%s/setup#token=%s", os.environ.get("PORT", "8080"), setup_token)
+        if cfg.auth is None and not locked:
             log.warning("No auth configured: anyone who can reach this dashboard can update your machines.")
             if not cfg.allowed_hosts:
                 log.warning("allowed_hosts is not set: without auth, web pages can reach the API via DNS rebinding.")
@@ -100,7 +104,7 @@ def create_app(
     app.state.scheduler = scheduler
     app.state.setup_token = setup_token
 
-    app.middleware("http")(make_guard(cfg.auth, LoginThrottle(), setup_token))
+    app.middleware("http")(make_guard(cfg.auth, LoginThrottle(), setup_token, locked))
     if cfg.allowed_hosts:
         # Added last so it runs first: a request for a foreign Host never reaches the API.
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=cfg.allowed_hosts)

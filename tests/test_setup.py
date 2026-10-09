@@ -103,6 +103,15 @@ def test_script(configured):
         assert client.post("/api/setup/script", json={**m, **bad}).status_code == 422
 
 
+def _connect(client, body):
+    """Connect, confirming the host key fingerprint the first time, as the page does."""
+    r = client.post("/api/setup/connect", json=body).json()
+    if r.get("needs_confirm"):
+        assert not r["ok"] and r["fingerprint"] in r["log"][-1]
+        r = client.post("/api/setup/connect", json={**body, "trust_fingerprint": r["fingerprint"]}).json()
+    return r
+
+
 def _fake_machine(monkeypatch, host_key, outputs):
     async def fetch(host, port):
         return host_key
@@ -127,7 +136,14 @@ def test_connect_proxmox_pins_and_writes_config(configured, monkeypatch):
     client, tmp_path = configured
     key = asyncssh.generate_private_key("ssh-ed25519")
     _fake_machine(monkeypatch, key, {"id -un": "root\n", "pveum": PVE_OUT})
-    r = client.post("/api/setup/connect", json={"kind": "proxmox", "name": "pve", "address": "192.168.1.10"}).json()
+    body = {"kind": "proxmox", "name": "pve", "address": "192.168.1.10"}
+    r = client.post("/api/setup/connect", json=body).json()
+    # Nothing is pinned or provisioned before the fingerprint is confirmed.
+    assert r["needs_confirm"] and not r["ok"] and not (tmp_path / "keys" / "known_hosts").exists()
+    assert not client.get("/api/setup").json()["machines"]
+    wrong = client.post("/api/setup/connect", json={**body, "trust_fingerprint": "SHA256:other"}).json()
+    assert wrong["needs_confirm"] and not wrong["ok"]
+    r = _connect(client, body)
     assert r["ok"], r
     assert r["fingerprint"] == key.get_fingerprint("sha256")
     assert (tmp_path / "keys" / "known_hosts").read_text().startswith("192.168.1.10 ssh-ed25519 ")
@@ -146,10 +162,9 @@ def test_connect_proxmox_pins_and_writes_config(configured, monkeypatch):
     # A different host key next time is refused unless trusted on purpose.
     other = asyncssh.generate_private_key("ssh-ed25519")
     _fake_machine(monkeypatch, other, {"id -un": "root\n", "pveum": PVE_OUT})
-    body = {"kind": "proxmox", "name": "pve", "address": "192.168.1.10"}
     r = client.post("/api/setup/connect", json=body).json()
-    assert not r["ok"] and r["host_key_changed"]
-    assert client.post("/api/setup/connect", json={**body, "replace_host_key": True}).json()["ok"]
+    assert not r["ok"] and r["host_key_changed"] and not r["needs_confirm"]
+    assert client.post("/api/setup/connect", json={**body, "trust_fingerprint": r["fingerprint"]}).json()["ok"]
     lines = (tmp_path / "keys" / "known_hosts").read_text().splitlines()
     assert len(lines) == 1 and other.export_public_key().decode().split()[1] in lines[0]
 
@@ -164,10 +179,10 @@ def test_several_machines_of_each_type(configured, monkeypatch):
     )
     for i in (1, 2, 3):
         body = {"kind": "proxmox", "name": f"pve{i}", "address": f"10.0.1.{i}"}
-        assert client.post("/api/setup/connect", json=body).json()["ok"]
+        assert _connect(client, body)["ok"]
     for i in (1, 2):
         body = {"kind": "incus", "name": f"incus{i}", "address": f"10.0.2.{i}"}
-        assert client.post("/api/setup/connect", json=body).json()["ok"]
+        assert _connect(client, body)["ok"]
     cfg = load_config(str(tmp_path / "config.yaml"))
     # Each node gets its own token, so nodes of one cluster don't revoke each other's.
     assert [p.token_id for p in cfg.proxmox] == [f"homelab@pve!hm-pve{i}" for i in (1, 2, 3)]
@@ -183,12 +198,10 @@ def test_connect_incus_and_host(configured, monkeypatch):
         asyncssh.generate_private_key("ssh-ed25519"),
         {"id -un": "root\n", "incus config": "__ADDR__=[::]:8444\n__FP__=" + "cd" * 32 + "\n"},
     )
-    r = client.post("/api/setup/connect", json={"kind": "incus", "name": "incus01", "address": "192.168.1.20"})
-    assert r.json()["ok"], r.json()
-    r = client.post(
-        "/api/setup/connect", json={"kind": "host", "name": "vps", "address": "vps.example.com", "port": 2222}
-    )
-    assert r.json()["ok"]
+    r = _connect(client, {"kind": "incus", "name": "incus01", "address": "192.168.1.20"})
+    assert r["ok"], r
+    r = _connect(client, {"kind": "host", "name": "vps", "address": "vps.example.com", "port": 2222})
+    assert r["ok"]
     assert "[vps.example.com]:2222 ssh-ed25519" in (tmp_path / "keys" / "known_hosts").read_text()
     cfg = load_config(str(tmp_path / "config.yaml"))
     inc = cfg.incus[0]
@@ -198,7 +211,7 @@ def test_connect_incus_and_host(configured, monkeypatch):
     assert (vps.host, vps.port, vps.user, vps.sudo) == ("vps.example.com", 2222, "homelab", True)
 
     # Re-adding a name under another type moves it rather than duplicating it.
-    client.post("/api/setup/connect", json={"kind": "host", "name": "incus01", "address": "192.168.1.20"})
+    _connect(client, {"kind": "host", "name": "incus01", "address": "192.168.1.20"})
     cfg = load_config(str(tmp_path / "config.yaml"))
     assert not cfg.incus and {h.name for h in cfg.hosts} == {"vps", "incus01"}
 
@@ -216,17 +229,17 @@ def test_connect_failures_explain_what_to_do(configured, monkeypatch):
 
     _fake_machine(monkeypatch, key, {})
     monkeypatch.setattr(ob.SSHExecutor, "run", denied)
-    r = client.post("/api/setup/connect", json={"kind": "host", "name": "pi", "address": "10.0.0.2"}).json()
+    r = _connect(client, {"kind": "host", "name": "pi", "address": "10.0.0.2"})
     assert not r["ok"] and "Run the setup script" in r["log"][-1]
 
     _fake_machine(monkeypatch, key, {"id -un": "homelab\n"})
-    r = client.post("/api/setup/connect", json={"kind": "host", "name": "pi", "address": "10.0.0.2"}).json()
+    r = _connect(client, {"kind": "host", "name": "pi", "address": "10.0.0.2"})
     assert not r["ok"] and "sudo" in r["log"][-1]
 
     _fake_machine(
         monkeypatch, key, {"id -un": "root\n", "pveum": ExecResult(rc=127, stdout="", stderr="pveum: not found")}
     )
-    r = client.post("/api/setup/connect", json={"kind": "proxmox", "name": "pve", "address": "10.0.0.3"}).json()
+    r = _connect(client, {"kind": "proxmox", "name": "pve", "address": "10.0.0.3"})
     assert not r["ok"] and "pveum: not found" in r["log"][-1]
     assert load_config(str(tmp_path / "config.yaml")).hosts == []  # nothing saved on failure
 
@@ -274,7 +287,8 @@ def test_read_only_legacy_config(tmp_path):
 
 
 def test_parse_outputs():
-    assert ob.parse_pve(PVE_OUT) == ("secret-uuid", "ab" * 32)
+    assert ob.parse_pve(PVE_OUT) == ("secret-uuid", "ab" * 32, False)
+    assert ob.parse_pve("__CUSTOM__=1\n" + PVE_OUT)[2]
     with pytest.raises(ob.SetupError, match="API token"):
         ob.parse_pve("__FP__=x\n")
     assert ob.parse_incus(f"__ADDR__=:8443\n__FP__={'ef' * 32}\n") == (8443, "ef" * 32)
@@ -332,3 +346,63 @@ def test_written_config_round_trips(tmp_path):
     assert oct((tmp_path / "config.yaml").stat().st_mode & 0o777) == "0o600"
     assert isinstance(load_config(str(tmp_path / "config.yaml")), AppConfig)
     json.dumps(ob.machines(load_config(str(tmp_path / "config.yaml"))))
+
+
+def test_review_fixes(configured, monkeypatch):
+    client, tmp_path = configured
+    # A ":" in the username could never log in with basic auth.
+    with pytest.raises(ValueError, match="':'"):
+        from homelab.config import AuthConfig
+
+        AuthConfig(username="a:b", password="x")
+    # The Incus API is opened only on the address the dashboard uses, when that is an IP.
+    assert ob.incus_listen("10.0.0.5") == "10.0.0.5:8443"
+    assert ob.incus_listen("fd00::5") == "[fd00::5]:8443"
+    assert ob.incus_listen("incus.lan") == ":8443"
+    assert "core.https_address 10.0.0.5:8443" in ob.incus_script("pem", "fp", ob.incus_listen("10.0.0.5"))
+
+    # Removing a machine forgets its pinned host key, unless another entry still uses that address.
+    _fake_machine(monkeypatch, asyncssh.generate_private_key("ssh-ed25519"), {"id -un": "root\n"})
+    for name in ("a", "b"):
+        assert _connect(client, {"kind": "host", "name": name, "address": "10.0.0.9"})["ok"]
+    kh = tmp_path / "keys" / "known_hosts"
+    client.delete("/api/setup/machines/a")
+    assert "10.0.0.9 " in kh.read_text()
+    client.delete("/api/setup/machines/b")
+    assert "10.0.0.9 " not in kh.read_text()
+
+    # A hand-broken config is reported, not a server error.
+    (tmp_path / "config.yaml").write_text("hosts: [\n")
+    assert client.get("/api/setup").status_code == 200
+    assert client.delete("/api/setup/machines/x").status_code == 400
+    body = {"kind": "host", "name": "c", "address": "10.0.0.9"}
+    fp = client.post("/api/setup/connect", json=body).json()["fingerprint"]
+    r = client.post("/api/setup/connect", json={**body, "trust_fingerprint": fp})
+    assert r.status_code == 400 and "not valid YAML" in r.json()["detail"]
+
+
+def test_identity_is_created_once_under_concurrency(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+
+    paths = ob.Paths(tmp_path / "config.yaml")
+    with ThreadPoolExecutor(8) as pool:
+        keys = set(pool.map(lambda _: ob.ensure_identity(paths), range(16)))
+    assert len(keys) == 1
+    from cryptography import x509
+    from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
+    cert = x509.load_pem_x509_certificate(paths.incus_cert.read_bytes())
+    key = load_pem_private_key(paths.incus_key.read_bytes(), None)
+    assert cert.public_key().public_numbers() == key.public_key().public_numbers()
+    assert sorted(p.name for p in paths.keys.iterdir()) == [
+        "id_ed25519",
+        "id_ed25519.pub",
+        "incus-client.crt",
+        "incus-client.key",
+    ]
+
+
+def test_bootstrap_refuses_someone_elses_user():
+    script = ob.bootstrap_script(ob.Machine(kind="host", name="pi", address="10.0.0.2"), "ssh-ed25519 AAAA x", [])
+    assert "wasn't made by this script" in script
+    assert script.index("wasn't made by this script") < script.index("usermod -p")

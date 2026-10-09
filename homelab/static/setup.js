@@ -107,8 +107,8 @@ function addCard(m = { kind: "host", name: "", address: "", port: 22 }, saved = 
   });
   $(".b-script", card).onclick = () => ($(".script", card).hidden ? showScript(card) : ($(".script", card).hidden = true));
   $(".b-copy", card).onclick = (e) => copy($(".script pre", card).textContent, e.currentTarget);
-  $(".b-connect", card).onclick = () => connect(card, false);
-  $(".b-trust", card).onclick = () => connect(card, true);
+  $(".b-connect", card).onclick = () => connect(card);
+  $(".b-trust", card).onclick = () => connect(card, card.dataset.fingerprint);
   $(".b-remove", card).onclick = () => remove(card);
   $("#cards").append(card);
   return card;
@@ -133,7 +133,7 @@ async function showScript(card) {
   }
 }
 
-async function connect(card, replaceHostKey) {
+async function connect(card, trustFingerprint = null) {
   const m = machineOf(card);
   const log = $(".connect-log", card);
   log.hidden = false;
@@ -142,10 +142,9 @@ async function connect(card, replaceHostKey) {
   setStatus(card, "connecting", "muted");
   for (const b of card.querySelectorAll("button")) b.disabled = true;
   try {
-    const r = await api("/api/setup/connect", { method: "POST", body: JSON.stringify({ ...m, replace_host_key: replaceHostKey }) });
+    const r = await api("/api/setup/connect", { method: "POST", body: JSON.stringify({ ...m, trust_fingerprint: trustFingerprint }) });
     log.textContent = r.log.join("\n");
     if (r.ok) {
-      log.textContent += `\n\nCheck that ${r.fingerprint} is one of the fingerprints the script printed on the machine.`;
       setStatus(card, "connected, not applied yet", "warn");
       if (!card.dataset.saved) {
         card.dataset.saved = m.name;
@@ -156,8 +155,11 @@ async function connect(card, replaceHostKey) {
       }
       showApply(true);
     } else {
-      setStatus(card, "not connected", "bad");
-      $(".key-changed", card).hidden = !r.host_key_changed;
+      const ask = r.needs_confirm || r.host_key_changed;
+      setStatus(card, r.needs_confirm ? "confirm the host key" : "not connected", r.needs_confirm ? "warn" : "bad");
+      card.dataset.fingerprint = r.fingerprint || "";
+      $(".b-trust", card).textContent = r.host_key_changed ? "Trust the new host key" : "It matches, connect";
+      $(".key-changed", card).hidden = !ask;
     }
   } catch (e) {
     log.textContent = e.message;
@@ -170,7 +172,7 @@ async function connect(card, replaceHostKey) {
 async function remove(card) {
   const name = card.dataset.saved;
   if (name) {
-    if (!confirm(`Remove ${name} from the dashboard? (Nothing is changed on the machine itself.)`)) return;
+    if (!confirm(`Remove ${name} from the dashboard? Nothing is changed on the machine itself: its homelab user (and any Proxmox token or Incus trust) stays there until you remove it.`)) return;
     try {
       await api(`/api/setup/machines/${encodeURIComponent(name)}`, { method: "DELETE" });
       showApply(true);

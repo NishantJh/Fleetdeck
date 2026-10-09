@@ -23,7 +23,12 @@ def test_locked_until_setup_without_auth_for_real_machines(tmp_path):
         assert client.get("/api/setup", headers={"X-Setup-Token": "wrong"}).status_code == 403
         assert client.get("/api/setup", headers={"X-Setup-Token": app.state.setup_token}).status_code == 200
     assert create_app(AppConfig(hosts=[PI], allow_no_auth=True)).state.setup_token is None
-    assert create_app(AppConfig(demo=True)).state.setup_token is None  # nothing real to protect
+    # A demo has nothing real to protect, but its setup API (SSH anywhere, write the config) does.
+    demo = create_app(AppConfig(demo=True), config_file=str(tmp_path / "demo.yaml"))
+    with TestClient(demo) as client:
+        assert client.get("/api/targets").status_code == 200
+        assert client.get("/api/setup").status_code == 403
+        assert client.get("/api/setup", headers={"X-Setup-Token": demo.state.setup_token}).status_code == 200
     assert create_app(AppConfig(hosts=[PI], auth=AuthConfig(password="x"))).state.setup_token is None
 
 

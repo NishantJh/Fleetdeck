@@ -12,6 +12,7 @@ is the whole install.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime as dt
 import ipaddress
 import json
@@ -19,6 +20,8 @@ import logging
 import os
 import re
 import shlex
+import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -129,15 +132,27 @@ class Paths:
 def _write_private(path: Path, data: bytes | str) -> None:
     """Write a file only this user can read, atomically."""
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "wb") as f:
-        f.write(data.encode() if isinstance(data, str) else data)
-    os.replace(tmp, path)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.")  # mode 0600
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data.encode() if isinstance(data, str) else data)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+
+
+_identity_lock = threading.Lock()
 
 
 def ensure_identity(paths: Paths) -> str:
     """Create the app's SSH key and Incus client certificate if missing; return the SSH public key."""
+    with _identity_lock:
+        return _ensure_identity(paths)
+
+
+def _ensure_identity(paths: Paths) -> str:
     if not paths.ssh_key.exists():
         key = asyncssh.generate_private_key("ssh-ed25519", comment=KEY_COMMENT)
         _write_private(paths.ssh_key, key.export_private_key())
@@ -188,6 +203,10 @@ if ! command -v sudo >/dev/null 2>&1; then
   elif command -v zypper >/dev/null 2>&1; then zypper -q install -y sudo
   else echo "Install sudo first, then run this again." >&2; exit 1; fi
 fi
+# Never take over somebody's existing account of that name; one this script made has its sudoers file.
+if id "$U" >/dev/null 2>&1 && [ ! -f /etc/sudoers.d/homelab-manager ]; then
+  echo "A user called $U already exists and wasn't made by this script; not touching it." >&2; exit 1
+fi
 if ! id "$U" >/dev/null 2>&1; then
   if command -v useradd >/dev/null 2>&1; then useradd --create-home --shell /bin/sh --comment "Homelab Manager" "$U"
   else adduser -D -s /bin/sh -g "Homelab Manager" "$U"; fi
@@ -229,7 +248,7 @@ def bootstrap_script(machine: Machine, public_key: str, allow_from: list[str]) -
         "f=$(mktemp) && cat > \"$f\" <<'HOMELAB_SETUP'\n"
         f"{body}"
         "HOMELAB_SETUP\n"
-        'if [ "$(id -u)" -eq 0 ]; then sh "$f"; else sudo sh "$f"; fi; rm -f "$f"\n'
+        'if [ "$(id -u)" -eq 0 ]; then sh "$f"; else sudo sh "$f"; fi; r=$?; rm -f "$f"; [ "$r" -eq 0 ]\n'
     )
 
 
@@ -247,6 +266,8 @@ class ConnectResult:
     fingerprint: str | None = None
     # Set when the machine's host key differs from the one pinned earlier.
     host_key_changed: bool = False
+    # Set when the key isn't pinned yet: nothing was done, the user has to confirm the fingerprint.
+    needs_confirm: bool = False
 
 
 # The key type pinned: the one `ssh-keygen -lf` users most likely compare, then the rest.
@@ -278,6 +299,16 @@ def _pinned_keys(paths: Paths, host: str, port: int) -> list[asyncssh.SSHKey]:
             except (asyncssh.KeyImportError, ValueError):
                 pass
     return keys
+
+
+def forget_host_key(paths: Paths, host: str, port: int) -> None:
+    if not paths.known_hosts.exists():
+        return
+    name = _known_hosts_name(host, port)
+    lines = paths.known_hosts.read_text().splitlines()
+    kept = [ln for ln in lines if ln.split(None, 1)[:1] != [name]]
+    if len(kept) != len(lines):
+        _write_private(paths.known_hosts, "\n".join(kept) + ("\n" if kept else ""))
 
 
 def _pin_host_key(paths: Paths, host: str, port: int, key: asyncssh.SSHKey) -> None:
@@ -338,15 +369,17 @@ pveum acl modify / --users {PVE_USER} --roles {PVE_ROLE}
 # A token's secret is shown only once, so make a new one (revoking the old) each time.
 pveum user token remove {PVE_USER} {token} >/dev/null 2>&1 || true
 pveum user token add {PVE_USER} {token} --privsep 0 --comment "Homelab Manager" --output-format json
-for f in /etc/pve/local/pveproxy-ssl.pem /etc/pve/local/pve-ssl.pem; do
-  if [ -f "$f" ]; then echo "__FP__=$(openssl x509 -in "$f" -noout -fingerprint -sha256)"; break; fi
-done
+# The certificate the API serves: a custom/ACME one (pveproxy-ssl.pem) if uploaded, else PVE's own.
+if [ -f /etc/pve/local/pveproxy-ssl.pem ]; then echo "__CUSTOM__=1"; f=/etc/pve/local/pveproxy-ssl.pem
+else f=/etc/pve/local/pve-ssl.pem; fi
+echo "__FP__=$(openssl x509 -in "$f" -noout -fingerprint -sha256)"
 """
 
 
-def parse_pve(stdout: str) -> tuple[str, str]:
-    """(token secret, certificate fingerprint) from :func:`pve_script`'s output."""
+def parse_pve(stdout: str) -> tuple[str, str, bool]:
+    """(token secret, certificate fingerprint, whether it's a custom cert) from :func:`pve_script`'s output."""
     secret = fp = None
+    custom = "__CUSTOM__=1" in stdout
     for line in stdout.splitlines():
         line = line.strip()
         if line.startswith("{"):
@@ -360,14 +393,23 @@ def parse_pve(stdout: str) -> tuple[str, str]:
         raise SetupError("Proxmox didn't return an API token (is this a Proxmox VE node?)")
     if not fp:
         raise SetupError("couldn't read the Proxmox certificate")
-    return secret, normalize_fingerprint(fp) or ""
+    return secret, normalize_fingerprint(fp) or "", custom
 
 
-def incus_script(cert_pem: str, cert_fp: str) -> str:
+def incus_listen(address: str) -> str:
+    """Where to open the Incus API: only on the address the dashboard uses, when that is an IP."""
+    try:
+        ipaddress.ip_address(address)
+    except ValueError:
+        return f":{INCUS_PORT}"
+    return f"{_url_host(address)}:{INCUS_PORT}"
+
+
+def incus_script(cert_pem: str, cert_fp: str, listen: str = f":{INCUS_PORT}") -> str:
     return f"""set -e
 command -v incus >/dev/null 2>&1 || {{ echo "incus is not installed here" >&2; exit 1; }}
 addr=$(incus config get core.https_address)
-if [ -z "$addr" ]; then incus config set core.https_address :{INCUS_PORT}; addr=":{INCUS_PORT}"; fi
+if [ -z "$addr" ]; then incus config set core.https_address {listen}; addr="{listen}"; echo "__OPENED__=1"; fi
 echo "__ADDR__=$addr"
 if ! incus query /1.0/certificates/{cert_fp} >/dev/null 2>&1; then
   f=$(mktemp)
@@ -395,19 +437,33 @@ def parse_incus(stdout: str) -> tuple[int, str]:
     return port, normalize_fingerprint(fp) or ""
 
 
-async def connect(machine: Machine, paths: Paths, replace_host_key: bool = False) -> tuple[ConnectResult, dict | None]:
-    """Connect to a machine the bootstrap script has run on; return the result and its config entry."""
+async def connect(
+    machine: Machine, paths: Paths, trust_fingerprint: str | None = None
+) -> tuple[ConnectResult, dict | None]:
+    """Connect to a machine the bootstrap script has run on; return the result and its config entry.
+
+    A host key that isn't pinned yet is only reported (``needs_confirm``): nothing is pinned or
+    changed until the call is repeated with ``trust_fingerprint`` set to that key's fingerprint, after
+    the user compared it with what the script printed on the machine.
+    """
     res = ConnectResult(ok=False)
     try:
         key = await fetch_host_key(machine.address, machine.port)
         res.fingerprint = key.get_fingerprint("sha256")
         pinned = _pinned_keys(paths, machine.address, machine.port)
         same = any(k.public_data == key.public_data for k in pinned)
-        if pinned and not same and not replace_host_key:
-            res.host_key_changed = True
+        if not same and trust_fingerprint != res.fingerprint:
+            if pinned:
+                res.host_key_changed = True
+                raise SetupError(
+                    f"the SSH host key of {machine.address} has changed since it was first seen (now "
+                    f"{res.fingerprint}). If you reinstalled the machine, trust the new key; otherwise something "
+                    "is impersonating it."
+                )
+            res.needs_confirm = True
             raise SetupError(
-                f"the SSH host key of {machine.address} has changed since it was first seen (now {res.fingerprint}). "
-                "If you reinstalled the machine, trust the new key; otherwise something is impersonating it."
+                f"{machine.address} presents SSH host key {res.fingerprint}. Check that it is one of the fingerprints "
+                "the setup script printed on the machine, then confirm."
             )
         if not same:
             _pin_host_key(paths, machine.address, machine.port, key)
@@ -426,7 +482,10 @@ async def connect(machine: Machine, paths: Paths, replace_host_key: bool = False
         except (OSError, asyncssh.Error) as e:
             raise SetupError(f"SSH to {machine.address} failed: {e}") from None
         if who != "root":
-            raise SetupError(f"sudo didn't give root on {machine.address} (got {who or 'nothing'}); re-run the script")
+            raise SetupError(
+                f"sudo didn't give root on {machine.address} (got {who or 'nothing'}). Re-run the script; if sudoers "
+                "has `Defaults requiretty` (older RHEL/CentOS), remove it for homelab."
+            )
         res.log.append(f"Logged in as {SSH_USER}, sudo works")
 
         entry: dict = {"name": machine.name}
@@ -439,8 +498,13 @@ async def connect(machine: Machine, paths: Paths, replace_host_key: bool = False
         }
         if machine.kind == "proxmox":
             token = pve_token(machine.name)
-            secret, fp = parse_pve(await _run(ssh, pve_script(token), "creating the Proxmox API token"))
+            secret, fp, custom = parse_pve(await _run(ssh, pve_script(token), "creating the Proxmox API token"))
             res.log.append(f"Created API token {PVE_USER}!{token} (role {PVE_ROLE}) and pinned the API certificate")
+            if custom:
+                res.log.append(
+                    "Note: this node serves a custom (e.g. ACME) certificate, which is pinned exactly. After it "
+                    "renews, press Reconnect here to pin the new one."
+                )
             entry |= {
                 "api_url": f"https://{_url_host(machine.address)}:8006",
                 "token_id": f"{PVE_USER}!{token}",
@@ -450,7 +514,12 @@ async def connect(machine: Machine, paths: Paths, replace_host_key: bool = False
             }
         elif machine.kind == "incus":
             pem = paths.incus_cert.read_text()
-            port, fp = parse_incus(await _run(ssh, incus_script(pem, incus_cert_fingerprint(paths)), "trusting Incus"))
+            listen = incus_listen(machine.address)
+            out = await _run(ssh, incus_script(pem, incus_cert_fingerprint(paths), listen), "trusting Incus")
+            port, fp = parse_incus(out)
+            if "__OPENED__=1" in out:
+                where = "on every interface" if listen.startswith(":") else f"on {listen} only"
+                res.log.append(f"Turned on the Incus API {where}")
             res.log.append(f"Incus API on port {port} trusts the dashboard (project default); pinned its certificate")
             entry |= {
                 "url": f"https://{_url_host(machine.address)}:{port}",
@@ -480,7 +549,13 @@ SECTION = {"proxmox": "proxmox", "incus": "incus", "host": "hosts"}
 def read_raw(paths: Paths) -> dict:
     if not paths.config.exists():
         return {}
-    return yaml.safe_load(paths.config.read_text()) or {}
+    try:
+        data = yaml.safe_load(paths.config.read_text()) or {}
+    except yaml.YAMLError as e:
+        raise ValueError(f"{paths.config} is not valid YAML: {e}") from None
+    if not isinstance(data, dict):
+        raise ValueError(f"{paths.config} must be a mapping of settings")
+    return data
 
 
 def write_raw(paths: Paths, data: dict) -> AppConfig:
@@ -528,14 +603,25 @@ def upsert(data: dict, kind: str, entry: dict) -> dict:
     return data
 
 
-def remove(data: dict, name: str) -> bool:
-    found = False
+def remove(data: dict, name: str) -> dict | None:
+    """Remove the machine called ``name``; return its entry (None if there was none)."""
+    found = None
     for section in SECTION.values():
         items = data.get(section) or []
-        kept = [m for m in items if m.get("name") != name]
-        found |= len(kept) != len(items)
-        data[section] = kept
+        found = found or next((m for m in items if m.get("name") == name), None)
+        data[section] = [m for m in items if m.get("name") != name]
     return found
+
+
+def ssh_endpoints(data: dict) -> set[tuple[str, int]]:
+    """(host, port) of every SSH connection in a raw config."""
+    out = set()
+    for section in SECTION.values():
+        for m in data.get(section) or []:
+            ssh = m if section == "hosts" else m.get("ssh") or {}
+            if ssh.get("host"):
+                out.add((str(ssh["host"]), int(ssh.get("port") or 22)))
+    return out
 
 
 def machines(cfg: AppConfig) -> list[dict]:
