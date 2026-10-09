@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import secrets
 import time
@@ -51,15 +52,18 @@ DOWNLOAD_TTL = 3600
 _downloads: dict[str, tuple[str, float]] = {}
 
 
-def _offer_download(source: str) -> str:
+def _offer_download(source: str) -> dict:
+    """A link the machine can fetch the script from, with the script's sha256, which the command
+    checks before running it (the link is plain HTTP on most homelabs)."""
     now = time.monotonic()
     for k in [k for k, (_, exp) in _downloads.items() if exp < now]:
         del _downloads[k]
     while len(_downloads) >= 200:
         del _downloads[next(iter(_downloads))]
     key = secrets.token_urlsafe(18)
-    _downloads[key] = (ob.download(source), now + DOWNLOAD_TTL)
-    return f"/install/{key}"
+    text = ob.download(source)
+    _downloads[key] = (text, now + DOWNLOAD_TTL)
+    return {"path": f"/install/{key}", "sha256": hashlib.sha256(text.encode()).hexdigest()}
 
 
 def _error(e: Exception) -> HTTPException:

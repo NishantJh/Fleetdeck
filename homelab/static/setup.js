@@ -137,7 +137,15 @@ function setScript(card, label, r) {
   $(".s-label", card).textContent = label;
   $(".s-code", card).textContent = r ? r.script : "";
   $(".s-source", card).textContent = r ? r.source : "";
-  const dl = r && r.download ? ` curl -fsSLo ~/homelab-setup.sh ${location.origin}${r.download} && sh ~/homelab-setup.sh` : "";
+  // Runs only a download whose sha256 matches, so nobody on the way can swap the script. Inside sh -c
+  // with the URL quoted, so it works the same in fish, csh and zsh (an IPv6 [address] isn't a glob).
+  const dl = r && r.download
+    ? ` sh -c 'curl -fsSLo "$1" "$2" && echo "$3  $1" | sha256sum -c - >/dev/null && sh "$1"' _ ~/homelab-setup.sh '${location.origin}${r.download.path}' ${r.download.sha256}`
+    : "";
+  const local = /^(localhost|127\.|\[::1\])/.test(location.host);
+  $(".s-dl-note", card).textContent = local
+    ? `This page is open as ${location.host}, which other machines can't reach: open it by this host's LAN address, or use the whole script below.`
+    : location.protocol === "https:" ? "If the dashboard's HTTPS certificate is self-signed, curl refuses it there: use the whole script below." : "";
   $(".s-dl", card).textContent = dl;
   $(".dl", card).hidden = !dl;
   $(".full", card).open = !!r && !dl;

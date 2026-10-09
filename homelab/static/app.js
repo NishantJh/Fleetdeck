@@ -5,6 +5,8 @@ const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const PLATFORM = { proxmox: "Proxmox", incus: "Incus", ssh: "Standalone", demo: "Demo" };
 const KIND = { host: "host", lxc: "LXC", vm: "VM", container: "container" };
+// Status dot: Proxmox says online/offline for nodes, running/stopped for guests; anything else is grey.
+const DOT = { running: "on", online: "on", stopped: "off", offline: "off" };
 
 async function api(path, opts = {}) {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -108,7 +110,7 @@ function rowHtml(v, withBackup) {
     <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${canUpgrade(t) ? "" : "disabled"}></td>
     <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
     <td class="muted os">${esc(c?.os || "")}</td>
-    <td><span class="dot ${t.status === "running" ? "on" : t.status ? "off" : ""}"></span>${esc(t.status)}</td>
+    <td><span class="dot ${DOT[t.status] || ""}"></span>${esc(t.status)}</td>
     ${withBackup ? `<td>${backupCell(t)}</td>` : ""}
     <td>${updatesCell(v)} ${reboot}${notes}</td>
     <td class="muted">${c ? ago(c.checked_at) : ""}</td>
