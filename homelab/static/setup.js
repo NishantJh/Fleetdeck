@@ -64,6 +64,28 @@ async function copy(text, button) {
   setTimeout(() => (button.textContent = was), 1500);
 }
 
+// Returns an error message for a bad address, or "" when it looks fine (or is still empty).
+function addressError(v) {
+  if (!v) return "";
+  if (/\s/.test(v)) return "An address can't contain spaces.";
+  if (/^[\d.]+$/.test(v)) {
+    const p = v.split(".");
+    return p.length === 4 && p.every((x) => /^\d{1,3}$/.test(x) && Number(x) <= 255) ? "" : "That isn't a valid IPv4 address: it needs four numbers from 0 to 255, like 192.168.1.6.";
+  }
+  if (v.includes(":")) return /^[0-9a-f:.]+$/i.test(v) && (v.match(/:/g) || []).length >= 2 ? "" : "That isn't a valid IPv6 address.";
+  const label = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/i;
+  return v.length <= 253 && v.split(".").every((l) => label.test(l)) ? "" : "That isn't a valid host name: use letters, digits, dots and dashes.";
+}
+
+function checkCard(card) {
+  const err = addressError($(".f-address", card).value.trim());
+  const el = $(".field-error", card);
+  el.textContent = err;
+  el.hidden = !err;
+  $(".f-address", card).classList.toggle("invalid", !!err);
+  return !err;
+}
+
 function machineOf(card) {
   return {
     kind: $(".f-kind", card).value,
@@ -108,14 +130,17 @@ function addCard(m = { kind: "host", name: "", address: "", port: 22 }, saved = 
     const host = $(".f-kind", card).value === "host";
     const tunnel = host && $(".f-tunnel", card).checked;
     $(".tun", card).hidden = !host;
-    $(".f-udp", card).hidden = !tunnel;
+    $(".udp-field", card).hidden = !tunnel;
     $(".f-address", card).placeholder = tunnel ? "its public IP or host name" : "IP address or host name";
+    $(".card-title", card).textContent = $(".f-name", card).value.trim() || "New machine";
     $(".hint", card).textContent = HINTS[$(".f-kind", card).value] + (tunnel ? TUNNEL_HINT : "");
   };
   hint();
+  checkCard(card);
   let regen;
   card.addEventListener("input", () => {
     hint();
+    checkCard(card);
     saveDrafts();
     // Once typing pauses: a tunnel's script carries keys made for that name.
     clearTimeout(regen);
@@ -157,6 +182,7 @@ function setScript(card, label, r) {
 let scriptSeq = 0;
 async function showScript(card) {
   const m = machineOf(card);
+  if (!checkCard(card)) return;
   $(".script", card).hidden = false;
   const label = `On ${m.name || m.address || "the machine"}, in any shell, as root or as a user with sudo, doas or the root password (it asks if needed). It checks first and stops before changing anything if something's in the way.`;
   if (!m.name || !m.address) {
@@ -174,6 +200,8 @@ async function showScript(card) {
 
 async function connect(card, trustFingerprint = null) {
   const m = machineOf(card);
+  if (!m.address || !m.name) return setStatus(card, "fill in a name and an address", "bad");
+  if (!checkCard(card)) return;
   const log = $(".connect-log", card);
   log.hidden = false;
   log.textContent = `Connecting to ${m.address}:${m.port} ...`;
@@ -223,7 +251,8 @@ async function remove(card) {
       return;
     }
     // Keep the card to show the undo script; it goes on Close.
-    for (const b of card.querySelectorAll(".card-head button")) b.hidden = true;
+    for (const b of card.querySelectorAll(".card-actions button, .b-remove")) b.hidden = true;
+    $(".tun", card).hidden = true;
     $(".hint", card).hidden = true;
     $(".connect-log", card).hidden = true;
     setStatus(card, "removed", "muted");
