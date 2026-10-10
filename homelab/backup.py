@@ -282,7 +282,10 @@ def add_backup_routes(
     store: Store | None,
     restart: Callable[[], None] | None,
     busy: Callable[[], list[str]] = list,
+    first_run: bool = False,
 ) -> None:
+    """``first_run``: also offer the restore on the setup page, behind the one-time setup link, so a
+    fresh install can come back from a backup without creating a login first."""
     lock = asyncio.Lock()
 
     def admin_only() -> None:
@@ -309,6 +312,15 @@ def add_backup_routes(
     @app.post("/api/backup/restore")
     async def restore_backup(req: RestoreRequest):
         admin_only()
+        return await restore(req)
+
+    if first_run:
+        # The guard lets /api/setup/* through only with the token from the logs.
+        @app.post("/api/setup/restore")
+        async def restore_on_setup(req: RestoreRequest):
+            return await restore(req)
+
+    async def restore(req: RestoreRequest) -> dict:
         try:
             blob = base64.b64decode(req.data, validate=True)
         except (binascii.Error, ValueError):

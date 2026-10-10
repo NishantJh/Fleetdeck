@@ -170,7 +170,7 @@ compose file, an `.env`) is touched, so your container manager can still edit th
 login, every key and token, and the job history, encrypted with a passphrase you choose
 (AES-256-GCM, key from scrypt). Keep it off this server; without the passphrase nobody, including
 you, can open it. To restore, pick the file in the same dialog: it first shows what is in it, then
-replaces the current files and restarts once you confirm. What was there before is kept as an
+replaces the current files and restarts once you confirm. On a fresh install, open the setup link from the logs and use **Or restore from a backup** instead of creating a login: it brings back the login, the machines and the keys, so the machines need nothing run again. What was there before is kept as an
 encrypted file in `/data/backups/`, with the same passphrase. Key files the backup doesn't have
 are left in place. Files outside `/data` (say a key file the config points at elsewhere) aren't
 in it.
