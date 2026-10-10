@@ -109,6 +109,46 @@ class PctExecutor:
         return await self.node_ssh.run_command(cmd, on_line, timeout)
 
 
+_AGENT_START = (
+    "install and start it inside the VM (Debian/Ubuntu: apt install qemu-guest-agent && "
+    "systemctl enable --now qemu-guest-agent). If you only just turned on the QEMU Guest Agent "
+    "option, shut the VM down and start it again from Proxmox (a reboot from inside is not enough)"
+)
+
+
+def agent_error(r: httpx.Response) -> str:
+    """Turn a failed guest agent API call into a message that says what to do."""
+    try:
+        msg = (r.json() or {}).get("message") or ""
+    except ValueError:
+        msg = ""
+    # PVE puts most error text in the HTTP reason phrase, e.g. "500 QEMU guest agent is not running".
+    msg = " ".join((msg or r.reason_phrase or r.text).split())
+    low = msg.lower()
+    if r.status_code == 401:
+        return "Proxmox rejected the API token; reconnect this Proxmox host on the setup page"
+    if r.status_code == 403 or "permission check failed" in low:
+        return (
+            "the Proxmox API token may not run commands through the guest agent "
+            "(it needs VM.GuestAgent.Unrestricted on PVE 9, VM.Monitor on PVE 8); "
+            f"run the Proxmox script from the setup page again. Proxmox said: {msg}"
+        )
+    if "not running" in low:
+        return f"the QEMU guest agent is not running inside this VM: {_AGENT_START}"
+    if "timeout" in low or r.status_code == 596:
+        return (
+            "the QEMU guest agent did not answer. Check `systemctl status qemu-guest-agent` inside "
+            f"the VM; if it is not installed, {_AGENT_START}. Proxmox said: {msg}"
+        )
+    if "disabled" in low or "blocked" in low:
+        return (
+            "the guest agent in this VM refuses to run commands (guest-exec is turned off). Allow it "
+            "in the agent's settings, e.g. remove guest-exec from BLOCK_RPCS in "
+            f"/etc/sysconfig/qemu-ga on Fedora/RHEL. Proxmox said: {msg}"
+        )
+    return f"guest agent exec failed ({r.status_code}): {msg}"
+
+
 class PveAgentExecutor:
     """Runs inside a Proxmox VM through the QEMU guest agent."""
 
@@ -119,12 +159,13 @@ class PveAgentExecutor:
     async def run(self, script, on_line=None, timeout=DEFAULT_TIMEOUT) -> ExecResult:
         r = await self.client.post(f"{self.base}/exec", data={"command": ["sh", "-c", script]})
         if r.status_code >= 400:
-            raise RuntimeError(f"guest agent exec failed ({r.status_code}): {r.text.strip()}")
+            raise RuntimeError(agent_error(r))
         pid = r.json()["data"]["pid"]
         deadline = time.monotonic() + timeout
         while True:
             s = await self.client.get(f"{self.base}/exec-status", params={"pid": pid})
-            s.raise_for_status()
+            if s.status_code >= 400:
+                raise RuntimeError(agent_error(s))
             data = s.json()["data"]
             if data.get("exited"):
                 break

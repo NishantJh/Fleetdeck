@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import subprocess
 
 import asyncssh
@@ -88,6 +89,35 @@ async def test_pve_agent_executor(monkeypatch):
     res = await PveAgentExecutor(client, "pve", 100).run("echo hi")
     assert (res.rc, res.stdout) == (0, "hi\n")
     assert polls["n"] == 2
+
+
+@pytest.mark.parametrize(
+    ("status", "reason", "body", "expect"),
+    [
+        (500, "QEMU guest agent is not running", {"data": None}, "apt install qemu-guest-agent"),
+        (
+            403,
+            "Permission check failed (/vms/100, VM.GuestAgent.Unrestricted)",
+            {"data": None},
+            "VM.GuestAgent.Unrestricted on PVE 9",
+        ),
+        (
+            500,
+            "Internal Server Error",
+            {"message": "VM 100 qmp command 'guest-exec' failed - got timeout\n"},
+            "did not answer",
+        ),
+        (500, "x", {"message": "The command guest-exec has been disabled for this instance"}, "BLOCK_RPCS"),
+        (500, "something odd", {"data": None}, "guest agent exec failed (500): something odd"),
+    ],
+)
+async def test_pve_agent_executor_errors_say_what_to_do(status, reason, body, expect):
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(status, json=body, extensions={"reason_phrase": reason.encode()})
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://pve/api2/json")
+    with pytest.raises(RuntimeError, match=re.escape(expect)):
+        await PveAgentExecutor(client, "pve", 100).run("echo hi")
 
 
 async def test_incus_executor():
