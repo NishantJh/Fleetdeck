@@ -252,6 +252,36 @@ async def test_proxmox_backups_without_storage_permission():
     assert b.last is None and not b.stale and "Datastore.Audit" in b.note
 
 
+async def test_proxmox_backups_hidden_by_missing_backup_privileges():
+    # PVE lists storages but leaves out every backup when the token lacks VM.Backup/AllocateSpace.
+    perms = {"/": {"VM.Audit": 1, "Datastore.Audit": 1}}
+    for held, hidden in ((perms, True), ({"/": {**perms["/"], "VM.Backup": 1, "Datastore.AllocateSpace": 1}}, False)):
+        calls: list[str] = []
+        handler, _ = _pve_with_backups(
+            storages=[{"storage": "pbs", "active": 1, "shared": 1}], contents={"pbs": []}, not_backed_up=[], calls=calls
+        )
+
+        def with_perms(req, handler=handler, held=held):
+            if req.url.path == "/api2/json/access/permissions":
+                return httpx.Response(200, json={"data": held})
+            return handler(req)
+
+        p = ProxmoxProvider(ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x"))
+        p.client = httpx.AsyncClient(transport=httpx.MockTransport(with_perms), base_url=p.client.base_url)
+        b = {t.name: t for t, _ in await p.discover()}["pihole"].backup
+        if hidden:
+            assert b.last is None and not b.stale and "VM.Backup" in b.note
+        else:
+            assert b.stale and b.note is None  # really no backup
+
+
+async def test_pve_role_can_list_backups():
+    from homelab.onboarding import PVE_PRIVS
+    from homelab.providers.proxmox import BACKUP_PRIVS
+
+    assert set(BACKUP_PRIVS) <= set(PVE_PRIVS.split())
+
+
 async def test_proxmox_backup_tracking_can_be_turned_off():
     calls: list[str] = []
     handler, _ = _pve_with_backups(storages=[], contents={}, not_backed_up=[], calls=calls)
