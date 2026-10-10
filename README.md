@@ -53,6 +53,24 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,
   never two jobs on the same machine at once).
 
+![The dashboard (demo data)](docs/screenshots/dashboard-light.png#gh-light-mode-only)
+![The dashboard (demo data)](docs/screenshots/dashboard-dark.png#gh-dark-mode-only)
+
+The first-run setup page creates the admin login:
+
+![The setup page](docs/screenshots/setup-light.png#gh-light-mode-only)
+![The setup page](docs/screenshots/setup-dark.png#gh-dark-mode-only)
+
+Then add each machine: fill in its details, paste the generated script on it, press Connect:
+
+![Adding a machine](docs/screenshots/add-machines-light.png#gh-light-mode-only)
+![Adding a machine](docs/screenshots/add-machines-dark.png#gh-dark-mode-only)
+
+Every check and upgrade streams its output to the Activity panel:
+
+![The Activity panel](docs/screenshots/activity-light.png#gh-light-mode-only)
+![The Activity panel](docs/screenshots/activity-dark.png#gh-dark-mode-only)
+
 ## Try it without any infrastructure
 
 ```bash

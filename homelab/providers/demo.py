@@ -22,6 +22,10 @@ _APT = [
 _APK = ["busybox-1.36.1-r31 x86_64 {busybox} (GPL-2.0-only) [upgradable from: busybox-1.36.1-r29]"]
 
 
+def _name(line: str) -> str:
+    return line.split("/")[0].split(" ")[0]
+
+
 class DemoSnapshots:
     def __init__(self, executor: DemoExecutor):
         self.executor = executor
@@ -50,6 +54,21 @@ class DemoExecutor:
         self.boot_id = uuid.uuid4().hex
         self.reboot_pending = any("kernel" in line for line in lines)
 
+    def _check_output(self, body: str) -> list[tuple[str, str]]:
+        """What the real check script prints, so the Activity log looks like a real run."""
+        out = [("stdout", "__BEGIN__")]
+        out += [("stdout", line) for line in body.splitlines()]
+        out += [("stdout", "__END__"), ("stdout", f"__REBOOT__={'yes' if self.reboot_pending else 'no'}")]
+        if self.pm == "apt":
+            out += [
+                ("stderr", "Hit:1 http://deb.debian.org/debian bookworm InRelease"),
+                ("stderr", "Get:2 http://deb.debian.org/debian bookworm-updates InRelease [55.4 kB]"),
+                ("stderr", "Get:3 http://deb.debian.org/debian-security bookworm-security InRelease [48.0 kB]"),
+                ("stderr", "Fetched 103 kB in 1s (151 kB/s)"),
+                ("stderr", "Reading package lists..."),
+            ]
+        return out
+
     async def run(self, script, on_line=None, timeout=3600) -> ExecResult:
         await asyncio.sleep(random.uniform(0.3, 1.2))
         head = f"__PM__={self.pm}\n__OS__={self.os_name}\n"
@@ -61,7 +80,14 @@ class DemoExecutor:
         reboot = "yes" if self.reboot_pending else "no"
         if script == CHECK_SCRIPT:
             body = "\n".join(self.lines)
+            if on_line:
+                for line in self._check_output(body):
+                    on_line(*line)
             return ExecResult(rc=0, stdout=f"{head}__BEGIN__\n{body}\n__END__\n__REBOOT__={reboot}\n")
+        if on_line and self.pm == "apt":
+            on_line("stdout", "Reading package lists...")
+            on_line("stdout", "Building dependency tree...")
+            on_line("stdout", f"The following packages will be upgraded: {' '.join(_name(x) for x in self.lines)}")
         for line in self.lines:
             name = line.split("/")[0].split(" ")[0]
             if on_line:
