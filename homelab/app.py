@@ -260,7 +260,7 @@ def create_app(
 
     restart = _when_idle(restart, busy) if restart is not None else None
     add_setup_routes(app, cfg, paths, restart, setup_token is not None, busy)
-    add_backup_routes(app, cfg, paths, store, restart, busy)
+    add_backup_routes(app, cfg, paths, store, restart, busy, first_run=setup_token is not None)
 
     @app.get("/")
     async def index():

@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Homelab Manager setup</title>
-  <link rel="stylesheet" href="/static/style.css?v=5">
-  <script src="/static/theme.js?v=5"></script>
+  <link rel="stylesheet" href="/static/style.css?v=7">
+  <script src="/static/theme.js?v=7"></script>
 </head>
 <body>
   <header>
@@ -27,6 +27,20 @@
         <label>Password again <input id="admin-pass2" type="password" minlength="10" autocomplete="new-password" required></label>
         <div><button class="primary">Create login</button></div>
       </form>
+      <details id="restore" class="restore">
+        <summary>Or restore from a backup <span class="muted small">a .hlmbackup file from the dashboard's Backup button</span></summary>
+        <p class="muted">Brings back the login, the machines, the dashboard's keys and the job history, so the machines don't need their scripts run again.</p>
+        <div class="form-grid">
+          <label>Backup file <input type="file" id="restore-file" accept=".hlmbackup"></label>
+          <label>Its passphrase <input type="password" id="restore-pass" autocomplete="off"></label>
+          <div><button type="button" id="restore-check">Open backup</button></div>
+        </div>
+        <div id="restore-preview" hidden>
+          <p id="restore-summary"></p>
+          <label class="check"><input type="checkbox" id="restore-ack"> Use this backup's login, machines and keys, and restart</label>
+          <div><button type="button" id="restore-go" class="primary" disabled>Restore and restart</button></div>
+        </div>
+      </details>
     </section>
 
     <section id="machines" class="panel" hidden>
@@ -126,6 +140,6 @@
     </div>
   </template>
 
-  <script src="/static/setup.js?v=5"></script>
+  <script src="/static/setup.js?v=7"></script>
 </body>
 </html>

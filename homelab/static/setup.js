@@ -289,6 +289,59 @@ async function waitAndGo(check, url) {
   location.href = url;
 }
 
+// A fresh install can start from a backup instead of a new login.
+let restoreData = null;
+function resetRestore() {
+  restoreData = null;
+  $("#restore-preview").hidden = true;
+  $("#restore-ack").checked = false;
+  $("#restore-go").disabled = true;
+}
+$("#restore-file").onchange = resetRestore;
+$("#restore-pass").oninput = resetRestore;
+$("#restore-ack").onchange = (e) => { $("#restore-go").disabled = !e.target.checked; };
+
+const readBase64 = (file) => new Promise((resolve, reject) => {
+  const fr = new FileReader();
+  fr.onload = () => resolve(String(fr.result).split(",", 2)[1] || "");
+  fr.onerror = () => reject(fr.error);
+  fr.readAsDataURL(file);
+});
+
+$("#restore-check").onclick = async () => {
+  const file = $("#restore-file").files[0];
+  if (!file) return notice("Choose a backup file first.");
+  if (!$("#restore-pass").value) return notice("Enter the backup's passphrase.");
+  notice("");
+  try {
+    const data = await readBase64(file);
+    const b = (await api("/api/setup/restore", { method: "POST", body: JSON.stringify({ passphrase: $("#restore-pass").value, data }) })).backup;
+    restoreData = data;
+    const made = b.created_at ? new Date(b.created_at).toLocaleString() : "an unknown date";
+    $("#restore-summary").textContent = `Made ${made}. Login: ${b.username || "none"}. ${b.machines} machine${b.machines === 1 ? "" : "s"}${b.history ? ", with job history" : ""}.`;
+    $("#restore-preview").hidden = false;
+  } catch (err) {
+    resetRestore();
+    notice(err.message);
+  }
+};
+
+$("#restore-go").onclick = async () => {
+  if (!restoreData || !$("#restore-ack").checked) return;
+  $("#restore-go").disabled = true;
+  try {
+    const r = await api("/api/setup/restore", { method: "POST", body: JSON.stringify({ passphrase: $("#restore-pass").value, data: restoreData, confirm: true }) });
+    $("#admin").hidden = true;
+    if (!r.restarting) return notice("Restored. Restart the container, then open the dashboard and log in with the backup's login.", "info");
+    notice("Restored. Restarting; log in with the backup's login when your browser asks.", "info");
+    // The restarted app asks for the restored login, so the page can only be reloaded, not polled.
+    setTimeout(() => (location.href = "/"), 2500);
+  } catch (err) {
+    $("#restore-go").disabled = false;
+    notice(`Could not restore: ${err.message}`);
+  }
+};
+
 $("#admin-form").onsubmit = async (e) => {
   e.preventDefault();
   const password = $("#admin-pass").value;

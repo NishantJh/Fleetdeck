@@ -274,3 +274,33 @@ def test_only_the_newest_safety_copies_are_kept(tmp_path):
     backup._prune_safety_copies(folder)
     left = sorted(p.name for p in folder.iterdir())
     assert left == [f"before-restore-2026-10-0{i}-120000{backup.SUFFIX}" for i in range(4, 9)] + ["mine.hlmbackup"]
+
+
+def test_a_fresh_install_restores_from_the_setup_page(tmp_path):
+    with _client(_data_dir(tmp_path / "old")) as client:
+        blob = _make_backup(client)
+    fresh = tmp_path / "fresh"
+    fresh.mkdir()
+    restarts = []
+    with _client(fresh, restart=lambda: restarts.append(1)) as client:
+        token = client.app.state.setup_token
+        req = {"passphrase": PASS, "data": base64.b64encode(blob).decode()}
+        # Only with the one-time link from the logs, and the dashboard's own route stays closed.
+        assert client.post("/api/setup/restore", json=req).status_code == 403
+        assert client.post("/api/backup/restore", json=req).status_code == 403
+        headers = {"X-Setup-Token": token}
+        preview = client.post("/api/setup/restore", json=req, headers=headers).json()
+        assert preview["restored"] is False and preview["backup"]["username"] == "admin"
+        assert not (fresh / "config.yaml").exists()
+        done = client.post("/api/setup/restore", json={**req, "confirm": True}, headers=headers).json()
+        assert done["restored"] is True and done["restarting"] is True
+        assert (fresh / "keys" / "id_ed25519").read_text() == "private key of pi4\n"
+        assert yaml.safe_load((fresh / "config.yaml").read_text())["auth"]["username"] == "admin"
+        deadline = time.time() + 5
+        while not restarts and time.time() < deadline:
+            time.sleep(0.05)
+    assert restarts == [1]
+    # Once a login exists the setup page offers no restore; the dashboard's (behind the login) does.
+    with _client(fresh) as client:
+        r = client.post("/api/setup/restore", json=req, auth=AUTH)
+        assert r.status_code in (404, 405)
