@@ -48,7 +48,10 @@ PVE_USER = "homelab@pve"
 PVE_ROLE = "HomelabManager"
 # Everything the dashboard uses (README, "What each platform needs"). Guest agent exec is
 # VM.GuestAgent.Unrestricted on PVE 9 and VM.Monitor on PVE 8.
-PVE_PRIVS = "VM.Audit Sys.Audit Sys.Modify Datastore.Audit VM.Snapshot VM.Snapshot.Rollback"
+# Datastore.AllocateSpace and VM.Backup only because PVE lists a guest's backups to no one else.
+PVE_PRIVS = (
+    "VM.Audit Sys.Audit Sys.Modify Datastore.Audit Datastore.AllocateSpace VM.Backup VM.Snapshot VM.Snapshot.Rollback"
+)
 INCUS_PORT = 8443
 HEADER = "# Written by Homelab Manager's setup page (/setup), where it can also be edited.\n"
 
