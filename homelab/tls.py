@@ -42,8 +42,12 @@ def pinned_context(host: str, port: int, fingerprint: str, cert: tuple[str, str]
         )
     ctx = ssl.create_default_context(cadata=pem)
     # The pinned certificate itself is the trust anchor (it is usually a leaf signed by the node's
-    # own CA, hence PARTIAL_CHAIN), and it was matched by fingerprint, not by name.
+    # own CA, hence PARTIAL_CHAIN), and it was matched by fingerprint, not by name. Python 3.13+
+    # also turns on VERIFY_X509_STRICT, which rejects node-CA leaves without an Authority Key
+    # Identifier (as older Proxmox installs generate them); the exact fingerprint match already
+    # decides trust, so those RFC 5280 profile checks add nothing here.
     ctx.verify_flags |= ssl.VERIFY_X509_PARTIAL_CHAIN
+    ctx.verify_flags &= ~ssl.VERIFY_X509_STRICT
     ctx.check_hostname = False
     if cert:
         ctx.load_cert_chain(*cert)
