@@ -44,7 +44,7 @@ button:focus-visible, a.button:focus-visible, input:focus-visible, select:focus-
 button:disabled { opacity: .45; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 button.primary:hover:not(:disabled) { background: var(--accent); filter: brightness(1.1); }
-button.small { padding: 3px 10px; font-size: 12px; }
+button.small, a.button.small { padding: 3px 10px; font-size: 12px; }
 button.icon { padding: 7px 9px; line-height: 0; }
 button.icon svg { width: 16px; height: 16px; }
 .muted { color: var(--muted); }

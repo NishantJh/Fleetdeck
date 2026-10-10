@@ -140,3 +140,25 @@ def test_start_log_says_where_to_go_once_setup_is_done(caplog):
         pass
     assert "Setup is done: open http://<this machine>:" in caplog.text and "'nishant'" in caplog.text
     assert "setup#token" not in caplog.text
+
+
+def test_error_report_lists_errors_without_secrets():
+    from datetime import UTC, datetime
+
+    from homelab.config import NotifyConfig
+    from homelab.models import CheckResult
+
+    cfg = AppConfig(demo=True, notify=[NotifyConfig(type="gotify", url="https://g.example", token="tok-abc123")])
+    app = create_app(cfg)
+    with TestClient(app) as client:
+        targets = client.get("/api/targets").json()["targets"]
+        tid = targets[0]["target"]["id"]
+        app.state.jobs.checks[tid] = CheckResult(
+            checked_at=datetime.now(UTC), error="agent not running (sent tok-abc123)"
+        )
+        r = client.get("/api/report")
+        assert r.status_code == 200
+        assert "attachment" in r.headers["content-disposition"]
+        assert targets[0]["target"]["name"] in r.text
+        assert "agent not running (sent [removed])" in r.text
+        assert "tok-abc123" not in r.text
