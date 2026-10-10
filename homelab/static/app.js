@@ -1,12 +1,23 @@
 "use strict";
 
-const state = { targets: [], errors: {}, settings: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), logJob: null, logLines: [] };
+const state = { targets: [], errors: {}, settings: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), logJob: null, logLines: [], showHidden: false };
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const PLATFORM = { proxmox: "Proxmox", incus: "Incus", ssh: "Standalone", demo: "Demo" };
 const KIND = { host: "host", lxc: "LXC", vm: "VM", container: "container" };
 // Status dot: Proxmox says online/offline for nodes, running/stopped for guests; anything else is grey.
 const DOT = { running: "on", online: "on", stopped: "off", offline: "off" };
+
+// Per-browser conveniences only; the hidden machines themselves are kept on the server.
+const remember = {
+  get(key) { try { return JSON.parse(localStorage.getItem(key)); } catch { return null; } },
+  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private window */ } },
+};
+state.showHidden = !!remember.get("showHidden");
+// Machines whose "runs this dashboard, hide it?" hint was dismissed.
+const dismissed = new Set(remember.get("dismissedSelfHint") || []);
+// Hidden machines stay out of the counts, Check all and Update selected, even while shown.
+const active = () => state.targets.filter((v) => !v.hidden);
 
 async function api(path, opts = {}) {
   const r = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
@@ -52,7 +63,7 @@ function groupKey(t) {
 
 function groups() {
   const map = new Map();
-  for (const v of state.targets) {
+  for (const v of state.showHidden ? state.targets : active()) {
     const k = groupKey(v.target);
     if (!map.has(k)) map.set(k, { key: k, platform: v.target.platform, title: v.target.platform === "ssh" ? "Standalone hosts" : v.target.parent || v.target.name, rows: [] });
     map.get(k).rows.push(v);
@@ -62,6 +73,7 @@ function groups() {
 }
 
 const canUpgrade = (t) => t.updatable && !t.check_only;
+const selectable = (v) => canUpgrade(v.target) && !v.hidden;
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
 const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back" };
 
@@ -108,9 +120,10 @@ function rowHtml(v, withBackup) {
     ? ` <span class="chip ${c.notes.length > 1 ? "warn" : ""}" title="${esc(c.notes.join("\n"))}">${c.notes.length > 1 ? "repo warning" : "repos"}</span>`
     : "";
   const pending = c && !c.error && c.packages.length > 0;
-  let html = `<tr class="${t.kind === "host" ? "host" : "guest"}">
-    <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${canUpgrade(t) ? "" : "disabled"}></td>
-    <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
+  const self = v.runs_dashboard ? ` <span class="chip" title="This dashboard runs here">dashboard</span>` : "";
+  let html = `<tr class="${t.kind === "host" ? "host" : "guest"}${v.hidden ? " is-hidden" : ""}">
+    <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) ? "" : "disabled"}></td>
+    <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${self}${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
     <td class="muted os" data-label="OS">${esc(c?.os || "")}</td>
     <td data-label="State"><span class="dot ${DOT[t.status] || ""}"></span>${esc(t.status)}</td>
     ${withBackup ? `<td data-label="Last backup">${backupCell(t)}</td>` : ""}
@@ -120,6 +133,7 @@ function rowHtml(v, withBackup) {
       <button class="small" data-act="check" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Check</button>
       <button class="small ${pending && !t.check_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy ? "" : "disabled"} title="${t.check_only ? esc(t.note) : ""}">Update</button>
       <button class="small" data-act="reboot" data-id="${esc(t.id)}" ${canReboot(t) && !busy ? "" : "disabled"} title="${esc(t.no_reboot || (t.check_only ? t.note : ""))}">Reboot</button>
+      <button class="small ghost" data-hide="${v.hidden ? "0" : "1"}" data-id="${esc(t.id)}" title="${v.hidden ? "Show this machine on the dashboard again" : "Hide from the dashboard, Check all and scheduled checks"}">${v.hidden ? "Unhide" : "Hide"}</button>
     </td></tr>`;
   if (pending && state.expanded.has(t.id)) {
     // Security updates first, so they stand out in a long list.
@@ -134,14 +148,14 @@ function render() {
   $("#errors").innerHTML = Object.entries(state.errors)
     .map(([p, e]) => `<div class="error-banner"><b>${esc(p)}</b>: ${esc(e)}</div>`).join("");
 
-  const updatable = state.targets.filter((v) => v.target.updatable);
+  const updatable = active().filter((v) => v.target.updatable);
   const pending = updatable.filter((v) => v.check && !v.check.error && v.check.packages.length);
   const pkgCount = pending.reduce((n, v) => n + v.check.packages.length, 0);
   const secMachines = pending.filter((v) => v.check.packages.some((p) => p.security)).length;
   const reboot = updatable.filter((v) => v.check?.reboot_required).length;
   const unchecked = updatable.filter((v) => !v.check).length;
   // Leave out guests whose backups couldn't be read (a note but no date): unknown isn't "fine".
-  const withBackups = state.targets.filter((v) => v.target.backup && (v.target.backup.last || !v.target.backup.note));
+  const withBackups = active().filter((v) => v.target.backup && (v.target.backup.last || !v.target.backup.note));
   const staleBackups = withBackups.filter((v) => v.target.backup.stale || v.target.backup.verified === false).length;
   $("#summary").innerHTML = `
     <div class="stat"><b>${updatable.length}</b><span class="muted">machines</span></div>
@@ -152,6 +166,17 @@ function render() {
     ${withBackups.length ? `<div class="stat"><b class="${staleBackups ? "warn" : "ok"}">${staleBackups}</b><span class="muted">machines with old or no backups</span></div>` : ""}
     ${scheduleStat()}`;
   $("#test-notify").hidden = !state.schedule?.notify_targets;
+
+  const hiddenCount = state.targets.length - active().length;
+  const toggle = $("#show-hidden");
+  toggle.hidden = hiddenCount === 0;
+  toggle.textContent = `Show hidden (${hiddenCount})`;
+  toggle.setAttribute("aria-pressed", String(state.showHidden));
+  const hint = active().find((v) => v.runs_dashboard && !dismissed.has(v.target.id));
+  $("#self-hint").innerHTML = hint
+    ? `<div class="hint-banner"><span><b>${esc(hint.target.name)}</b> looks like the machine this dashboard runs on. Hide it, so it isn't updated or rebooted from here by accident?</span>
+       <span><button class="small primary" data-hide="1" data-id="${esc(hint.target.id)}">Hide it</button> <button class="small" data-dismiss="${esc(hint.target.id)}">Keep it</button></span></div>`
+    : "";
 
   $("#groups").innerHTML = groups().map((g) => {
     const withBackup = g.rows.some((v) => v.target.backup);
@@ -186,8 +211,8 @@ async function load(refresh = false) {
     state.jobs = await api("/api/jobs");
     state.schedule = await api("/api/schedule");
     // Drop selections for targets that disappeared or can no longer be upgraded.
-    const selectable = new Set(state.targets.filter((v) => canUpgrade(v.target)).map((v) => v.target.id));
-    for (const id of state.selected) if (!selectable.has(id)) state.selected.delete(id);
+    const ok = new Set(state.targets.filter(selectable).map((v) => v.target.id));
+    for (const id of state.selected) if (!ok.has(id)) state.selected.delete(id);
   } catch (e) {
     state.errors = { dashboard: e.message };
   }
@@ -295,10 +320,28 @@ async function showLog(jobId) {
   render();
 }
 
+async function setHidden(id, hidden) {
+  try {
+    await api("/api/hidden", { method: "POST", body: JSON.stringify({ target_ids: [id], hidden }) });
+  } catch (e) {
+    alert(`Could not ${hidden ? "hide" : "unhide"} it: ${e.message}`);
+    return;
+  }
+  for (const v of state.targets) if (v.target.id === id) v.hidden = hidden;
+  if (hidden) state.selected.delete(id);
+  render();
+}
+
 document.addEventListener("click", (e) => {
-  const el = e.target.closest("[data-act],[data-toggle],[data-job]");
+  const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide],[data-dismiss]");
   if (!el) return;
-  if (el.dataset.toggle) {
+  if (el.dataset.hide) {
+    setHidden(el.dataset.id, el.dataset.hide === "1");
+  } else if (el.dataset.dismiss) {
+    dismissed.add(el.dataset.dismiss);
+    remember.set("dismissedSelfHint", [...dismissed]);
+    render();
+  } else if (el.dataset.toggle) {
     const id = el.dataset.toggle;
     state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id);
     render();
@@ -319,6 +362,11 @@ document.addEventListener("change", (e) => {
 });
 
 $("#refresh").onclick = () => load(true);
+$("#show-hidden").onclick = () => {
+  state.showHidden = !state.showHidden;
+  remember.set("showHidden", state.showHidden);
+  render();
+};
 $("#test-notify").onclick = async () => {
   try {
     const r = await api("/api/notify/test", { method: "POST" });
@@ -438,7 +486,7 @@ $("#restore-go").onclick = async () => {
   }
 };
 
-$("#check-all").onclick = () => act("check", state.targets.filter((v) => v.target.updatable).map((v) => v.target.id));
+$("#check-all").onclick = () => act("check", active().filter((v) => v.target.updatable).map((v) => v.target.id));
 $("#update-selected").onclick = () => confirmAction("upgrade", [...state.selected]);
 
 // Poll fast while anything is running, slowly otherwise.

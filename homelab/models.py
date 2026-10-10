@@ -65,6 +65,8 @@ class CheckResult(BaseModel):
     error: str | None = None
     # Extra context to show next to the result, e.g. which repositories were used.
     notes: list[str] = Field(default_factory=list)
+    # The dashboard's own container runs on this machine (see updates.self_script).
+    runs_dashboard: bool = False
 
 
 class ExecResult(BaseModel):

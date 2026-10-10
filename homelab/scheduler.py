@@ -60,12 +60,12 @@ class Scheduler:
             delay = float(self.interval or 0)
 
     async def run_once(self) -> None:
-        """Check every machine that can be checked, wait for the results, then notify if needed."""
+        """Check every machine that can be checked and isn't hidden, wait for the results, then notify if needed."""
         self.last_run = datetime.now(UTC)
         await self.inventory.refresh(force=True)
         submitted = []
         for target, executor in list(self.inventory.targets.values()):
-            if not target.updatable or executor is None:
+            if not target.updatable or executor is None or target.id in self.jobs.hidden:
                 continue
             try:
                 submitted.append(self.jobs.submit(target.id, "check"))

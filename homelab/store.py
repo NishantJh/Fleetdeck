@@ -1,4 +1,4 @@
-"""Keeps check results and job history in SQLite so a restart doesn't lose them.
+"""Keeps check results, job history and hidden machines in SQLite so a restart doesn't lose them.
 
 Writes are small and rare (one per finished check or job), so the stdlib ``sqlite3``
 module is used directly from the event loop.
@@ -41,6 +41,7 @@ class Store:
             "CREATE TABLE IF NOT EXISTS jobs (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,"
             " data TEXT NOT NULL)"
         )
+        self.db.execute("CREATE TABLE IF NOT EXISTS hidden (target_id TEXT PRIMARY KEY)")
 
     def close(self) -> None:
         self.db.close()
@@ -72,6 +73,16 @@ class Store:
 
     def delete_jobs(self, ids: list[str]) -> None:
         self.db.executemany("DELETE FROM jobs WHERE id = ?", [(i,) for i in ids])
+
+    def load_hidden(self) -> set[str]:
+        return {tid for (tid,) in self.db.execute("SELECT target_id FROM hidden")}
+
+    def set_hidden(self, target_ids: list[str], hidden: bool) -> None:
+        if hidden:
+            sql = "INSERT OR IGNORE INTO hidden (target_id) VALUES (?)"
+        else:
+            sql = "DELETE FROM hidden WHERE target_id = ?"
+        self.db.executemany(sql, [(t,) for t in target_ids])
 
     def load_jobs(self, limit: int) -> list[Job]:
         """The newest ``limit`` jobs, oldest first. Jobs that were still running are marked as failed."""

@@ -84,14 +84,25 @@ class JobManager:
         self._tasks: set[asyncio.Task] = set()
         # Hosts that are rebooting, or waiting for their guests' jobs so they can reboot.
         self._rebooting: set[str] = set()
+        # Machines hidden from the dashboard: left out of scheduled checks and their notifications.
+        self.hidden: set[str] = set()
         if store is not None:
             self.checks = store.load_checks()
+            self.hidden = store.load_hidden()
             self.jobs = OrderedDict((j.id, j) for j in store.load_jobs(MAX_JOBS))
 
     def _set_check(self, target_id: str, check: CheckResult) -> None:
         self.checks[target_id] = check
         if self.store is not None:
             self._persist(self.store.save_check, target_id, check)
+
+    def set_hidden(self, target_ids: list[str], hidden: bool) -> None:
+        if hidden:
+            self.hidden.update(target_ids)
+        else:
+            self.hidden.difference_update(target_ids)
+        if self.store is not None:
+            self._persist(self.store.set_hidden, target_ids, hidden)
 
     def _save_job(self, job: Job) -> None:
         if self.store is not None:
