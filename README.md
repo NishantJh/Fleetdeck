@@ -53,6 +53,14 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,
   never two jobs on the same machine at once).
 
+![The dashboard (demo data)](docs/screenshots/dashboard-light.png#gh-light-mode-only)
+![The dashboard (demo data)](docs/screenshots/dashboard-dark.png#gh-dark-mode-only)
+
+The first-run setup page creates the admin login, then lets you add machines:
+
+![The setup page](docs/screenshots/setup-light.png#gh-light-mode-only)
+![The setup page](docs/screenshots/setup-dark.png#gh-dark-mode-only)
+
 ## Try it without any infrastructure
 
 ```bash
