@@ -31,11 +31,13 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   upgrades on its own. *Test notification* in the toolbar sends a test message.
 * **Backups:** each Proxmox guest shows when it was last backed up (vzdump or Proxmox Backup
   Server), turns orange once that's older than `backup_max_age_hours` (48 by default), and is flagged
-  *none*, *no job* (not in any scheduled backup job) or *verify failed*. This needs `Datastore.Audit`
-  on the backup storages; without it the column shows `?` and says why. **Upgrading:** an existing
-  API token most likely lacks it, so add the read-only `PVEAuditor` role on `/storage`
-  (`pveum acl modify /storage --tokens 'root@pam!homelab' --roles PVEAuditor`, with your token id),
-  or set `backup_max_age_hours: 0` to turn the column off.
+  *none*, *no job* (not in any scheduled backup job) or *verify failed*. This needs `Datastore.Audit`,
+  `Datastore.AllocateSpace` and `VM.Backup` (Proxmox lists a guest's backups only to a user that could
+  make them); without them the column shows `?` and says why. **Upgrading:** a token
+  made by an older version lacks the last two, so every guest shows *none*: press *Connect* on that
+  machine in Setup again (it updates the role), or add them to your token's role by hand
+  (`pveum role modify HomelabManager -append 1 -privs "Datastore.AllocateSpace VM.Backup"`), or set
+  `backup_max_age_hours: 0` to turn the column off.
   Incus instances show their newest snapshot or export (the dashboard's own pre-upgrade snapshots
   don't count). Every other machine (Proxmox nodes, the Incus host, a Raspberry Pi, a VPS) shows
   *not set up* until you add a `backup:` entry to its SSH settings (under `ssh:` for Proxmox and Incus):
@@ -52,6 +54,24 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   and the job is still in Activity; roll back to anything older in Proxmox or Incus.
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,
   never two jobs on the same machine at once).
+
+![The dashboard (demo data)](docs/screenshots/dashboard-light.png#gh-light-mode-only)
+![The dashboard (demo data)](docs/screenshots/dashboard-dark.png#gh-dark-mode-only)
+
+The first-run setup page creates the admin login:
+
+![The setup page](docs/screenshots/setup-light.png#gh-light-mode-only)
+![The setup page](docs/screenshots/setup-dark.png#gh-dark-mode-only)
+
+Then add each machine: fill in its details, paste the generated script on it, press Connect:
+
+![Adding a machine](docs/screenshots/add-machines-light.png#gh-light-mode-only)
+![Adding a machine](docs/screenshots/add-machines-dark.png#gh-dark-mode-only)
+
+Every check and upgrade streams its output to the Activity panel:
+
+![The Activity panel](docs/screenshots/activity-light.png#gh-light-mode-only)
+![The Activity panel](docs/screenshots/activity-dark.png#gh-dark-mode-only)
 
 ## Try it without any infrastructure
 
@@ -170,7 +190,7 @@ compose file, an `.env`) is touched, so your container manager can still edit th
 login, every key and token, and the job history, encrypted with a passphrase you choose
 (AES-256-GCM, key from scrypt). Keep it off this server; without the passphrase nobody, including
 you, can open it. To restore, pick the file in the same dialog: it first shows what is in it, then
-replaces the current files and restarts once you confirm. What was there before is kept as an
+replaces the current files and restarts once you confirm. On a fresh install, open the setup link from the logs and use **Or restore from a backup** instead of creating a login: it brings back the login, the machines and the keys, so the machines need nothing run again. What was there before is kept as an
 encrypted file in `/data/backups/`, with the same passphrase. Key files the backup doesn't have
 are left in place. Files outside `/data` (say a key file the config points at elsewhere) aren't
 in it.
@@ -216,7 +236,7 @@ The setup page writes an ordinary `config.yaml`, and everything below can also b
 ### What each platform needs
 
 * **Proxmox:** an API token (Datacenter → Permissions → API Tokens) with `VM.Audit`/`Sys.Audit` to
-  list guests, `Datastore.Audit` on `/storage` to see backups,
+  list guests, `Datastore.Audit`, `Datastore.AllocateSpace` and `VM.Backup` to see backups,
   `VM.Snapshot` and `VM.Snapshot.Rollback` for snapshots, `Sys.Modify` on `/nodes` so the host check can refresh package lists, and
   guest-agent exec rights to update VMs (`VM.GuestAgent.Unrestricted` on PVE 9, `VM.Monitor` on
   PVE 8). VMs need the *QEMU Guest Agent* option on and `qemu-guest-agent` installed inside.
@@ -274,14 +294,14 @@ has only what the dashboard needs:
 
 ```bash
 pveum user add homelab@pve
-pveum role add HomelabManager -privs "VM.Audit Sys.Audit Sys.Modify VM.GuestAgent.Unrestricted Datastore.Audit VM.Snapshot VM.Snapshot.Rollback"  # PVE 8: VM.Monitor
+pveum role add HomelabManager -privs "VM.Audit Sys.Audit Sys.Modify VM.GuestAgent.Unrestricted Datastore.Audit Datastore.AllocateSpace VM.Backup VM.Snapshot VM.Snapshot.Rollback"  # PVE 8: VM.Monitor
 pveum aclmod / -user homelab@pve -role HomelabManager
 pveum user token add homelab@pve dashboard --privsep 0
 ```
 
 The dashboard also has root SSH to the node, so this mainly limits the damage if the token alone
-leaks. `Sys.Modify` is only needed for refreshing package lists through the API, `Datastore.Audit` for the
-backup column and `VM.Snapshot`/`VM.Snapshot.Rollback` for snapshots before upgrades.
+leaks. `Sys.Modify` is only needed for refreshing package lists through the API, `Datastore.Audit`, `Datastore.AllocateSpace` and `VM.Backup` for the
+backup column (the dashboard never makes backups; Proxmox just won't list them otherwise) and `VM.Snapshot`/`VM.Snapshot.Rollback` for snapshots before upgrades.
 
 **Restrict the SSH key** on every machine, not just the VPS: in `~/.ssh/authorized_keys`, prefix the
 dashboard's key with `from="<dashboard IP>",restrict` (`restrict` turns off port, agent and X11

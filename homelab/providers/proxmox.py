@@ -24,6 +24,13 @@ PROTECTED_NOTE = "protected: runs this dashboard, update it from its own console
 # Listing backup storages (PBS in particular) is slow, so it is done less often than discovery.
 BACKUP_TTL = 300.0
 NO_BACKUP_STORAGE = "the API token can't see any backup storage (it needs Datastore.Audit on /storage)"
+# PVE lists a backup only to a user who could have made it: Datastore.AllocateSpace on the storage and
+# VM.Backup on the guest. Without them a storage reads fine but looks empty.
+BACKUP_PRIVS = ("Datastore.AllocateSpace", "VM.Backup")
+NO_BACKUP_PRIVS = (
+    "Proxmox hides backups from the API token: it needs Datastore.AllocateSpace and VM.Backup. "
+    "Open Setup and press Connect on this machine again to update its permissions"
+)
 
 
 @dataclass
@@ -258,6 +265,8 @@ class ProxmoxProvider:
             index.note = "; ".join(errors) or NO_BACKUP_STORAGE
         elif errors:
             index.note = "some storages could not be read: " + "; ".join(errors)
+        elif not index.latest and await self._lacks_backup_privs():
+            index.note = NO_BACKUP_PRIVS
         try:
             missing = await self._get("/cluster/backup-info/not-backed-up")
             index.not_in_job = {int(g["vmid"]) for g in missing}
@@ -267,6 +276,15 @@ class ProxmoxProvider:
         if read_any or not errors:
             self._backups, self._backups_at = index, time.monotonic()
         return index
+
+    async def _lacks_backup_privs(self) -> bool:
+        """Whether the token is missing a privilege PVE wants before it lists backups."""
+        try:
+            perms = await self._get("/access/permissions")
+        except httpx.HTTPError:
+            return False
+        held = {priv for privs in (perms or {}).values() for priv, ok in privs.items() if ok}
+        return not set(BACKUP_PRIVS) <= held
 
     def _backup_for(self, vmid: int, index: BackupIndex | None) -> BackupInfo | None:
         if index is None:
