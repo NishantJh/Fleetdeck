@@ -7,10 +7,11 @@ import secrets
 import socket
 from collections.abc import Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
@@ -23,6 +24,7 @@ from .models import CheckResult, Job, JobAction, Target
 from .notify import Notifier
 from .onboarding import Paths
 from .providers.proxmox import PROTECTED_NOTE
+from .report import build_report
 from .scheduler import Scheduler
 from .security import LoginThrottle, make_guard
 from .setup_routes import add_setup_routes
@@ -209,6 +211,14 @@ def create_app(
         data["log"] = job.log[since:]
         data["log_offset"] = since
         return data
+
+    @app.get("/api/report")
+    async def error_report():
+        """Everything that is failing, as a text file to attach when asking for help."""
+        name = f"homelab-errors-{datetime.now(UTC):%Y%m%d-%H%M}.txt"
+        return PlainTextResponse(
+            build_report(cfg, inventory, jobs), headers={"Content-Disposition": f'attachment; filename="{name}"'}
+        )
 
     @app.get("/api/schedule")
     async def schedule():
