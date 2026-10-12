@@ -46,6 +46,8 @@ class Target(BaseModel):
     no_reboot: str | None = None
     # A Proxmox/Incus guest that can be snapshotted and rolled back.
     can_snapshot: bool = False
+    # A host the "Back up" button works on (see backup_runs.py).
+    can_backup: bool = False
 
 
 class Package(BaseModel):
@@ -77,7 +79,7 @@ class ExecResult(BaseModel):
     stderr: str = ""
 
 
-JobAction = Literal["check", "upgrade", "reboot", "rollback"]
+JobAction = Literal["check", "upgrade", "reboot", "rollback", "backup"]
 JobStatus = Literal["queued", "running", "succeeded", "failed"]
 
 

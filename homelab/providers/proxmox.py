@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
+from ..backup_runs import BackupRun, PveHostBackup
 from ..config import ProxmoxConfig, SSHConfig
 from ..executors import DEFAULT_TIMEOUT, LineCallback, PctExecutor, PveAgentExecutor, SSHExecutor
 from ..host_backups import HostBackups
@@ -156,6 +157,7 @@ class ProxmoxProvider:
         self._backups: BackupIndex | None = None
         self._backups_at = 0.0
         self.snapshots: dict[str, PveSnapshots] = {}
+        self.backup_runs: dict[str, BackupRun] = {}
         self.host_backups = HostBackups()
         self.client = httpx.AsyncClient(
             base_url=cfg.api_url.rstrip("/") + "/api2/json",
@@ -303,6 +305,7 @@ class ProxmoxProvider:
     async def discover(self) -> Discovered:
         found: Discovered = []
         snapshots: dict[str, PveSnapshots] = {}
+        backup_runs: dict[str, BackupRun] = {}
         node_ips = await self._node_ips()
         nodes = await self._get("/nodes")
         backups = None
@@ -342,10 +345,12 @@ class ProxmoxProvider:
                 if online
                 else "offline",
                 backup=node_backup,
+                can_backup=online,
             )
             found.append((host, PveNodeExecutor(self.client, nname, ssh)))
             if not online:
                 continue
+            backup_runs[prefix] = PveHostBackup(self.client, nname, self.cfg, ssh)
             # Rebooting the node would take down the protected guest, i.e. this dashboard.
             protected_here: list[str] = []
 
@@ -410,4 +415,5 @@ class ProxmoxProvider:
             if protected_here:
                 host.no_reboot = f"runs protected guest {', '.join(protected_here)}; reboot it from the Proxmox UI"
         self.snapshots = snapshots
+        self.backup_runs = backup_runs
         return found

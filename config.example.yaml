@@ -94,6 +94,9 @@ proxmox:
     # Flag guests whose newest backup is older than this (0 = don't track backups). Needs
     # Datastore.Audit, Datastore.AllocateSpace and VM.Backup for the token.
     backup_max_age_hours: 48
+    # The Back up button on a node: where guests go (default: a PBS storage, else the first backup storage).
+    # backup_storage: pbs
+    # backup_guests: false # back up the node's config only
 
 incus:
   - name: incus01
@@ -115,6 +118,9 @@ incus:
     exclude: [] # "name" or "project/name"
     # Last backup = newest snapshot or export (incus export / incus backup) of each instance.
     backup_max_age_hours: 48 # 0 = don't track
+    # The Back up button: skip instances using more than this many GB (0 = no instance exports); keep this many per instance.
+    # backup_max_instance_gb: 20
+    # backup_keep: 3
 
 # Standalone machines over SSH.
 hosts:

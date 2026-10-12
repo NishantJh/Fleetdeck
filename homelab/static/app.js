@@ -77,7 +77,7 @@ function groups() {
 const canUpgrade = (t) => t.updatable && !t.check_only;
 const selectable = (v) => canUpgrade(v.target) && !v.hidden;
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
-const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back" };
+const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up" };
 
 function updatesCell(v) {
   const t = v.target;
@@ -143,6 +143,7 @@ function rowHtml(v, withBackup) {
       <button class="small" data-act="check" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Check</button>
       <button class="small ${pending && !t.check_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy ? "" : "disabled"} title="${t.check_only ? esc(t.note) : ""}">Update</button>
       <button class="small" data-act="reboot" data-id="${esc(t.id)}" ${canReboot(t) && !busy ? "" : "disabled"} title="${esc(t.no_reboot || (t.check_only ? t.note : ""))}">Reboot</button>
+      ${t.can_backup ? `<button class="small" data-act="backup" data-id="${esc(t.id)}" ${busy ? "disabled" : ""} title="Back up this machine">Back up</button>` : ""}
       <button class="small ghost" data-hide="${v.hidden ? "0" : "1"}" data-id="${esc(t.id)}" title="${v.hidden ? "Show this machine on the dashboard again" : "Hide from the dashboard, Check all and scheduled checks"}">${v.hidden ? "Unhide" : "Hide"}</button>
     </td></tr>`;
   if (pending && state.expanded.has(t.id)) {
@@ -255,6 +256,11 @@ const CONFIRM = {
     text: "Runs a full OS upgrade (apt dist-upgrade, dnf upgrade, apk upgrade or pacman -Syu).",
     ok: "Update",
   },
+  backup: {
+    title: "Back up these machines?",
+    text: "Proxmox: every guest with vzdump (to Proxmox Backup Server if there is one), plus the node's config. Incus: the settings and an export of each instance. Other machines: an archive of /etc and a few more config folders. Nothing is stopped or changed.",
+    ok: "Back up",
+  },
   reboot: {
     title: "Reboot these machines?",
     text: "Reboots now and waits for each machine to come back, then re-checks it. Services on it will be down meanwhile.",
@@ -274,6 +280,7 @@ function confirmAction(action, ids) {
     const v = byId.get(id);
     const n = v?.check?.packages?.length;
     let detail = n != null ? `${n} package(s)` : "not checked";
+    if (action === "backup") detail = "";
     if (action === "reboot") {
       detail = v?.check?.reboot_required ? "reboot needed" : "";
       const t = v?.target;
@@ -365,7 +372,7 @@ document.addEventListener("click", (e) => {
     showLog(el.dataset.job);
   } else if (el.dataset.act === "check") {
     act("check", [el.dataset.id]);
-  } else if (el.dataset.act === "upgrade" || el.dataset.act === "reboot") {
+  } else if (el.dataset.act === "upgrade" || el.dataset.act === "reboot" || el.dataset.act === "backup") {
     confirmAction(el.dataset.act, [el.dataset.id]);
   }
 });

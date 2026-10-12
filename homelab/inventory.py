@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from pathlib import Path
 
+from .backup_runs import BackupRun
 from .config import AppConfig
 from .executors import Executor
 from .models import Target
@@ -19,8 +21,10 @@ log = logging.getLogger(__name__)
 
 def build_providers(cfg: AppConfig) -> list[Provider]:
     providers: list[Provider] = []
+    # Where the Incus settings a backup saves are kept: next to the state file, in the data volume.
+    dump_dir = Path(cfg.state_file).parent / "host-backups" if cfg.state_file else None
     providers += [ProxmoxProvider(p) for p in cfg.proxmox]
-    providers += [IncusProvider(i) for i in cfg.incus]
+    providers += [IncusProvider(i, dump_dir) for i in cfg.incus]
     if cfg.hosts:
         providers.append(SSHHostsProvider(cfg.hosts))
     if cfg.demo:
@@ -42,6 +46,8 @@ class Inventory:
         # Snapshot handles of the guests that have them. Separate from the executor because a
         # rollback goes through the platform's API, so it works on a guest that can't run commands.
         self.snapshots: dict[str, Snapshots] = {}
+        # What the "Back up" button runs, for the hosts that have one.
+        self.backup_runs: dict[str, BackupRun] = {}
         self._refreshed = 0.0
         self._lock = asyncio.Lock()
 
@@ -53,6 +59,7 @@ class Inventory:
             results = await asyncio.gather(*(p.discover() for p in self.providers), return_exceptions=True)
             targets: dict[str, tuple[Target, Executor | None]] = {}
             snapshots: dict[str, Snapshots] = {}
+            backup_runs: dict[str, BackupRun] = {}
             errors: dict[str, str] = {}
             for provider, res in zip(self.providers, results, strict=True):
                 if isinstance(res, BaseException):
@@ -61,11 +68,13 @@ class Inventory:
                     # Keep what we knew before so one flaky provider doesn't blank the page.
                     targets.update({k: v for k, v in self.targets.items() if v[0].source == provider.name})
                     snapshots.update({k: v for k, v in self.snapshots.items() if k in targets})
+                    backup_runs.update({k: v for k, v in self.backup_runs.items() if k in targets})
                     continue
                 for target, executor in res:
                     targets[target.id] = (target, executor)
                 snapshots.update(getattr(provider, "snapshots", {}))
-            self.targets, self.snapshots, self.errors = targets, snapshots, errors
+                backup_runs.update(getattr(provider, "backup_runs", {}))
+            self.targets, self.snapshots, self.backup_runs, self.errors = targets, snapshots, backup_runs, errors
             self._refreshed = time.monotonic()
 
     def get(self, target_id: str) -> tuple[Target, Executor | None]:

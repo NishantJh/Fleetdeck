@@ -157,6 +157,8 @@ class JobManager:
             _ensure_can_roll_back(target, self.inventory.snapshots.get(target_id))
             if not snapshot:
                 raise ValueError(f"{target.name}: no snapshot to roll back to")
+        elif action == "backup":
+            _ensure_can_back_up(target, self.inventory.backup_runs.get(target_id))
         else:
             _ensure_runnable(target, executor, action)
         host_id = self._host_id(target)
@@ -220,9 +222,15 @@ class JobManager:
                     raise RuntimeError("target no longer exists") from None
                 if job.action == "rollback":
                     _ensure_can_roll_back(target, self.inventory.snapshots.get(job.target_id))
+                elif job.action == "backup":
+                    _ensure_can_back_up(target, self.inventory.backup_runs.get(job.target_id))
                 else:
                     _ensure_runnable(target, executor, job.action)
-                if job.action == "check":
+                if job.action == "backup":
+                    job.log.append(f"== Backing up {target.name}")
+                    await self.inventory.backup_runs[job.target_id].run(on_line)
+                    job.log.append("== Backup finished")
+                elif job.action == "check":
                     check = await _check(executor, on_line)
                     self._set_check(job.target_id, check)
                     if check.error:
@@ -442,6 +450,13 @@ def _ensure_can_roll_back(target: Target, snaps: Snapshots | None) -> None:
     # Proxmox/Incus API, and a guest that won't boot after an upgrade is exactly when it's needed.
     if snaps is None:
         raise ValueError(f"{target.name}: snapshots are only supported for Proxmox and Incus guests")
+
+
+def _ensure_can_back_up(target: Target, run) -> None:
+    # Goes through the platform's API (Proxmox, Incus) or SSH by itself, so unlike an upgrade it doesn't
+    # need the executor.
+    if run is None or not target.can_backup:
+        raise ValueError(f"{target.name}: {target.note or 'cannot be backed up from here'}")
 
 
 async def _check(executor, on_line=None) -> CheckResult:

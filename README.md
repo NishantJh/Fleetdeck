@@ -44,6 +44,25 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   the newest file in a folder (`type: path`), or the newest snapshot in a restic or borg repository
   (read with `--no-lock` / `--bypass-lock`, so it never gets in a running backup's way). See
   `config.example.yaml`.
+* **Back up a host:** the **Back up** button on a host row makes that machine's backup with these
+  defaults, all in one job with a live log (nothing is stopped or changed on the machine):
+  * *Proxmox node:* every guest on it with vzdump (mode `snapshot`, to a Proxmox Backup Server storage
+    if there is one, else the first backup storage; `backup_storage:` picks another, `backup_guests: false`
+    skips the guests), then the node's config (`/etc`, which holds `/etc/pve`) over SSH to that same
+    Proxmox Backup Server with the credentials and encryption key Proxmox already keeps for it, or as an
+    archive in `/var/backups/homelab-manager` if there is none. Needs `VM.Backup` and
+    `Datastore.AllocateSpace` (the setup page grants them).
+  * *Incus host:* its settings (server, projects, profiles, networks, storage pools) as a JSON file in
+    the data volume (`host-backups/`, the newest 7 are kept), and an export of each instance made by
+    Incus itself (the newest 3 per instance are kept, `backup_keep`). Those exports stay on the Incus
+    host, so copy them off with `incus export`. An instance using more than 20 GB (`backup_max_instance_gb`;
+    0 turns exports off) is left out so it can't fill the host's disk.
+  * *Any other machine over SSH (Pi, VPS):* an archive of `/etc`, `/usr/local/etc`, `/usr/local/bin`,
+    `/var/spool/cron` and the package list, plus any `include:` folders from its `backup:` entry. It goes
+    to that entry's folder, restic or borg repository, else to `/var/backups/homelab-manager` (the newest 7
+    are kept). Only archives the dashboard made itself are ever deleted.
+  This is a manual button; schedule real backups on the hosts (Proxmox backup jobs, a timer) and let the
+  *Last backup* column watch them.
 * **Snapshot first:** the Update dialog can snapshot Proxmox LXCs/VMs and Incus instances before
   upgrading (on by default, `snapshot_before_upgrade`). A guest whose storage can't snapshot at all
   (a raw disk on dir/NFS storage) is upgraded without one and the log says so; any other snapshot
@@ -307,7 +326,7 @@ pveum user token add homelab@pve dashboard --privsep 0
 
 The dashboard also has root SSH to the node, so this mainly limits the damage if the token alone
 leaks. `Sys.Modify` is only needed for refreshing package lists through the API, `Datastore.Audit`, `Datastore.AllocateSpace` and `VM.Backup` for the
-backup column (the dashboard never makes backups; Proxmox just won't list them otherwise) and `VM.Snapshot`/`VM.Snapshot.Rollback` for snapshots before upgrades.
+backup column and the **Back up** button (Proxmox won't list backups without them) and `VM.Snapshot`/`VM.Snapshot.Rollback` for snapshots before upgrades.
 
 **Restrict the SSH key** on every machine, not just the VPS: in `~/.ssh/authorized_keys`, prefix the
 dashboard's key with `from="<dashboard IP>",restrict` (`restrict` turns off port, agent and X11

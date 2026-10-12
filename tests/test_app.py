@@ -44,6 +44,20 @@ def test_demo_check_then_upgrade():
         assert check["packages"] == []
 
 
+def test_demo_backup_only_on_hosts():
+    with TestClient(create_app(AppConfig(demo=True))) as client:
+        targets = {t["target"]["name"]: t["target"] for t in client.get("/api/targets").json()["targets"]}
+        assert targets["pve"]["can_backup"] and not targets["pihole"]["can_backup"]
+        r = client.post(
+            "/api/actions", json={"action": "backup", "target_ids": [targets["pve"]["id"], targets["pihole"]["id"]]}
+        )
+        assert list(r.json()["rejected"]) == [targets["pihole"]["id"]]
+        jobs = _wait_for_jobs(client)
+        assert jobs[0]["status"] == "succeeded"
+        log = client.get(f"/api/jobs/{jobs[0]['id']}").json()["log"]
+        assert log[0] == "== Backing up pve" and log[-1] == "== Backup finished"
+
+
 def test_basic_auth():
 
     with TestClient(create_app(AppConfig(demo=True, auth=AuthConfig(password="s3cret")))) as client:

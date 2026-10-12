@@ -109,12 +109,43 @@ class DemoExecutor:
         return ExecResult(rc=0, stdout=f"{head}__REBOOT__={reboot}\n")
 
 
+class DemoBackup:
+    """What the Back up button does in the demo: the steps of a real run, without touching anything."""
+
+    def __init__(self, steps: list[str]):
+        self.steps = steps
+
+    async def run(self, on_line) -> None:
+        for step in self.steps:
+            on_line("stdout", step)
+            await asyncio.sleep(0.5)
+
+
+_DEMO_BACKUPS = {
+    "pve": [
+        "== Backing up the guests with vzdump",
+        "Backing up 3 guest(s) (100, 101, 102) to the storage pbs",
+        "INFO: Finished Backup of VM 100 (00:00:21)",
+        "== Backing up the node's config",
+        "sending the node's config to the Proxmox Backup Server storage pbs",
+    ],
+    "incus01": [
+        "== Saving the Incus settings",
+        "== Exporting the instances",
+        "Exporting web",
+        "Exporting fedora-vm",
+    ],
+    "pi4": ["== Archiving the machine's config", "wrote /var/backups/homelab-manager/homelab-config-pi4.tar.gz"],
+}
+
+
 class DemoProvider:
     name = "demo"
 
     def __init__(self) -> None:
         self._found: Discovered | None = None
         self.snapshots: dict[str, DemoSnapshots] = {}
+        self.backup_runs: dict[str, DemoBackup] = {}
 
     async def discover(self) -> Discovered:
         if self._found is not None:
@@ -152,7 +183,10 @@ class DemoProvider:
                 parent=parent,
                 backup=backups.get(name),
                 can_snapshot=kind != "host" and platform != "ssh",
+                can_backup=name in _DEMO_BACKUPS,
             )
+            if t.can_backup:
+                self.backup_runs[t.id] = DemoBackup(_DEMO_BACKUPS[name])
             ex = DemoExecutor(pm, os_name, list(lines), app="pihole" if name == "pihole" else None)
             if t.can_snapshot:
                 self.snapshots[t.id] = DemoSnapshots(ex)

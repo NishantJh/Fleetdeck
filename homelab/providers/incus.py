@@ -4,9 +4,11 @@ import asyncio
 import logging
 import time
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import httpx
 
+from ..backup_runs import BackupRun, IncusHostBackup
 from ..config import IncusConfig
 from ..executors import IncusExecutor, SSHExecutor
 from ..host_backups import HostBackups
@@ -26,8 +28,10 @@ BACKUP_RETRY = 60.0
 class IncusProvider:
     """Discovers the Incus host plus its containers and VMs via the Incus REST API."""
 
-    def __init__(self, cfg: IncusConfig):
+    def __init__(self, cfg: IncusConfig, dump_dir: Path | None = None):
         self.cfg = cfg
+        self.dump_dir = dump_dir
+        self.backup_runs: dict[str, BackupRun] = {}
         self.name = cfg.name
         self.snapshots: dict[str, IncusSnapshots] = {}
         # Target id -> (when it was read, what was found), kept per instance.
@@ -126,11 +130,13 @@ class IncusProvider:
                     updatable=ssh is not None,
                     note=None if ssh else ssh_problem or "add ssh settings to update this host",
                     backup=await self.host_backups.for_machine(self.name, self.cfg.ssh),
+                    can_backup=True,
                 ),
                 ssh,  # type: ignore[arg-type]
             )
         )
 
+        self.backup_runs = {prefix: IncusHostBackup(self.client, self.cfg, self.dump_dir, ssh)}
         instances = []
         for inst in await self._instances():
             project = inst.get("project", "default")
