@@ -38,6 +38,8 @@ def _emit(on_line: LineCallback | None, stream: str, text: str) -> None:
 
 
 class SSHExecutor:
+    detached = True  # can run a script in the background on the target (see detached.py)
+
     def __init__(self, cfg: SSHConfig):
         self.cfg = cfg
 
@@ -100,6 +102,8 @@ class SSHExecutor:
 class PctExecutor:
     """Runs inside a Proxmox LXC via `pct exec` on the node (the PVE API has no LXC exec)."""
 
+    detached = True
+
     def __init__(self, node_ssh: SSHExecutor, vmid: int):
         self.node_ssh = node_ssh
         self.vmid = vmid
@@ -152,6 +156,8 @@ def agent_error(r: httpx.Response) -> str:
 class PveAgentExecutor:
     """Runs inside a Proxmox VM through the QEMU guest agent."""
 
+    detached = True
+
     def __init__(self, client: httpx.AsyncClient, node: str, vmid: int):
         self.client = client
         self.base = f"/nodes/{node}/qemu/{vmid}/agent"
@@ -180,6 +186,8 @@ class PveAgentExecutor:
 
 class IncusExecutor:
     """Runs inside an Incus container or VM via the REST exec API (VMs need incus-agent)."""
+
+    detached = True
 
     def __init__(self, client: httpx.AsyncClient, name: str, project: str):
         self.client = client

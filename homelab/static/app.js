@@ -185,7 +185,7 @@ function render() {
   toggle.setAttribute("aria-pressed", String(state.showHidden));
   const hint = active().find((v) => v.runs_dashboard && !dismissed.has(v.target.id));
   $("#self-hint").innerHTML = hint
-    ? `<div class="hint-banner"><span><b>${esc(hint.target.name)}</b> looks like the machine this dashboard runs on. Hide it, so it isn't updated or rebooted from here by accident?</span>
+    ? `<div class="hint-banner"><span><b>${esc(hint.target.name)}</b> looks like the machine this dashboard runs on. It can be updated from here (the update keeps going if the dashboard restarts), but you may prefer to hide it so it isn't touched by accident.</span>
        <span><button class="small primary" data-hide="1" data-id="${esc(hint.target.id)}">Hide it</button> <button class="small" data-dismiss="${esc(hint.target.id)}">Keep it</button></span></div>`
     : "";
 

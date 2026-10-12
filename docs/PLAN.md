@@ -29,7 +29,7 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 - [x] Scheduled checks plus notifications (ntfy, Gotify, Discord, Telegram, webhook) when updates are pending
 - [ ] Per-target holds (skip kernel / Proxmox major upgrades)
 - [ ] Optional SSH for VMs that don't run the guest agent
-- [ ] Run upgrades detached on the target (e.g. `systemd-run`) so they survive a dashboard restart; then `protect:` is no longer needed for the dashboard's own LXC
+- [x] Run upgrades detached on the target (`systemd-run`, or `setsid nohup`) so they survive a dashboard restart; the job picks them up again on start. The dashboard's own machine can now be updated and rebooted from here
 
 ### 3. Toward the "ultimate" dashboard
 - [ ] Live resource view (CPU/RAM/disk) for nodes and guests

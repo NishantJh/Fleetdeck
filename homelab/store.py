@@ -85,7 +85,9 @@ class Store:
         self.db.executemany(sql, [(t,) for t in target_ids])
 
     def load_jobs(self, limit: int) -> list[Job]:
-        """The newest ``limit`` jobs, oldest first. Jobs that were still running are marked as failed."""
+        """The newest ``limit`` jobs, oldest first. Jobs that were still running are marked as failed,
+        except those the job manager can pick up again (an upgrade running detached on its target, or
+        a reboot it was waiting for)."""
         rows = self.db.execute("SELECT data FROM jobs ORDER BY seq DESC LIMIT ?", (limit,)).fetchall()
         jobs: list[Job] = []
         for (data,) in reversed(rows):
@@ -94,7 +96,7 @@ class Store:
             except ValueError:
                 log.warning("dropping unreadable stored job")
                 continue
-            if job.status in ("queued", "running"):
+            if job.status in ("queued", "running") and not job.resumable:
                 mark_interrupted(job)
                 self.save_job(job)
             jobs.append(job)
