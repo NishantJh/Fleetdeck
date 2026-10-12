@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from homelab.app import create_app
-from homelab.config import AppConfig, AuthConfig
+from homelab.config import AppConfig, AuthConfig, HostConfig
 from homelab.models import ExecResult
 from homelab.updates import CHECK_SCRIPT, UPGRADE_SCRIPT
 
@@ -139,7 +139,15 @@ def test_start_log_says_where_to_go_once_setup_is_done(caplog):
     with caplog.at_level("INFO", logger="homelab"), TestClient(create_app(cfg)):
         pass
     assert "Setup is done: open http://<this machine>:" in caplog.text and "'nishant'" in caplog.text
-    assert "setup#token" not in caplog.text
+    assert "setup#token" not in caplog.text and "Setup code" not in caplog.text
+
+
+def test_first_run_log_prints_the_setup_code(caplog, tmp_path):
+    app = create_app(AppConfig(hosts=[HostConfig(name="pi", host="10.0.0.2")]), config_file=str(tmp_path / "c.yaml"))
+    with caplog.at_level("INFO", logger="homelab"), TestClient(app):
+        pass
+    assert f"Setup code: {app.state.setup_token}" in caplog.text
+    assert f"/setup#token={app.state.setup_token}" in caplog.text
 
 
 def test_error_report_lists_errors_without_secrets():

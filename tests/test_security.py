@@ -19,7 +19,9 @@ def test_locked_until_setup_without_auth_for_real_machines(tmp_path):
         r = client.get("/", follow_redirects=False)
         assert r.status_code == 307 and r.headers["location"] == "/setup"
         assert client.get("/setup").status_code == 200
-        assert client.get("/api/setup").status_code == 403
+        r = client.get("/api/setup")
+        # setup.js shows its "Enter the setup code" form on this message.
+        assert r.status_code == 403 and "setup code" in r.text
         assert client.get("/api/setup", headers={"X-Setup-Token": "wrong"}).status_code == 403
         assert client.get("/api/setup", headers={"X-Setup-Token": app.state.setup_token}).status_code == 200
     assert create_app(AppConfig(hosts=[PI], allow_no_auth=True)).state.setup_token is None

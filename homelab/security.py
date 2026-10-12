@@ -180,7 +180,7 @@ def make_guard(auth: AuthConfig | None, throttle: LoginThrottle, setup_token: st
                 if secrets.compare_digest(request.headers.get("x-setup-token", ""), setup_token):
                     return await call_next(request)
                 return Response(
-                    "setup link missing or out of date: open the link printed in the container logs",
+                    "setup code missing or out of date: it is in the container's logs (Setup code: ...)",
                     status_code=403,
                 )
             if locked:
