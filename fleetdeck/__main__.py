@@ -11,10 +11,28 @@ log = logging.getLogger("fleetdeck")
 APP_UID = 10001
 
 
+class _QuietPolls(logging.Filter):
+    """Drops access-log lines for successful dashboard polling requests."""
+
+    POLLED = ("/api/targets", "/api/jobs", "/api/schedule")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        args = record.args
+        if isinstance(args, tuple) and len(args) >= 5:
+            path = str(args[2]).split("?", 1)[0]
+            if args[4] == 200 and args[1] == "GET" and (path in self.POLLED or path.startswith("/api/jobs/")):
+                return False
+        return True
+
+
 def configure_logging() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     # httpx logs every request URL at INFO, and a Telegram URL carries the bot token.
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    # asyncssh logs every connection step at INFO, and the whole script it runs on the machine.
+    logging.getLogger("asyncssh").setLevel(logging.WARNING)
+    # The dashboard polls these every few seconds; successful polls are not worth a line each.
+    logging.getLogger("uvicorn.access").addFilter(_QuietPolls())
 
 
 def server_options(cfg: AppConfig) -> dict:
