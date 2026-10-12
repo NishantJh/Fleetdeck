@@ -223,6 +223,11 @@ async def _config_step(
     if res.rc == 127:
         what = cfg.type if cfg and cfg.type != "path" else "a command it needs"
         raise RuntimeError(f"{what} is not installed on this machine")
+    if res.rc == 5 and destination:
+        raise RuntimeError(
+            f"{destination} is missing or not writable on the machine itself. The folder is looked up on the machine "
+            "the dashboard connects to (for Proxmox, the node), not inside the dashboard's container"
+        )
     if res.rc != 0:
         raise RuntimeError(f"exited with code {res.rc}")
 

@@ -82,7 +82,7 @@
         <label class="check-row"><input type="radio" name="place" id="confirm-place-default" checked> The default place</label>
         <label class="check-row"><input type="radio" name="place" id="confirm-place-custom"> A folder or network share on the machine:</label>
         <input type="text" id="confirm-place-path" placeholder="/mnt/nas/backups" autocomplete="off" spellcheck="false" style="width:100%">
-        <p class="muted" id="confirm-place-hint">The folder must exist; a network share has to be mounted there already. For Incus it is a folder in the dashboard's container.</p>
+        <p class="muted" id="confirm-place-hint">The folder must exist on the machine itself (for Proxmox, on the node, not in the dashboard's container); a network share has to be mounted there already. Only for Incus it is a folder in the dashboard's container.</p>
         <label class="check-row"><input type="checkbox" id="confirm-place-remember"> Always back up this machine here (leave unticked to choose each time)</label>
       </div>
       <menu>
