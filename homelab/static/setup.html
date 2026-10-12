@@ -18,6 +18,19 @@
   <main class="setup">
     <div id="notice"></div>
 
+    <section id="unlock" class="panel" hidden>
+      <h2>Enter the setup code</h2>
+      <p class="muted">Only someone who can see this server's logs can set it up, so nobody else on your network can claim the admin login. The code is in a log line like <code>Setup code: ...</code> and changes every time the container starts.</p>
+      <ul class="muted">
+        <li>Portainer, Dockge, Arcane, Komodo, ...: open the <b>homelab-manager</b> container's logs.</li>
+        <li>A shell on the Docker host: <code>docker logs homelab-manager 2&gt;&amp;1 | grep "Setup code"</code></li>
+      </ul>
+      <form id="unlock-form" class="form-grid">
+        <label>Setup code <input id="unlock-code" placeholder="the code, or the whole setup link" spellcheck="false" autocomplete="off" required></label>
+        <div><button class="primary">Continue</button></div>
+      </form>
+    </section>
+
     <section id="admin" class="panel" hidden>
       <h2>1. Create the admin login</h2>
       <p class="muted">This login protects the dashboard. It can run commands as root on every machine you add, so use a strong password.</p>
@@ -140,6 +153,6 @@
     </div>
   </template>
 
-  <script src="/static/setup.js?v=7"></script>
+  <script src="/static/setup.js?v=8"></script>
 </body>
 </html>

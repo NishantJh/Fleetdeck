@@ -1,5 +1,6 @@
 # The whole install: `docker compose up -d`, or paste this into any compose manager (Portainer,
-# Dockge, Arcane, Komodo, ...) and deploy. Then open the setup link from the container's logs.
+# Dockge, Arcane, Komodo, ...) and deploy. Then open http://<this machine>:8080 and enter the
+# setup code from the container's logs.
 # Nothing else to create, copy or chown.
 services:
   homelab-manager:
