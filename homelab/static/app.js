@@ -7,6 +7,8 @@ const PLATFORM = { proxmox: "Proxmox", incus: "Incus", ssh: "Standalone", demo: 
 const KIND = { host: "host", lxc: "LXC", vm: "VM", container: "container" };
 // Status dot: Proxmox says online/offline for nodes, running/stopped for guests; anything else is grey.
 const DOT = { running: "on", online: "on", stopped: "off", offline: "off" };
+// Short state words keep the State column on one line; the full word is the tooltip.
+const SHORT = { running: "up", online: "up", stopped: "off", offline: "down" };
 
 // Per-browser conveniences only; the hidden machines themselves are kept on the server.
 const remember = {
@@ -115,7 +117,7 @@ function backupCell(t) {
 function rowHtml(v, withBackup) {
   const t = v.target, c = v.check;
   const busy = !!v.active_job;
-  const reboot = c?.reboot_required ? `<span class="warn">reboot needed</span>` : "";
+  const reboot = c?.reboot_required ? `<span class="chip warn" title="Reboot needed">reboot</span>` : "";
   const notes = c?.notes?.length
     ? ` <span class="chip ${c.notes.length > 1 ? "warn" : ""}" title="${esc(c.notes.join("\n"))}">${c.notes.length > 1 ? "repo warning" : "repos"}</span>`
     : "";
@@ -125,7 +127,7 @@ function rowHtml(v, withBackup) {
     <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) ? "" : "disabled"}></td>
     <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${self}${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
     <td class="muted os" data-label="OS">${esc(c?.os || "")}</td>
-    <td data-label="State"><span class="dot ${DOT[t.status] || ""}"></span>${esc(t.status)}</td>
+    <td data-label="State"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span>${esc(SHORT[t.status] || t.status)}</span></td>
     ${withBackup ? `<td data-label="Last backup">${backupCell(t)}</td>` : ""}
     <td data-label="Updates">${updatesCell(v)} ${reboot}${notes}</td>
     <td class="muted" data-label="Checked">${c ? ago(c.checked_at) : ""}</td>
