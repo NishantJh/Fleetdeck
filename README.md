@@ -83,6 +83,9 @@ HOMELAB_DEMO=1 python -m homelab   # http://localhost:8080
 ## Install
 
 Every push to `main` publishes `ghcr.io/nishantjh/homelab-manager:latest` (amd64 and arm64).
+Every release tag (`v1.2.3`) publishes `:1.2.3`, `:1.2` and `:1`, so you can pin how much
+moves under you: `:1.2.3` never changes, `:1.2` takes patch fixes, `:1` takes any 1.x update.
+`:latest` follows `main` and may change at any time.
 Installing takes one compose file and a web page:
 
 1. Run [`docker-compose.yml`](docker-compose.yml): `docker compose up -d` in a folder holding it,
@@ -212,7 +215,7 @@ OS can still be managed).
 While the repo is private, the image is too: log in to `ghcr.io` (`docker login ghcr.io`, or
 add it as a registry in your container manager) with your GitHub username and a token that has
 `read:packages`. To pin a version instead of `latest`, use a release tag such as
-`ghcr.io/nishantjh/homelab-manager:0.2.0`.
+`ghcr.io/nishantjh/homelab-manager:1.2.3` (see [Install](#install)).
 
 ### Upgrading from the `config/` folder install
 

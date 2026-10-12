@@ -3,7 +3,8 @@
 # Nothing else to create, copy or chown.
 services:
   homelab-manager:
-    # Pin a release (e.g. :0.2.0) rather than :latest so an update is something you choose.
+    # Pin a release rather than :latest so an update is something you choose:
+    # :1.2.3 = exactly that release, :1.2 = patch fixes only, :1 = any 1.x update.
     image: ghcr.io/nishantjh/homelab-manager:latest
     # To build from source instead of pulling the image:
     # build: .
