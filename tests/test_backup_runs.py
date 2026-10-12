@@ -387,17 +387,19 @@ async def test_save_on_dashboard_streams_a_valid_archive_into_the_machine_folder
     folder = tmp / "backups"
     folder.mkdir()
     got = await run_stream(tmp, etc, folder, "my pi/4")
-    files = list((folder / "my_pi_4").glob("homelab-config-*.tar.gz"))
+    files = list((folder / "fleetdeck" / "my_pi_4").glob("homelab-config-*.tar.gz"))
     assert len(files) == 1 and f"wrote {files[0]}" in got[-1]
-    assert not list((folder / "my_pi_4").glob(".*.part")) and not (tmp / "out").exists()
+    assert not list((folder / "fleetdeck" / "my_pi_4").glob(".*.part")) and not (tmp / "out").exists()
     with tarfile.open(files[0]) as t:
         assert any(n.endswith("hosts") for n in t.getnames()) and any(n.endswith("packages.txt") for n in t.getnames())
     assert stat.S_IMODE(files[0].stat().st_mode) == 0o600
+    # Only its own folder is added to the mount; whatever else is there is not touched.
+    assert [p.name for p in folder.iterdir()] == ["fleetdeck"]
 
 
 async def test_save_on_dashboard_keeps_the_newest_seven_and_only_ours(tree):
     tmp, etc = tree
-    sub = tmp / "backups" / "pi"
+    sub = tmp / "backups" / "fleetdeck" / "pi"
     sub.mkdir(parents=True)
     for i in range(9):
         (sub / f"homelab-config-2020010{i}_000000.tar.gz").write_text("x")
@@ -432,7 +434,7 @@ async def test_a_failed_stream_leaves_no_partial_file(tree):
 
     with pytest.raises(RuntimeError, match="exited with code 4"):
         await run_stream(tmp, etc, folder, ssh=Cut())
-    assert list((folder / "pi-4").iterdir()) == []
+    assert list((folder / "fleetdeck" / "pi-4").iterdir()) == []
 
     class Truncated(FakeSSH):
         async def run_to_file(self, script, out, on_line=None, timeout=0):
@@ -441,7 +443,7 @@ async def test_a_failed_stream_leaves_no_partial_file(tree):
 
     with pytest.raises(RuntimeError):
         await run_stream(tmp, etc, folder, ssh=Truncated())
-    assert list((folder / "pi-4").iterdir()) == []
+    assert list((folder / "fleetdeck" / "pi-4").iterdir()) == []
 
 
 def test_stream_script_writes_nothing_on_the_machine_and_keeps_stdout_clean(tree):
@@ -463,8 +465,8 @@ async def test_incus_saves_settings_and_etc_into_the_machine_folder(tmp_path):
         await host.run(cb, DASHBOARD, folder)
     finally:
         backup_runs.DEFAULT_PATHS = old
-    assert len(list((folder / "skulls").glob("incus-settings-*.json"))) == 1
-    assert len(list((folder / "skulls").glob("homelab-config-*.tar.gz"))) == 1
+    assert len(list((folder / "fleetdeck" / "skulls").glob("incus-settings-*.json"))) == 1
+    assert len(list((folder / "fleetdeck" / "skulls").glob("homelab-config-*.tar.gz"))) == 1
     assert not (tmp_path / "data").exists()
 
 

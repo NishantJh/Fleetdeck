@@ -63,9 +63,10 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
     data volume (`host-backups/`), plus `/etc` of the host when it has SSH settings.
   * **On the dashboard** (any machine, recommended for one shared place): the archive is sent back over
     the connection the dashboard already uses (SSH, through a tunnel too) and saved in the dashboard's
-    backup folder, in one folder per machine: `<backup folder>/<machine name>/homelab-config-<date>_<time>.tar.gz`
+    backup folder, in one folder per machine: `<backup folder>/fleetdeck/<machine name>/homelab-config-<date>_<time>.tar.gz`
     (the Incus host also gets `incus-settings-<date>_<time>.json` there). Nothing is written on the machine and
-    nothing needs mounting on it. Each file is written under a temporary name and renamed when complete,
+    nothing needs mounting on it. The dashboard creates the `fleetdeck/` folder inside your folder and only
+    ever writes in there; it changes nothing else in the mount, including owners and permissions. Each file is written under a temporary name and renamed when complete,
     so a failed run leaves no half archive.
     **The backup folder** is `host-backups/` in the data volume unless you set `backup_folder:` in the
     config (or `FLEETDECK_BACKUP_FOLDER`). To keep them on a NAS or any other folder, mount it into the

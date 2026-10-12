@@ -15,7 +15,7 @@ the dashboard's container). It must already exist, so a share that is not mounte
 nothing lands on the wrong disk.
 
 Or it can save **on the dashboard** (``DASHBOARD``): the archive is streamed back over the connection
-the dashboard already has (SSH) into ``<backup folder>/<machine>/``, so every machine ends up in one
+the dashboard already has (SSH) into ``<backup folder>/fleetdeck/<machine>/``, so every machine ends up in one
 folder mounted in the dashboard's container. Nothing is written on the machine, and it is the same
 for a machine reached through a tunnel.
 
@@ -51,6 +51,8 @@ LOCAL_DIR = "/var/backups/homelab-manager"
 KEEP_FILES = 7
 # The place to choose for "save on the dashboard", in a run's destination and a machine's saved place.
 DASHBOARD = "dashboard"
+# Everything saved on the dashboard goes in this folder inside the backup folder; nothing else there is touched.
+APP_FOLDER = "fleetdeck"
 
 
 class BackupRun(Protocol):
@@ -78,15 +80,15 @@ def _stamp() -> str:
 
 
 def machine_folder(folder: Path | None, name: str) -> Path:
-    """``<folder>/<machine>/`` in the dashboard's backup folder, made if needed. The backup folder itself
+    """``<folder>/fleetdeck/<machine>/`` in the dashboard's backup folder, made if needed. The backup folder itself
     must be there already, so a share that is not mounted is an error, not a folder on the wrong disk."""
     if folder is None:
         raise RuntimeError("no backup folder on the dashboard is set: set backup_folder in the config")
     if not folder.is_dir():
         raise RuntimeError(f"{folder} does not exist in the dashboard's container (is the folder mounted?)")
-    sub = folder / (re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".") or "machine")
+    sub = folder / APP_FOLDER / (re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".") or "machine")
     try:
-        sub.mkdir(mode=0o700, exist_ok=True)
+        sub.mkdir(mode=0o700, parents=True, exist_ok=True)
         probe = sub / ".write-test"
         probe.touch()
         probe.unlink()
