@@ -16,6 +16,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from .envvars import env
+
 log = logging.getLogger(__name__)
 
 
@@ -348,7 +350,7 @@ LEGACY_CONFIG = "/config/config.yaml"
 
 def config_path() -> str:
     """The config file to use: ``HOMELAB_CONFIG``, else ``config.yaml``, else an older install's /config."""
-    path = os.environ.get("HOMELAB_CONFIG", "config.yaml")
+    path = env("CONFIG", "config.yaml")
     if not os.path.exists(path) and os.path.exists(LEGACY_CONFIG):
         log.info("Using %s (from an older install; the setup page can't edit it).", LEGACY_CONFIG)
         return LEGACY_CONFIG
@@ -369,16 +371,14 @@ def load_config(path: str | None = None) -> AppConfig:
     p = Path(path)
     if not p.exists():
         log.info("Config file %s not found yet; open /setup to create it.", p)
-        return AppConfig(
-            demo=os.environ.get("HOMELAB_DEMO", "") == "1", state_file=os.environ.get("HOMELAB_STATE") or None
-        )
+        return AppConfig(demo=env("DEMO", "") == "1", state_file=env("STATE") or None)
     if problem := unreadable(str(p)):
         raise ValueError(problem)
     cfg = validate_raw(yaml.safe_load(p.read_text()), str(p))
-    if os.environ.get("HOMELAB_DEMO") == "1":
+    if env("DEMO") == "1":
         cfg.demo = True
-    if os.environ.get("HOMELAB_STATE"):
-        cfg.state_file = os.environ["HOMELAB_STATE"]
+    if env("STATE"):
+        cfg.state_file = env("STATE")
     elif cfg.state_file and not Path(cfg.state_file).is_absolute():
         # Relative to the config file, like the other paths people put next to it.
         cfg.state_file = str(p.parent / cfg.state_file)

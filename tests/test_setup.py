@@ -13,12 +13,12 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-import homelab.onboarding as ob
-from homelab.__main__ import drop_privileges
-from homelab.app import create_app
-from homelab.config import AppConfig, load_config
-from homelab.models import ExecResult
-from homelab.security import hash_password, verify_password
+import fleetdeck.onboarding as ob
+from fleetdeck.__main__ import drop_privileges
+from fleetdeck.app import create_app
+from fleetdeck.config import AppConfig, load_config
+from fleetdeck.models import ExecResult
+from fleetdeck.security import hash_password, verify_password
 
 PASSWORD = "correct horse battery"
 
@@ -421,7 +421,7 @@ def test_review_fixes(configured, monkeypatch):
     client, tmp_path = configured
     # A ":" in the username could never log in with basic auth.
     with pytest.raises(ValueError, match="':'"):
-        from homelab.config import AuthConfig
+        from fleetdeck.config import AuthConfig
 
         AuthConfig(username="a:b", password="x")
     # The Incus API is opened only on the address the dashboard uses, when that is an IP.

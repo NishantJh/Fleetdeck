@@ -129,12 +129,12 @@ changes are hard to undo.
 
 ```bash
 pip install -e ".[dev]"
-HOMELAB_DEMO=1 python -m homelab   # http://localhost:8080
+FLEETDECK_DEMO=1 python -m fleetdeck   # http://localhost:8080
 ```
 
 ## Install
 
-Every push to `main` publishes `ghcr.io/nishantjh/homelab-manager:latest` (amd64 and arm64).
+Every push to `main` publishes `ghcr.io/nishantjh/fleetdeck:latest` (amd64 and arm64).
 Every release tag (`v1.2.3`) publishes `:1.2.3`, `:1.2` and `:1`, so you can pin how much
 moves under you: `:1.2.3` never changes, `:1.2` takes patch fixes, `:1` takes any 1.x update.
 `:latest` follows `main` and may change at any time.
@@ -143,13 +143,13 @@ Installing takes one compose file and a web page:
 1. Run [`docker-compose.yml`](docker-compose.yml): `docker compose up -d` in a folder holding it,
    or paste it into whatever manages your containers (Portainer, Dockge, Arcane, Komodo, ...) as a
    new stack and deploy. Plain Docker works too:
-   `docker run -d --name homelab-manager -p 8080:8080 -v homelab-data:/data --restart unless-stopped ghcr.io/nishantjh/homelab-manager:latest`.
+   `docker run -d --name fleetdeck -p 8080:8080 -v homelab-data:/data --restart unless-stopped ghcr.io/nishantjh/fleetdeck:latest`.
    Nothing else is needed: no `.env` file, no config file and no `chown`. If port 8080 is already
    used on that host, Docker refuses to start it ("port is already allocated"); set
    `HOMELAB_PORT=8081` (or any free port) in the stack's environment and deploy again.
 2. Open `http://<this machine>:8080` in a browser. Until the admin login exists it goes straight
    to the setup page, which asks for the **setup code** from the container's log (the logs view of
-   your container manager, or `docker logs homelab-manager 2>&1 | grep "Setup code"`). The code
+   your container manager, or `docker logs fleetdeck 2>&1 | grep "Setup code"`). The code
    proves you run the server, so nobody else on your network can claim the dashboard; it changes
    each time the container starts. The log also prints a link with the code already in it
    (`http://<this machine>:8080/setup#token=...`). Enter the code and create the admin login.
@@ -268,7 +268,7 @@ built for amd64 and arm64, so the dashboard itself needs a 64-bit OS (a Pi on 32
 OS can still be managed).
 
 The image is public, so `docker pull` needs no login. To pin a version instead of `latest`, use a release tag such as
-`ghcr.io/nishantjh/homelab-manager:1.2.3` (see [Install](#install)).
+`ghcr.io/nishantjh/fleetdeck:1.2.3` (see [Install](#install)).
 
 ### Upgrading from the `config/` folder install
 

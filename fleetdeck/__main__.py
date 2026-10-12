@@ -5,8 +5,9 @@ import uvicorn
 
 from .app import create_app
 from .config import AppConfig, config_path, load_config
+from .envvars import env
 
-log = logging.getLogger("homelab")
+log = logging.getLogger("fleetdeck")
 APP_UID = 10001
 
 
@@ -40,7 +41,7 @@ def drop_privileges() -> None:
     user the process keeps no capabilities. Only runs when HOMELAB_DATA is set (the image sets it),
     so running from a checkout as root is left alone.
     """
-    data = os.environ.get("HOMELAB_DATA")
+    data = env("DATA")
     if not data or not hasattr(os, "getuid") or os.getuid() != 0:
         return
     os.makedirs(data, exist_ok=True)

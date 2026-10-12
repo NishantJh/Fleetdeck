@@ -3,13 +3,13 @@
 # setup code from the container's logs.
 # Nothing else to create, copy or chown.
 services:
-  homelab-manager:
+  fleetdeck:
     # Pin a release rather than :latest so an update is something you choose:
     # :1.2.3 = exactly that release, :1.2 = patch fixes only, :1 = any 1.x update.
-    image: ghcr.io/nishantjh/homelab-manager:latest
+    image: ghcr.io/nishantjh/fleetdeck:latest
     # To build from source instead of pulling the image:
     # build: .
-    container_name: homelab-manager
+    container_name: fleetdeck
     restart: unless-stopped
     ports:
       # Port 8080 taken on this host? Set HOMELAB_PORT (e.g. 8081) in the environment or .env

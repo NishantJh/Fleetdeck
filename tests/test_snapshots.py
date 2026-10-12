@@ -6,10 +6,10 @@ from fastapi.testclient import TestClient
 from test_app import _wait_for_jobs
 from test_jobs import FakeExecutor, _finish, _inventory, _target
 
-from homelab.app import create_app
-from homelab.config import AppConfig
-from homelab.jobs import JobManager
-from homelab.snapshots import PREFIX, IncusSnapshots, PveSnapshots, prune, snapshot_name
+from fleetdeck.app import create_app
+from fleetdeck.config import AppConfig
+from fleetdeck.jobs import JobManager
+from fleetdeck.snapshots import PREFIX, IncusSnapshots, PveSnapshots, prune, snapshot_name
 
 
 class FakeSnapshots:

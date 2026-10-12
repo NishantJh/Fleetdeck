@@ -10,7 +10,7 @@ from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.x509.oid import NameOID
 
-from homelab.tls import PinnedTransport, pinned_context
+from fleetdeck.tls import PinnedTransport, pinned_context
 
 
 def _cert(subject: str, issuer_cert=None, issuer_key=None, ca=False, days=30):

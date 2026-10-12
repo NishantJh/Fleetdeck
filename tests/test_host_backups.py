@@ -4,10 +4,10 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from homelab import host_backups
-from homelab.config import HostBackupConfig, HostConfig
-from homelab.models import ExecResult
-from homelab.providers.ssh_hosts import SSHHostsProvider
+from fleetdeck import host_backups
+from fleetdeck.config import HostBackupConfig, HostConfig
+from fleetdeck.models import ExecResult
+from fleetdeck.providers.ssh_hosts import SSHHostsProvider
 
 
 class FakeExecutor:

@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from . import onboarding as ob
 from .config import AppConfig, validate_raw
+from .envvars import env
 from .setup_routes import refuse_while_busy
 from .store import Store
 
@@ -250,8 +251,8 @@ def restore_files(paths: ob.Paths, files: dict[str, bytes]) -> None:
 
 def _state_file(new: AppConfig, paths: ob.Paths) -> str | None:
     """The restored config's state file, resolved the way ``load_config`` will after the restart."""
-    if os.environ.get("HOMELAB_STATE"):
-        return os.environ["HOMELAB_STATE"]
+    if env("STATE"):
+        return env("STATE")
     if not new.state_file:
         return None
     p = Path(new.state_file)

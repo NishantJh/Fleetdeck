@@ -1,12 +1,12 @@
 from fastapi.testclient import TestClient
 from test_jobs import _finish, _inventory, _target
 
-from homelab.app import create_app
-from homelab.config import AppConfig, AuthConfig, HostConfig
-from homelab.inventory import Inventory
-from homelab.jobs import JobManager
-from homelab.models import ExecResult
-from homelab.security import LoginThrottle
+from fleetdeck.app import create_app
+from fleetdeck.config import AppConfig, AuthConfig, HostConfig
+from fleetdeck.inventory import Inventory
+from fleetdeck.jobs import JobManager
+from fleetdeck.models import ExecResult
+from fleetdeck.security import LoginThrottle
 
 PI = HostConfig(name="pi", host="10.0.0.2")
 
@@ -67,10 +67,10 @@ def test_too_many_ids_rejected():
 
 
 def test_login_throttle(monkeypatch):
-    import homelab.security
+    import fleetdeck.security
 
     now = {"t": 1000.0}
-    monkeypatch.setattr(homelab.security.time, "monotonic", lambda: now["t"])
+    monkeypatch.setattr(fleetdeck.security.time, "monotonic", lambda: now["t"])
     t = LoginThrottle(max_failures=3, window=60, block=120)
     t.failed("a")
     t.failed("a")
@@ -131,9 +131,9 @@ async def test_forced_refresh_is_rate_limited():
 
 
 async def test_job_log_is_capped(monkeypatch):
-    import homelab.jobs
+    import fleetdeck.jobs
 
-    monkeypatch.setattr(homelab.jobs, "MAX_LOG_LINES", 50)
+    monkeypatch.setattr(fleetdeck.jobs, "MAX_LOG_LINES", 50)
 
     class Chatty:
         async def run(self, script, on_line=None, timeout=0):
@@ -150,7 +150,7 @@ async def test_job_log_is_capped(monkeypatch):
 
 
 def test_server_options_trust_forwarded_headers_only_from_proxies():
-    from homelab.__main__ import server_options
+    from fleetdeck.__main__ import server_options
 
     assert server_options(AppConfig(demo=True))["forwarded_allow_ips"] == "127.0.0.1"
     opts = server_options(AppConfig(demo=True, trusted_proxies=["10.0.0.2", "172.18.0.0/16"]))

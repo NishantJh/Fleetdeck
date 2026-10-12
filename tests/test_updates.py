@@ -1,7 +1,7 @@
 import subprocess
 
-from homelab.models import ExecResult
-from homelab.updates import (
+from fleetdeck.models import ExecResult
+from fleetdeck.updates import (
     COMMUNITY_SCRIPT_DETECT,
     COMMUNITY_UPDATE_SCRIPT,
     clean_line,

@@ -6,13 +6,13 @@ import subprocess
 import httpx
 import pytest
 
-from homelab import backup_runs
-from homelab.backup_runs import IncusHostBackup, SshHostBackup, check_destination, config_script
-from homelab.config import HostBackupConfig, IncusConfig
-from homelab.inventory import Inventory
-from homelab.jobs import JobManager
-from homelab.models import ExecResult, Target
-from homelab.store import Store
+from fleetdeck import backup_runs
+from fleetdeck.backup_runs import IncusHostBackup, SshHostBackup, check_destination, config_script
+from fleetdeck.config import HostBackupConfig, IncusConfig
+from fleetdeck.inventory import Inventory
+from fleetdeck.jobs import JobManager
+from fleetdeck.models import ExecResult, Target
+from fleetdeck.store import Store
 
 
 class LocalExecutor:

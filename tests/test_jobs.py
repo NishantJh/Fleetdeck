@@ -2,10 +2,10 @@ import asyncio
 
 import pytest
 
-from homelab.inventory import Inventory
-from homelab.jobs import JobManager
-from homelab.models import ExecResult, Target
-from homelab.updates import CHECK_SCRIPT, COMMUNITY_UPDATE_SCRIPT, UPGRADE_SCRIPT
+from fleetdeck.inventory import Inventory
+from fleetdeck.jobs import JobManager
+from fleetdeck.models import ExecResult, Target
+from fleetdeck.updates import CHECK_SCRIPT, COMMUNITY_UPDATE_SCRIPT, UPGRADE_SCRIPT
 
 
 class FakeExecutor:
@@ -84,9 +84,9 @@ async def test_check_only_target_rejects_upgrade():
 
 
 async def test_eviction_keeps_active_jobs(monkeypatch):
-    import homelab.jobs
+    import fleetdeck.jobs
 
-    monkeypatch.setattr(homelab.jobs, "MAX_JOBS", 2)
+    monkeypatch.setattr(fleetdeck.jobs, "MAX_JOBS", 2)
     gate = asyncio.Event()
     inv = _inventory(*[(_target(f"t{i}"), FakeExecutor(gate=gate)) for i in range(4)])
     jobs = JobManager(inv)
@@ -109,7 +109,7 @@ class RebootingExecutor:
         self.kernel_pending = kernel_pending
 
     async def run(self, script, on_line=None, timeout=0):
-        from homelab.updates import BOOT_ID_SCRIPT, REBOOT_NOW_SCRIPT
+        from fleetdeck.updates import BOOT_ID_SCRIPT, REBOOT_NOW_SCRIPT
 
         if script == REBOOT_NOW_SCRIPT:
             self.reboots += 1
@@ -128,9 +128,9 @@ class RebootingExecutor:
 
 @pytest.fixture
 def fast_reboot(monkeypatch):
-    import homelab.jobs
+    import fleetdeck.jobs
 
-    monkeypatch.setattr(homelab.jobs, "REBOOT_POLL", 0)
+    monkeypatch.setattr(fleetdeck.jobs, "REBOOT_POLL", 0)
 
 
 async def test_reboot_waits_for_new_boot_and_rechecks(fast_reboot):
@@ -145,13 +145,13 @@ async def test_reboot_waits_for_new_boot_and_rechecks(fast_reboot):
 
 
 async def test_reboot_times_out_when_machine_does_not_come_back(fast_reboot, monkeypatch):
-    import homelab.jobs
+    import fleetdeck.jobs
 
-    monkeypatch.setattr(homelab.jobs, "REBOOT_TIMEOUT", 0)
+    monkeypatch.setattr(fleetdeck.jobs, "REBOOT_TIMEOUT", 0)
 
     class Stuck(RebootingExecutor):
         async def run(self, script, on_line=None, timeout=0):
-            from homelab.updates import REBOOT_NOW_SCRIPT
+            from fleetdeck.updates import REBOOT_NOW_SCRIPT
 
             if script == REBOOT_NOW_SCRIPT:
                 self.reboots += 1  # boot id never changes
@@ -213,18 +213,18 @@ async def test_host_reboot_waits_for_guest_jobs(fast_reboot):
 
 
 async def test_host_reboot_holds_slot_free_and_rejects_new_guest_jobs(fast_reboot, monkeypatch):
-    import homelab.jobs
+    import fleetdeck.jobs
 
     # Keep the host "rebooting" until the test lets it come back.
     back = asyncio.Event()
     real_sleep = asyncio.sleep
 
     async def sleep(delay):
-        if delay == homelab.jobs.REBOOT_POLL:
+        if delay == fleetdeck.jobs.REBOOT_POLL:
             await back.wait()
         await real_sleep(0)
 
-    monkeypatch.setattr(homelab.jobs.asyncio, "sleep", sleep)
+    monkeypatch.setattr(fleetdeck.jobs.asyncio, "sleep", sleep)
     jobs = JobManager(
         _inventory(
             (_target(), RebootingExecutor()), (_guest("g1"), FakeExecutor()), (_target("other"), FakeExecutor())

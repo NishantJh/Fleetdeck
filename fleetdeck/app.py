@@ -19,6 +19,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .backup import add_backup_routes
 from .backup_runs import check_destination
 from .config import AppConfig, config_path, load_config
+from .envvars import env
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
 from .models import CheckResult, Job, JobAction, Target
@@ -33,7 +34,7 @@ from .store import Store
 from .tunnels import TunnelManager
 from .tunnels import manager as tunnel_manager
 
-log = logging.getLogger("homelab")
+log = logging.getLogger("fleetdeck")
 STATIC = Path(__file__).parent / "static"
 
 
@@ -343,7 +344,7 @@ async def _keep_tunnels(tunnels: TunnelManager, wanted: dict) -> None:
 
 def _published_port() -> str:
     """The port people open the dashboard on: the host side of the Docker mapping, when known."""
-    return os.environ.get("HOMELAB_PORT") or os.environ.get("PORT", "8080")
+    return env("PORT") or os.environ.get("PORT", "8080")
 
 
 def _open_store(path: str | None) -> Store | None:

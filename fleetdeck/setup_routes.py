@@ -1,4 +1,4 @@
-"""HTTP API of the setup page (/setup). See :mod:`homelab.onboarding` for what it does."""
+"""HTTP API of the setup page (/setup). See :mod:`fleetdeck.onboarding` for what it does."""
 
 from __future__ import annotations
 
