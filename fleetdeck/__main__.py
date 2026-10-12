@@ -32,9 +32,12 @@ def server_options(cfg: AppConfig) -> dict:
 
 
 def own_backup_folder(uid: int, gid: int) -> None:
-    """Give the folder for backups saved on the dashboard to the app user, so mounting one needs no chown on the
-    host. Only the folder itself, not what is in it, and only if it is already there (a share that is not
-    mounted must stay an error). A share that refuses (NFS root squash) is left to its own permissions."""
+    """Check that the app user can write the folder for backups saved on the dashboard, before dropping root.
+
+    Nothing is changed by default: a NAS folder may be shared with other things. If the folder looks closed to
+    uid:gid, the log says which uid to allow or to pass as PUID/PGID. Only with FLEETDECK_BACKUP_FOLDER_CHOWN=1
+    is the folder itself (not what is in it) given to that user. A folder that is not there is left alone, so a
+    share that is not mounted stays an error."""
     folder = env("BACKUP_FOLDER")
     if not folder:
         try:
@@ -45,11 +48,21 @@ def own_backup_folder(uid: int, gid: int) -> None:
         return
     try:
         st = os.stat(folder)
-        if (st.st_uid, st.st_gid) != (uid, gid):
+        bits = st.st_mode & (0o200 if st.st_uid == uid else 0o020 if st.st_gid == gid else 0o002)
+        if bits or uid == 0:
+            return
+        if env("BACKUP_FOLDER_CHOWN") == "1":
             os.chown(folder, uid, gid)
             log.info("Gave the backup folder %s to uid %s, gid %s.", folder, uid, gid)
+            return
+        log.warning(
+            "The backup folder %s may not be writable by uid %s, gid %s (it belongs to %s:%s). Allow that user on "
+            "it, run the dashboard as a user it already allows (PUID/PGID), or set FLEETDECK_BACKUP_FOLDER_CHOWN=1 "
+            "to give the folder to uid %s.",
+            folder, uid, gid, st.st_uid, st.st_gid, uid,
+        )  # fmt: skip
     except OSError as e:
-        log.warning("Can't change the owner of the backup folder %s: %s", folder, e)
+        log.warning("Can't check or change the backup folder %s: %s", folder, e)
 
 
 def drop_privileges() -> None:

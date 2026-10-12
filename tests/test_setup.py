@@ -396,25 +396,29 @@ def test_drop_privileges_ownership(tmp_path, monkeypatch, owner, env, expected):
 
 
 @pytest.mark.skipif(not hasattr(os, "getuid") or os.getuid() != 0, reason="needs root")
-def test_drop_privileges_gives_the_backup_folder_to_the_app_user_but_not_its_contents(tmp_path, monkeypatch):
-    data, nas = tmp_path / "data", tmp_path / "nas"
-    data.mkdir()
+def test_backup_folder_owner_is_only_changed_when_asked(tmp_path, monkeypatch, caplog):
+    from fleetdeck.__main__ import own_backup_folder
+
+    nas = tmp_path / "nas"
     (nas / "old").mkdir(parents=True)
-    os.chown(data, 0, 0)
-    os.chown(nas, 0, 0)
-    monkeypatch.setenv("HOMELAB_DATA", str(data))
+    os.chown(nas, 1000, 1000)
+    os.chmod(nas, 0o755)
     monkeypatch.setenv("FLEETDECK_BACKUP_FOLDER", str(nas))
-    for name in ("PUID", "PGID"):
-        monkeypatch.delenv(name, raising=False)
-    for fn in ("setgroups", "setgid", "setuid"):
-        monkeypatch.setattr(os, fn, lambda *_: None)
-    monkeypatch.setitem(os.environ, "HOME", "/root")
-    drop_privileges()
-    assert (nas.stat().st_uid, nas.stat().st_gid) == (10001, 10001)
-    assert (nas / "old").stat().st_uid == 0
-    # A folder that is not there (an unmounted share) is not made.
+    monkeypatch.delenv("FLEETDECK_BACKUP_FOLDER_CHOWN", raising=False)
+    own_backup_folder(10001, 10001)  # not writable for that user: says so, changes nothing
+    assert nas.stat().st_uid == 1000 and "uid 10001" in caplog.text and "PUID" in caplog.text
+    caplog.clear()
+    own_backup_folder(1000, 1000)  # already the owner: silent
+    assert not caplog.text
+    os.chmod(nas, 0o777)
+    own_backup_folder(10001, 10001)  # open to everyone: silent
+    assert not caplog.text and nas.stat().st_uid == 1000
+    os.chmod(nas, 0o755)
+    monkeypatch.setenv("FLEETDECK_BACKUP_FOLDER_CHOWN", "1")
+    own_backup_folder(10001, 10001)  # opted in: the folder, not its contents
+    assert (nas.stat().st_uid, nas.stat().st_gid) == (10001, 10001) and (nas / "old").stat().st_uid == 0
     monkeypatch.setenv("FLEETDECK_BACKUP_FOLDER", str(tmp_path / "missing"))
-    drop_privileges()
+    own_backup_folder(10001, 10001)  # an unmounted share is not made
     assert not (tmp_path / "missing").exists()
 
 
