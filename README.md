@@ -1,5 +1,12 @@
 # Homelab Manager
 
+> **Developed with Claude, tested on real homelab hardware.** Most of the code was written with
+> [Claude](https://claude.com/claude-code) (Claude Code), working under the owner's direction. It has
+> been run on a Proxmox VE host with Proxmox Backup Server, an Incus host, a Raspberry Pi 4 and an
+> Ubuntu VPS. CI runs the linter and the test suite on every change, and the owner approves each
+> merge. It has **not** had an independent security audit, so read [Safety](#safety) before you point
+> it at machines you care about.
+
 One dashboard for the whole homelab. The first feature is **OS updates**: see what's pending and
 upgrade, from a single page, across:
 
@@ -72,6 +79,23 @@ Every check and upgrade streams its output to the Activity panel:
 
 ![The Activity panel](docs/screenshots/activity-light.png#gh-light-mode-only)
 ![The Activity panel](docs/screenshots/activity-dark.png#gh-dark-mode-only)
+
+## Safety
+
+Read this before you add machines. The dashboard can change things on them, and some of those
+changes are hard to undo.
+
+* It runs commands as root on each machine you add, through its own SSH key for a `homelab` user
+  with passwordless sudo. Give that key a `from=` address (see [Install](#install)) so it only works
+  from the dashboard. The setup script changes only its own `homelab` user and sudo rule, and never
+  touches your own SSH keys.
+* It upgrades only when you press *Update*, and reboots only when you ask. A Proxmox node that runs a
+  guest you put under `protect:` is never rebooted from here.
+* The setup script never changes `sshd_config` or the firewall, except the UDP port of a tunnel you
+  chose. Removing a machine on the setup page gives you a script that undoes its setup.
+* Keep the dashboard on your LAN or behind a VPN, with a login (`auth:`, set by the setup page). If you
+  reach it across a network, use HTTPS.
+* Report security problems privately, as described in [SECURITY.md](SECURITY.md).
 
 ## Try it without any infrastructure
 
@@ -215,9 +239,7 @@ no Linux capabilities (that is what the `cap_add` lines in the compose file are 
 built for amd64 and arm64, so the dashboard itself needs a 64-bit OS (a Pi on 32-bit Raspberry Pi
 OS can still be managed).
 
-While the repo is private, the image is too: log in to `ghcr.io` (`docker login ghcr.io`, or
-add it as a registry in your container manager) with your GitHub username and a token that has
-`read:packages`. To pin a version instead of `latest`, use a release tag such as
+The image is public, so `docker pull` needs no login. To pin a version instead of `latest`, use a release tag such as
 `ghcr.io/nishantjh/homelab-manager:1.2.3` (see [Install](#install)).
 
 ### Upgrading from the `config/` folder install
@@ -366,3 +388,7 @@ ruff check . && ruff format --check .
 ```
 
 See [docs/PLAN.md](docs/PLAN.md) for the roadmap.
+
+## License
+
+GNU General Public License v3.0. See [LICENSE](LICENSE).
