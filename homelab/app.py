@@ -151,7 +151,7 @@ def create_app(
         if store is not None:
             store.close()
 
-    app = FastAPI(title="Homelab Manager", lifespan=lifespan)
+    app = FastAPI(title="Fleetdeck", lifespan=lifespan)
     app.state.jobs = jobs
     app.state.inventory = inventory
     app.state.scheduler = scheduler
@@ -276,7 +276,7 @@ def create_app(
     async def notify_test():
         if notifier is None:
             raise HTTPException(400, "no notify targets configured")
-        errors = await notifier.send("Homelab Manager test", "Notifications from your homelab dashboard work.")
+        errors = await notifier.send("Fleetdeck test", "Notifications from your homelab dashboard work.")
         return {"sent": len(cfg.notify) - len(errors), "errors": errors}
 
     @app.post("/api/jobs/{job_id}/rollback")

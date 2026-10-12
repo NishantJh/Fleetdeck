@@ -1,4 +1,4 @@
-# Homelab Manager
+# Fleetdeck
 
 > **Developed with Claude, tested on real homelab hardware.** Most of the code was written with
 > [Claude](https://claude.com/claude-code) (Claude Code), working under the owner's direction. It has

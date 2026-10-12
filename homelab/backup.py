@@ -74,7 +74,7 @@ def encrypt(plain: bytes, passphrase: str) -> bytes:
 def decrypt(blob: bytes, passphrase: str) -> bytes:
     size = len(MAGIC) + _HEADER.size
     if len(blob) < size or not blob.startswith(MAGIC):
-        raise BackupError("this isn't a Homelab Manager backup file")
+        raise BackupError("this isn't a Fleetdeck backup file")
     n, r, p, salt, nonce = _HEADER.unpack(blob[len(MAGIC) : size])
     # Only settings we know; anything else is a newer version's, or a damaged or crafted file (a huge
     # n would eat memory).
@@ -166,7 +166,7 @@ def unpack(archive: bytes) -> dict[str, bytes]:
     except ValueError:
         raise BackupError("the backup has no readable manifest") from None
     if not isinstance(manifest, dict) or manifest.get("version") != VERSION:
-        raise BackupError("this backup was made by a newer version of Homelab Manager")
+        raise BackupError("this backup was made by a newer version of Fleetdeck")
     return files
 
 

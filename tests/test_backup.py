@@ -185,7 +185,7 @@ def test_restore_refuses_junk(tmp_path):
         for blob in (b"not a backup", backup.MAGIC + b"short"):
             req = {"passphrase": PASS, "data": base64.b64encode(blob).decode()}
             r = client.post("/api/backup/restore", json=req, auth=AUTH)
-            assert r.status_code == 400 and "isn't a Homelab Manager backup" in r.text
+            assert r.status_code == 400 and "isn't a Fleetdeck backup" in r.text
         r = client.post("/api/backup/restore", json={"passphrase": PASS, "data": "%%%"}, auth=AUTH)
         assert r.status_code == 400
         good = (tmp_path / "data" / "config.yaml").read_bytes()

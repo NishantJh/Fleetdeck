@@ -29,7 +29,7 @@ def _secrets(value, key: str = "") -> set[str]:
 
 def build_report(cfg: AppConfig, inventory: Inventory, jobs: JobManager) -> str:
     lines = [
-        "Homelab Manager error report",
+        "Fleetdeck error report",
         f"Made: {datetime.now(UTC):%Y-%m-%d %H:%M UTC}",
         f"Version: {__version__}, Python {platform.python_version()}",
         "Passwords and tokens are removed. Machine names and addresses are kept; edit them out before",

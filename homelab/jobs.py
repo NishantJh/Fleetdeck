@@ -569,7 +569,7 @@ class JobManager:
         name = snapshot_name()
         job.log.append(f"== Taking snapshot {name}")
         try:
-            warning = await snaps.create(name, f"Before OS upgrade by Homelab Manager (job {job.id})")
+            warning = await snaps.create(name, f"Before OS upgrade by Fleetdeck (job {job.id})")
         except Exception as e:
             if unsupported(e):
                 # "Snapshot first" is on for everything by default; a guest that can never have one
