@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .backup import add_backup_routes
+from .backup_runs import check_destination
 from .config import AppConfig, config_path, load_config
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
@@ -52,6 +53,14 @@ class ActionRequest(BaseModel):
     reboot_if_required: bool = False
     # Upgrade only: snapshot guests first.
     snapshot_first: bool = False
+    # Backup only: a folder (or mounted network share) on the machine to put it in, instead of the default.
+    destination: str | None = Field(None, max_length=1024)
+
+
+class BackupPlaceRequest(BaseModel):
+    target_id: str
+    # The folder to always back up to; None goes back to the default place.
+    path: str | None = Field(None, max_length=1024)
 
 
 class HideRequest(BaseModel):
@@ -171,6 +180,7 @@ def create_app(
         return {
             "targets": views,
             "errors": inventory.errors,
+            "backup_places": jobs.backup_places,
             "settings": {
                 "snapshot_before_upgrade": cfg.snapshot_before_upgrade,
                 "community_scripts_update": cfg.community_scripts_update,
@@ -181,18 +191,42 @@ def create_app(
     async def run_action(req: ActionRequest):
         if req.action == "rollback":
             raise HTTPException(400, "roll back from the upgrade job: POST /api/jobs/{id}/rollback")
+        destination = None
+        if req.destination and req.action == "backup":
+            try:
+                destination = check_destination(req.destination)
+            except ValueError as e:
+                raise HTTPException(400, str(e)) from None
         await inventory.refresh()
         submitted, rejected = [], {}
         for tid in req.target_ids:
             try:
                 submitted.append(
-                    _light(jobs.submit(tid, req.action, req.reboot_if_required, snapshot_first=req.snapshot_first))
-                )
+                    _light(
+                        jobs.submit(
+                            tid, req.action, req.reboot_if_required, snapshot_first=req.snapshot_first,
+                            destination=destination,
+                        )
+                    )
+                )  # fmt: skip
             except KeyError:
                 rejected[tid] = "unknown target"
             except ValueError as e:
                 rejected[tid] = str(e)
         return {"jobs": submitted, "rejected": rejected}
+
+    @app.put("/api/backup-places")
+    async def set_backup_place(req: BackupPlaceRequest):
+        """Remember the folder a host's Back up button uses (None: back to the default place)."""
+        await inventory.refresh()
+        if req.target_id not in inventory.targets:
+            raise HTTPException(404, "unknown target")
+        try:
+            path = check_destination(req.path) if req.path else None
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        jobs.set_backup_place(req.target_id, path)
+        return {"backup_places": jobs.backup_places}
 
     @app.post("/api/hidden")
     async def set_hidden(req: HideRequest):

@@ -103,9 +103,12 @@ class JobManager:
         self._rebooting: set[str] = set()
         # Machines hidden from the dashboard: left out of scheduled checks and their notifications.
         self.hidden: set[str] = set()
+        # Host id -> the folder its Back up button is set to use every time.
+        self.backup_places: dict[str, str] = {}
         if store is not None:
             self.checks = store.load_checks()
             self.hidden = store.load_hidden()
+            self.backup_places = store.load_backup_places()
             self.jobs = OrderedDict((j.id, j) for j in store.load_jobs(MAX_JOBS))
 
     def _set_check(self, target_id: str, check: CheckResult) -> None:
@@ -120,6 +123,14 @@ class JobManager:
             self.hidden.difference_update(target_ids)
         if self.store is not None:
             self._persist(self.store.set_hidden, target_ids, hidden)
+
+    def set_backup_place(self, target_id: str, path: str | None) -> None:
+        if path is None:
+            self.backup_places.pop(target_id, None)
+        else:
+            self.backup_places[target_id] = path
+        if self.store is not None:
+            self._persist(self.store.set_backup_place, target_id, path)
 
     def _save_job(self, job: Job) -> None:
         if self.store is not None:
@@ -174,12 +185,15 @@ class JobManager:
         reboot_if_required: bool = False,
         snapshot_first: bool = False,
         snapshot: str | None = None,
+        destination: str | None = None,
     ) -> Job:
         target, executor = self.inventory.get(target_id)
         if action == "rollback":
             _ensure_can_roll_back(target, self.inventory.snapshots.get(target_id))
             if not snapshot:
                 raise ValueError(f"{target.name}: no snapshot to roll back to")
+        elif action == "backup":
+            _ensure_can_back_up(target, self.inventory.backup_runs.get(target_id))
         else:
             _ensure_runnable(target, executor, action)
         host_id = self._host_id(target)
@@ -199,6 +213,7 @@ class JobManager:
             reboot_if_required=reboot_if_required and action == "upgrade",
             snapshot_first=snapshot_first and action == "upgrade",
             snapshot=snapshot if action == "rollback" else None,
+            destination=destination if action == "backup" else None,
             created_at=_now(),
         )
         self.jobs[job.id] = job
@@ -249,9 +264,17 @@ class JobManager:
                     raise RuntimeError("target no longer exists") from None
                 if job.action == "rollback":
                     _ensure_can_roll_back(target, self.inventory.snapshots.get(job.target_id))
+                elif job.action == "backup":
+                    _ensure_can_back_up(target, self.inventory.backup_runs.get(job.target_id))
                 else:
                     _ensure_runnable(target, executor, job.action)
-                if job.action == "check":
+                if job.action == "backup":
+                    job.log.append(
+                        f"== Backing up {target.name}" + (f" to {job.destination}" if job.destination else "")
+                    )
+                    await self.inventory.backup_runs[job.target_id].run(on_line, job.destination)
+                    job.log.append("== Backup finished")
+                elif job.action == "check":
                     check = await _check(executor, on_line)
                     self._set_check(job.target_id, check)
                     if check.error:
@@ -594,6 +617,13 @@ def _ensure_can_roll_back(target: Target, snaps: Snapshots | None) -> None:
     # Proxmox/Incus API, and a guest that won't boot after an upgrade is exactly when it's needed.
     if snaps is None:
         raise ValueError(f"{target.name}: snapshots are only supported for Proxmox and Incus guests")
+
+
+def _ensure_can_back_up(target: Target, run) -> None:
+    # Goes through the platform's API (Proxmox, Incus) or SSH by itself, so unlike an upgrade it doesn't
+    # need the executor.
+    if run is None or not target.can_backup:
+        raise ValueError(f"{target.name}: {target.note or 'cannot be backed up from here'}")
 
 
 async def _attached(executor, on_line) -> str:

@@ -79,6 +79,13 @@
       <ul id="confirm-list"></ul>
       <label id="confirm-reboot-row" class="check-row"><input type="checkbox" id="confirm-reboot"> Reboot afterwards if a reboot is needed</label>
       <label id="confirm-snapshot-row" class="check-row"><input type="checkbox" id="confirm-snapshot"> Snapshot Proxmox/Incus guests first, so the upgrade can be rolled back</label>
+      <div id="confirm-place-row">
+        <label class="check-row"><input type="radio" name="place" id="confirm-place-default" checked> The default place</label>
+        <label class="check-row"><input type="radio" name="place" id="confirm-place-custom"> A folder or network share on the machine:</label>
+        <input type="text" id="confirm-place-path" placeholder="/mnt/nas/backups" autocomplete="off" spellcheck="false" style="width:100%">
+        <p class="muted" id="confirm-place-hint">The folder must exist; a network share has to be mounted there already. For Incus it is a folder in the dashboard's container.</p>
+        <label class="check-row"><input type="checkbox" id="confirm-place-remember"> Always back up this machine here (leave unticked to choose each time)</label>
+      </div>
       <menu>
         <button value="cancel">Cancel</button>
         <button value="ok" id="confirm-ok" class="primary">Update</button>
@@ -86,6 +93,6 @@
     </form>
   </dialog>
 
-  <script src="/static/app.js?v=8"></script>
+  <script src="/static/app.js?v=9"></script>
 </body>
 </html>

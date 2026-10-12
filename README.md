@@ -51,6 +51,34 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   the newest file in a folder (`type: path`), or the newest snapshot in a restic or borg repository
   (read with `--no-lock` / `--bypass-lock`, so it never gets in a running backup's way). See
   `config.example.yaml`.
+* **Back up a host:** the **Back up** button on a host row saves what you need to set that machine up
+  again quickly. It never backs up guests or instances (create those separately), and nothing is stopped
+  or changed on the machine. One job with a live log:
+  * *Proxmox node* (needs SSH settings): its config (`/etc`, which holds `/etc/pve`) goes to the node's
+    Proxmox Backup Server storage, using the credentials and encryption key Proxmox already keeps for it.
+    With no PBS, or if the push fails, an archive is written to `/var/backups/homelab-manager`.
+  * *Incus host:* its settings (server, projects, profiles, networks, storage pools) as a JSON file in the
+    data volume (`host-backups/`), plus `/etc` of the host when it has SSH settings.
+  * *Any other machine over SSH (Pi, VPS):* an archive of `/etc`, `/usr/local/etc`, `/usr/local/bin`,
+    `/var/spool/cron` and the package list, plus any `include:` folders from its `backup:` entry. It goes
+    to that entry's folder, restic or borg repository, else to `/var/backups/homelab-manager`.
+  **What a Proxmox node backup contains:** all of `/etc` on the node, which includes `/etc/pve` (the
+  cluster filesystem: `storage.cfg`, every guest's config in `qemu-server/` and `lxc/`, users, ACLs and
+  API tokens, firewall, backup jobs, certificates, and `priv/` with the storage passwords and keys),
+  plus network (`/etc/network/interfaces`, `hosts`, `hostname`), `fstab`, apt sources, `vzdump.conf`,
+  modprobe/GRUB settings and the node's SSH host keys. The archive form also has `/usr/local/etc`,
+  `/usr/local/bin`, `/var/spool/cron` and the installed package list; the PBS form is `/etc` only.
+  It does **not** contain guests or their disks, `/root`, `/home`, `/var/lib/vz`, ZFS pool layout or
+  anything else outside those folders. Because it holds secrets, keep it where you keep other secrets:
+  turn on client-side encryption for the PBS storage, or use a folder only you can read (archives are
+  written readable by root only). To rebuild a node: reinstall Proxmox, restore `/etc/network`, then
+  `/etc/pve` (or re-add storage and restore the guests from their own backups).
+  The dialog also lets you pick **a folder or network share** instead (a path on the machine, with the
+  share already mounted there; for Incus, a path inside the dashboard's container). A folder that does not
+  exist is an error, so nothing lands on the local disk by mistake. Tick *Always back up this machine here*
+  to remember the choice for that machine (each machine has its own); leave it unticked to choose every
+  time. The newest 7 archives or settings files the dashboard made in a place are kept, and only those are
+  ever deleted. It is a manual button; schedule real backups on the hosts and let *Last backup* watch them.
 * **Snapshot first:** the Update dialog can snapshot Proxmox LXCs/VMs and Incus instances before
   upgrading (on by default, `snapshot_before_upgrade`). A guest whose storage can't snapshot at all
   (a raw disk on dir/NFS storage) is upgraded without one and the log says so; any other snapshot
@@ -329,7 +357,7 @@ pveum user token add homelab@pve dashboard --privsep 0
 
 The dashboard also has root SSH to the node, so this mainly limits the damage if the token alone
 leaks. `Sys.Modify` is only needed for refreshing package lists through the API, `Datastore.Audit`, `Datastore.AllocateSpace` and `VM.Backup` for the
-backup column (the dashboard never makes backups; Proxmox just won't list them otherwise) and `VM.Snapshot`/`VM.Snapshot.Rollback` for snapshots before upgrades.
+backup column (the dashboard never makes backups of guests; Proxmox just won't list them otherwise) and `VM.Snapshot`/`VM.Snapshot.Rollback` for snapshots before upgrades.
 
 **Restrict the SSH key** on every machine, not just the VPS: in `~/.ssh/authorized_keys`, prefix the
 dashboard's key with `from="<dashboard IP>",restrict` (`restrict` turns off port, agent and X11

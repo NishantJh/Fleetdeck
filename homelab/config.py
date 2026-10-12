@@ -30,7 +30,8 @@ def normalize_fingerprint(value: str | None) -> str | None:
 
 
 class HostBackupConfig(BaseModel):
-    """Where to look for this machine's newest backup. Only ever read, never written or locked."""
+    """Where this machine's backups are. Reading them never writes or locks anything; the dashboard's
+    "Back up" button also uses this as the place to put the machine's config (see backup_runs.py)."""
 
     # path: the newest file under `path` (a folder rsync/tar/etc. write to, or one backup file).
     # restic / borg: the newest snapshot/archive in `repository`.
@@ -44,6 +45,8 @@ class HostBackupConfig(BaseModel):
     env_file: str | None = None
     # Flag the backup once it's older than this many hours.
     max_age_hours: int = Field(48, ge=1)
+    # Extra folders the dashboard's "Back up" button includes next to /etc (see backup_runs.py).
+    include: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _where(self) -> HostBackupConfig:
@@ -57,6 +60,9 @@ class HostBackupConfig(BaseModel):
             value = getattr(self, key)
             if value and not value.startswith("/"):
                 raise ValueError(f"backup {key} must be a full path starting with /, not {value!r}")
+        for value in self.include:
+            if not value.startswith("/"):
+                raise ValueError(f"backup include must be full paths starting with /, not {value!r}")
         return self
 
 
