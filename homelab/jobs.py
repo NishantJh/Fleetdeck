@@ -15,10 +15,13 @@ from .store import Store, mark_interrupted
 from .updates import (
     BOOT_ID_SCRIPT,
     CHECK_SCRIPT,
+    COMMUNITY_UPDATE_SCRIPT,
     REBOOT_NOW_SCRIPT,
     UPGRADE_SCRIPT,
+    clean_line,
     parse_boot_id,
     parse_check,
+    parse_community_script,
     parse_reboot,
 )
 
@@ -73,9 +76,17 @@ class JobManager:
     results and finished jobs are saved and reloaded on the next start.
     """
 
-    def __init__(self, inventory: Inventory, max_parallel: int = 4, store: Store | None = None, snapshot_keep: int = 3):
+    def __init__(
+        self,
+        inventory: Inventory,
+        max_parallel: int = 4,
+        store: Store | None = None,
+        snapshot_keep: int = 3,
+        community_scripts_update: bool = True,
+    ):
         self.inventory = inventory
         self.snapshot_keep = snapshot_keep
+        self.community_scripts_update = community_scripts_update
         self.sem = asyncio.Semaphore(max_parallel)
         self.store = store
         self.jobs: OrderedDict[str, Job] = OrderedDict()
@@ -242,6 +253,8 @@ class JobManager:
                         raise RuntimeError(f"upgrade exited with code {res.rc}")
                     reboot = parse_reboot(res.stdout)
                     job.log.append("== Upgrade finished" + ("; reboot required" if reboot else ""))
+                    if app := parse_community_script(res.stdout):
+                        await self._community_update(job, executor, app, on_line)
                     job.log.append("== Re-checking for remaining updates")
                     # The upgrade itself worked; a failed re-check is reported but doesn't fail the job.
                     try:
@@ -348,6 +361,30 @@ class JobManager:
             job.log.append("! still reports a pending reboot")
         else:
             job.log.append("== Reboot finished")
+
+    async def _community_update(self, job: Job, executor, app: str, on_line) -> None:
+        """Run the app's own helper-script update after the OS upgrade, as `update` in the container
+        would. A plain OS upgrade can leave such an app broken (e.g. Plex after its vendor moved
+        its apt repository); its own update script repairs and restarts it."""
+        if not self.community_scripts_update:
+            job.log.append(
+                f"! {app} was installed by a community-scripts helper script and its own update was not run "
+                "(community_scripts_update is off). If it misbehaves, run `update` inside it."
+            )
+            return
+        job.log.append(f"== Running {app}'s own update (community-scripts helper script, fetched from GitHub)")
+
+        def cleaned(stream: str, line: str) -> None:
+            if line := clean_line(line):
+                on_line(stream, line)
+
+        res = await executor.run(COMMUNITY_UPDATE_SCRIPT, cleaned)
+        if res.rc != 0:
+            raise RuntimeError(
+                f"the OS upgrade worked, but {app}'s own update exited with code {res.rc}. "
+                "Run `update` inside it to finish, or roll back to the snapshot."
+            )
+        job.log.append(f"== {app}'s own update finished")
 
     async def _snapshot(self, job: Job) -> None:
         snaps = self.inventory.snapshots.get(job.target_id)

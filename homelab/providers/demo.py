@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 from ..host_backups import NOT_SET_UP
 from ..models import BackupInfo, ExecResult, Target
-from ..updates import BOOT_ID_SCRIPT, CHECK_SCRIPT, REBOOT_NOW_SCRIPT
+from ..updates import BOOT_ID_SCRIPT, CHECK_SCRIPT, COMMUNITY_UPDATE_SCRIPT, REBOOT_NOW_SCRIPT
 from . import Discovered
 
 _APT = [
@@ -49,8 +49,10 @@ class DemoSnapshots:
 
 
 class DemoExecutor:
-    def __init__(self, pm: str, os_name: str, lines: list[str]):
+    def __init__(self, pm: str, os_name: str, lines: list[str], app: str | None = None):
         self.pm, self.os_name, self.lines = pm, os_name, lines
+        # Made by a community-scripts helper script for this app.
+        self.app = app
         self.boot_id = uuid.uuid4().hex
         self.reboot_pending = any("kernel" in line for line in lines)
 
@@ -72,11 +74,19 @@ class DemoExecutor:
     async def run(self, script, on_line=None, timeout=3600) -> ExecResult:
         await asyncio.sleep(random.uniform(0.3, 1.2))
         head = f"__PM__={self.pm}\n__OS__={self.os_name}\n"
+        if self.app:
+            head += f"__CSAPP__={self.app}\n"
         if script == BOOT_ID_SCRIPT:
             return ExecResult(rc=0, stdout=f"__BOOT__={self.boot_id}\n")
         if script == REBOOT_NOW_SCRIPT:
             self.boot_id, self.reboot_pending = uuid.uuid4().hex, False
             return ExecResult(rc=0, stdout="== Reboot scheduled (demo)\n")
+        if script == COMMUNITY_UPDATE_SCRIPT:
+            for line in (f"Updated {self.app}", f"Restarted {self.app}", "Updated successfully!"):
+                if on_line:
+                    on_line("stdout", f"\x1b[32m✔️\x1b[m {line}")
+                await asyncio.sleep(0.4)
+            return ExecResult(rc=0)
         reboot = "yes" if self.reboot_pending else "no"
         if script == CHECK_SCRIPT:
             body = "\n".join(self.lines)
@@ -143,7 +153,7 @@ class DemoProvider:
                 backup=backups.get(name),
                 can_snapshot=kind != "host" and platform != "ssh",
             )
-            ex = DemoExecutor(pm, os_name, list(lines))
+            ex = DemoExecutor(pm, os_name, list(lines), app="pihole" if name == "pihole" else None)
             if t.can_snapshot:
                 self.snapshots[t.id] = DemoSnapshots(ex)
             found.append((t, ex))

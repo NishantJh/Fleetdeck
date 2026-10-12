@@ -259,6 +259,10 @@ class AppConfig(BaseModel):
     # Update dialog), and how many of the dashboard's own snapshots to keep per guest.
     snapshot_before_upgrade: bool = True
     snapshot_keep: int = Field(3, ge=1)
+    # After an OS upgrade, also run the app's own update in containers made by the Proxmox VE
+    # Helper-Scripts (community-scripts), as typing `update` in them would. A plain OS upgrade can
+    # leave such an app broken until its own update runs. Off: the job only warns.
+    community_scripts_update: bool = True
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     notify: list[NotifyConfig] = Field(default_factory=list)
     # The dashboard's address, linked from notifications (e.g. http://192.168.1.50:8080).

@@ -67,6 +67,8 @@ class CheckResult(BaseModel):
     notes: list[str] = Field(default_factory=list)
     # The dashboard's own container runs on this machine (see updates.self_script).
     runs_dashboard: bool = False
+    # Installed by the Proxmox VE Helper-Scripts (community-scripts): the app's name, e.g. "plex".
+    community_script: str | None = None
 
 
 class ExecResult(BaseModel):

@@ -1,5 +1,16 @@
+import subprocess
+
 from homelab.models import ExecResult
-from homelab.updates import parse_apk, parse_apt, parse_check, parse_dnf, parse_pacman
+from homelab.updates import (
+    COMMUNITY_SCRIPT_DETECT,
+    COMMUNITY_UPDATE_SCRIPT,
+    clean_line,
+    parse_apk,
+    parse_apt,
+    parse_check,
+    parse_dnf,
+    parse_pacman,
+)
 
 
 def test_parse_apt():
@@ -89,3 +100,67 @@ def test_parse_check_error():
 def test_parse_check_unknown_pm():
     res = parse_check(ExecResult(rc=0, stdout="__PM__=unknown\n"))
     assert res.error and "unsupported" in res.error
+
+
+# What the helper scripts' install.func writes to /usr/bin/update (no #! line).
+_CS_UPDATE = (
+    "set -a; [ -f /etc/profile.d/90-http-proxy.sh ] && . /etc/profile.d/90-http-proxy.sh; set +a; "
+    'bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/plex.sh)"\n'
+)
+
+
+def _sh(script: str, update_file, path_dir=None) -> subprocess.CompletedProcess:
+    script = script.replace("/usr/bin/update", str(update_file))
+    # Keep the fake curl and bash first on PATH (the real script puts the system's first).
+    script = script.replace("export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH", "")
+    env = {"PATH": f"{path_dir}:/usr/bin:/bin" if path_dir else "/usr/bin:/bin"}
+    return subprocess.run(["sh", "-c", script], capture_output=True, text=True, env=env, timeout=30)
+
+
+def test_detects_community_scripts_container(tmp_path):
+    f = tmp_path / "update"
+    f.write_text(_CS_UPDATE)
+    r = _sh(COMMUNITY_SCRIPT_DETECT, f)
+    assert r.stdout.strip() == "__CSAPP__=plex"
+    meta = parse_check(ExecResult(rc=0, stdout="__PM__=apt\n__BEGIN__\n__END__\n" + r.stdout))
+    assert meta.community_script == "plex"
+
+
+def test_other_update_command_is_not_a_community_script(tmp_path):
+    f = tmp_path / "update"
+    f.write_text("#!/bin/sh\napt-get update && apt-get upgrade\n")
+    assert _sh(COMMUNITY_SCRIPT_DETECT, f).stdout == ""
+    assert _sh(COMMUNITY_SCRIPT_DETECT, tmp_path / "missing").stdout == ""
+    assert parse_check(ExecResult(rc=0, stdout="__PM__=apt\n")).community_script is None
+
+
+def test_helper_update_runs_unattended_and_stops_when_download_fails(tmp_path):
+    f = tmp_path / "update"
+    f.write_text(_CS_UPDATE)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "calls"
+    # Fake curl and bash that record how they were called; curl fails when FAIL exists.
+    (bin_dir / "curl").write_text(f'#!/bin/sh\necho "curl $*" >> {log}\n[ ! -e {tmp_path}/FAIL ]\n')
+    (bin_dir / "bash").write_text(f'#!/bin/sh\necho "bash PHS_SILENT=$PHS_SILENT" >> {log}\n')
+    for p in bin_dir.iterdir():
+        p.chmod(0o755)
+    r = _sh(COMMUNITY_UPDATE_SCRIPT, f, bin_dir)
+    assert r.returncode == 0, r.stderr
+    calls = log.read_text().splitlines()
+    assert (
+        calls[0]
+        == "curl -fsS -o /dev/null https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/plex.sh"
+    )
+    assert "bash PHS_SILENT=1" in calls
+
+    (tmp_path / "FAIL").touch()
+    log.unlink()
+    r = _sh(COMMUNITY_UPDATE_SCRIPT, f, bin_dir)
+    assert r.returncode == 4 and "can't download" in r.stderr
+    assert not any(c.startswith("bash") for c in log.read_text().splitlines())
+
+
+def test_clean_line_drops_colours_and_spinner_frames():
+    assert clean_line("\x1b[33m⏳\x1b[m Updating\r\x1b[32m✔️\x1b[m Updated  ") == "✔️ Updated"
+    assert clean_line("\x1b[?25l") == ""
