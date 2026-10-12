@@ -73,6 +73,8 @@ else echo "__REBOOT__=no"; fi
 COMMUNITY_SCRIPT_DETECT = r"""
 if [ -f /usr/bin/update ] && grep -q 'community-scripts/' /usr/bin/update 2>/dev/null; then
   app=$(grep -o 'ct/[A-Za-z0-9._-]*[.]sh' /usr/bin/update | head -n 1 | sed 's#^ct/##; s#[.]sh$##')
+  # Other layouts of the file: take the name of whatever .sh address it points at.
+  [ -n "$app" ] || app=$(grep -o 'https://[^)"'"'"' ]*[.]sh' /usr/bin/update | head -n 1 | sed 's#.*/##; s#[.]sh$##')
   echo "__CSAPP__=${app:-unknown}"
 fi
 """
@@ -82,6 +84,8 @@ fi
 # you type `update` in the container. /usr/bin/update has no #! line, so it is run with sh. It runs
 # `bash -c "$(curl ...)"`, which succeeds doing nothing when the download fails, so check the
 # download first.
+COMMUNITY_UPDATE_UNPARSED = 5  # exit code: /usr/bin/update has a layout we don't know
+
 COMMUNITY_UPDATE_SCRIPT = r"""
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 export DEBIAN_FRONTEND=noninteractive PHS_SILENT=1 TERM=dumb
@@ -89,7 +93,12 @@ for c in bash curl; do
   command -v $c >/dev/null 2>&1 || { echo "$c is not installed, so the helper script can't run" >&2; exit 3; }
 done
 url=$(grep -o 'https://[^)"]*ct/[A-Za-z0-9._-]*[.]sh' /usr/bin/update | head -n 1)
-[ -n "$url" ] || { echo "can't find the helper script's address in /usr/bin/update" >&2; exit 3; }
+[ -n "$url" ] || url=$(grep -o 'https://[^)"'"'"' ]*[.]sh' /usr/bin/update | head -n 1)
+if [ -z "$url" ]; then
+  echo "can't find the helper script's address in /usr/bin/update; it starts with:" >&2
+  head -c 300 /usr/bin/update 2>/dev/null | tr -c '[:print:]\n' '?' >&2; echo >&2
+  exit 5
+fi
 curl -fsS -o /dev/null "$url" || { echo "can't download $url" >&2; exit 4; }
 sh /usr/bin/update </dev/null
 """

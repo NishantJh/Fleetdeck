@@ -161,6 +161,19 @@ def test_helper_update_runs_unattended_and_stops_when_download_fails(tmp_path):
     assert not any(c.startswith("bash") for c in log.read_text().splitlines())
 
 
+def test_other_update_file_layouts(tmp_path):
+    f = tmp_path / "update"
+    f.write_text(
+        'bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/x/plex.sh)"\n'
+    )
+    assert _sh(COMMUNITY_SCRIPT_DETECT, f).stdout.strip() == "__CSAPP__=plex"
+    # Nothing that looks like an address: detected, but the update refuses with a distinct code.
+    f.write_text("# community-scripts/ProxmoxVE\nupdate_app\n")
+    assert _sh(COMMUNITY_SCRIPT_DETECT, f).stdout.strip() == "__CSAPP__=unknown"
+    r = _sh(COMMUNITY_UPDATE_SCRIPT, f)
+    assert r.returncode == 5 and "starts with" in r.stderr and "update_app" in r.stderr
+
+
 def test_clean_line_drops_colours_and_spinner_frames():
     assert clean_line("\x1b[33m⏳\x1b[m Updating\r\x1b[32m✔️\x1b[m Updated  ") == "✔️ Updated"
     assert clean_line("\x1b[?25l") == ""

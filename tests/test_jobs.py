@@ -316,6 +316,15 @@ async def test_helper_script_update_failing_fails_the_job():
     assert job.status == "failed" and "plex's own update exited with code 1" in job.error
 
 
+async def test_helper_script_update_unparsed_only_warns():
+    ex = CommunityExecutor(update_rc=5)
+    jobs = JobManager(_inventory((_target(), ex)))
+    job = jobs.submit("t1", "upgrade")
+    await _finish(jobs)
+    assert job.status == "succeeded", job.error
+    assert any("couldn't work out how to run" in line for line in job.log)
+
+
 async def test_helper_script_update_off_only_warns():
     ex = CommunityExecutor()
     jobs = JobManager(_inventory((_target(), ex)), community_scripts_update=False)
