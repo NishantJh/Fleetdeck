@@ -174,6 +174,32 @@ def test_other_update_file_layouts(tmp_path):
     assert r.returncode == 5 and "starts with" in r.stderr and "update_app" in r.stderr
 
 
+_CS_UPDATE_NEW = """#!/usr/bin/env bash
+export SCRIPT_SLUG="plex"
+export UPDATE_SCRIPT_NAME="plex"
+export COMMUNITY_SCRIPTS_URL="https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main"
+export COMMUNITY_SCRIPTS_CORE_URL="https://raw.githubusercontent.com/community-scripts/core/main"
+_cs_helper="$(curl -fsSL "${COMMUNITY_SCRIPTS_CORE_URL}/misc/update.sh" 2>/dev/null)"
+if [[ -n "$_cs_helper" ]]; then bash -c "$_cs_helper"; fi
+"""
+
+
+def test_newer_generated_update_file(tmp_path):
+    f = tmp_path / "update"
+    f.write_text(_CS_UPDATE_NEW)
+    assert _sh(COMMUNITY_SCRIPT_DETECT, f).stdout.strip() == "__CSAPP__=plex"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    log = tmp_path / "calls"
+    (bin_dir / "curl").write_text(f'#!/bin/sh\necho "curl $*" >> {log}\n')
+    for p in bin_dir.iterdir():
+        p.chmod(0o755)
+    # Real bash runs the file (it uses [[ ]], which plain sh may not); curl is the fake.
+    r = _sh(COMMUNITY_UPDATE_SCRIPT, f, bin_dir)
+    assert r.returncode == 0, r.stderr
+    assert log.read_text().splitlines()[0].endswith("/community-scripts/ProxmoxVE/main/ct/plex.sh")
+
+
 def test_clean_line_drops_colours_and_spinner_frames():
     assert clean_line("\x1b[33m⏳\x1b[m Updating\r\x1b[32m✔️\x1b[m Updated  ") == "✔️ Updated"
     assert clean_line("\x1b[?25l") == ""

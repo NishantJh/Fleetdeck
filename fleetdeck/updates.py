@@ -72,7 +72,9 @@ else echo "__REBOOT__=no"; fi
 # upgrade knows none of that, so after one the app may need its own update to work again.
 COMMUNITY_SCRIPT_DETECT = r"""
 if [ -f /usr/bin/update ] && grep -q 'community-scripts/' /usr/bin/update 2>/dev/null; then
-  app=$(grep -o 'ct/[A-Za-z0-9._-]*[.]sh' /usr/bin/update | head -n 1 | sed 's#^ct/##; s#[.]sh$##')
+  # Newer layout: a generated script that names the app in SCRIPT_SLUG.
+  app=$(sed -n 's/^export SCRIPT_SLUG="\([A-Za-z0-9._-]*\)".*/\1/p' /usr/bin/update | head -n 1)
+  [ -n "$app" ] || app=$(grep -o 'ct/[A-Za-z0-9._-]*[.]sh' /usr/bin/update | head -n 1 | sed 's#^ct/##; s#[.]sh$##')
   # Other layouts of the file: take the name of whatever .sh address it points at.
   [ -n "$app" ] || app=$(grep -o 'https://[^)"'"'"' ]*[.]sh' /usr/bin/update | head -n 1 | sed 's#.*/##; s#[.]sh$##')
   echo "__CSAPP__=${app:-unknown}"
@@ -81,7 +83,8 @@ fi
 
 # Runs the helper script's own update, unattended (PHS_SILENT=1 skips its menus and prompts and
 # makes it abort instead of asking). The script is fetched from GitHub on every run, exactly as when
-# you type `update` in the container. /usr/bin/update has no #! line, so it is run with sh. It runs
+# you type `update` in the container. Newer files are bash scripts (with [[ ]]) and older ones have
+# no #! line, so it is run with bash. It runs
 # `bash -c "$(curl ...)"`, which succeeds doing nothing when the download fails, so check the
 # download first.
 COMMUNITY_UPDATE_UNPARSED = 5  # exit code: /usr/bin/update has a layout we don't know
@@ -92,7 +95,10 @@ export DEBIAN_FRONTEND=noninteractive PHS_SILENT=1 TERM=dumb
 for c in bash curl; do
   command -v $c >/dev/null 2>&1 || { echo "$c is not installed, so the helper script can't run" >&2; exit 3; }
 done
-url=$(grep -o 'https://[^)"]*ct/[A-Za-z0-9._-]*[.]sh' /usr/bin/update | head -n 1)
+slug=$(sed -n 's/^export SCRIPT_SLUG="\([A-Za-z0-9._-]*\)".*/\1/p' /usr/bin/update | head -n 1)
+base=$(sed -n 's/^export COMMUNITY_SCRIPTS_URL="\(https:[^"]*\)".*/\1/p' /usr/bin/update | head -n 1)
+[ -n "$slug" ] && [ -n "$base" ] && url="$base/ct/$slug.sh"
+[ -n "$url" ] || url=$(grep -o 'https://[^)"]*ct/[A-Za-z0-9._-]*[.]sh' /usr/bin/update | head -n 1)
 [ -n "$url" ] || url=$(grep -o 'https://[^)"'"'"' ]*[.]sh' /usr/bin/update | head -n 1)
 if [ -z "$url" ]; then
   echo "can't find the helper script's address in /usr/bin/update; it starts with:" >&2
@@ -100,7 +106,7 @@ if [ -z "$url" ]; then
   exit 5
 fi
 curl -fsS -o /dev/null "$url" || { echo "can't download $url" >&2; exit 4; }
-sh /usr/bin/update </dev/null
+bash /usr/bin/update </dev/null
 """
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b[()][A-Za-z0-9]")
