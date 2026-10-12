@@ -355,7 +355,7 @@ class ProxmoxProvider:
             if not online:
                 continue
             if ssh is not None:
-                backup_runs[prefix] = SshHostBackup(ssh, ssh_cfg.backup, proxmox=True)
+                backup_runs[prefix] = SshHostBackup(ssh, ssh_cfg.backup, proxmox=True, name=nname)
             # Rebooting the node would take down the protected guest, i.e. this dashboard.
             protected_here: list[str] = []
 

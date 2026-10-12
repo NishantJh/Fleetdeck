@@ -7,8 +7,10 @@ import uuid
 from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from pathlib import Path
 
 from . import detached
+from .backup_runs import DASHBOARD
 from .inventory import Inventory
 from .models import CheckResult, Job, JobAction, Stack, StacksResult, Target
 from .snapshots import Snapshots, prune, snapshot_name, unsupported
@@ -93,8 +95,11 @@ class JobManager:
         store: Store | None = None,
         snapshot_keep: int = 3,
         community_scripts_update: bool = True,
+        backup_folder: Path | None = None,
     ):
         self.inventory = inventory
+        # Where backups that are saved on the dashboard go (see backup_runs.DASHBOARD).
+        self.backup_folder = backup_folder
         self.snapshot_keep = snapshot_keep
         self.community_scripts_update = community_scripts_update
         self.sem = asyncio.Semaphore(max_parallel)
@@ -288,9 +293,18 @@ class JobManager:
                     _ensure_runnable(target, executor, job.action)
                 if job.action == "backup":
                     job.log.append(
-                        f"== Backing up {target.name}" + (f" to {job.destination}" if job.destination else "")
+                        f"== Backing up {target.name}"
+                        + (
+                            f" to {self.backup_folder or 'the dashboard'}/"
+                            if job.destination == DASHBOARD
+                            else f" to {job.destination}"
+                            if job.destination
+                            else ""
+                        )
                     )
-                    await self.inventory.backup_runs[job.target_id].run(on_line, job.destination)
+                    await self.inventory.backup_runs[job.target_id].run(
+                        on_line, job.destination, dashboard_folder=self.backup_folder
+                    )
                     job.log.append("== Backup finished")
                 elif job.action == "check":
                     check = await _check(executor, on_line)

@@ -54,14 +54,38 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
 * **Back up a host:** the **Back up** button on a host row saves what you need to set that machine up
   again quickly. It never backs up guests or instances (create those separately), and nothing is stopped
   or changed on the machine. One job with a live log:
-  * *Proxmox node* (needs SSH settings): its config (`/etc`, which holds `/etc/pve`) goes to the node's
-    Proxmox Backup Server storage, using the credentials and encryption key Proxmox already keeps for it.
-    With no PBS, or if the push fails, an archive is written to `/var/backups/homelab-manager`.
-  * *Incus host:* its settings (server, projects, profiles, networks, storage pools) as a JSON file in the
+  Where it goes is your choice per machine in the dialog; the default is the first of these:
+  * **Default place**, by machine: a Proxmox node's config goes to its Proxmox Backup Server storage
+    (with the credentials and encryption key Proxmox already keeps for it); with no PBS, or if the push
+    fails, to `/var/backups/homelab-manager` **on the node**. A Pi, VPS or other SSH machine writes an
+    archive to its `backup:` entry's folder, restic or borg repository, else to
+    `/var/backups/homelab-manager` **on that machine**. The Incus host's settings are a JSON file in the
     data volume (`host-backups/`), plus `/etc` of the host when it has SSH settings.
-  * *Any other machine over SSH (Pi, VPS):* an archive of `/etc`, `/usr/local/etc`, `/usr/local/bin`,
-    `/var/spool/cron` and the package list, plus any `include:` folders from its `backup:` entry. It goes
-    to that entry's folder, restic or borg repository, else to `/var/backups/homelab-manager`.
+  * **On the dashboard** (any machine, recommended for one shared place): the archive is sent back over
+    the connection the dashboard already uses (SSH, through a tunnel too) and saved in the dashboard's
+    backup folder, in one folder per machine: `<backup folder>/<machine name>/homelab-config-<date>_<time>.tar.gz`
+    (the Incus host also gets `incus-settings-<date>_<time>.json` there). Nothing is written on the machine and
+    nothing needs mounting on it. Each file is written under a temporary name and renamed when complete,
+    so a failed run leaves no half archive.
+    **The backup folder** is `host-backups/` in the data volume unless you set `backup_folder:` in the
+    config (or `FLEETDECK_BACKUP_FOLDER`). To keep them on a NAS or any other folder, mount it into the
+    container and point the setting at it. With Docker Compose (full path on the Docker host, here
+    `/apps/backups`):
+
+    ```yaml
+    services:
+      fleetdeck:
+        environment:
+          FLEETDECK_BACKUP_FOLDER: /backups
+        volumes:
+          - /apps/backups:/backups
+    ```
+
+    The folder must exist and be writable by the user the dashboard runs as (uid 10001, or `PUID`/`PGID`).
+    A missing or unwritable folder is an error, never a silent write to the container's disk.
+  * **A folder on the machine itself**: a full path on that machine (for Proxmox, on the node), with any
+    network share already mounted there. For Incus it is a path inside the dashboard's container.
+    A folder that does not exist is an error.
   **What a Proxmox node backup contains:** all of `/etc` on the node, which includes `/etc/pve` (the
   cluster filesystem: `storage.cfg`, every guest's config in `qemu-server/` and `lxc/`, users, ACLs and
   API tokens, firewall, backup jobs, certificates, and `priv/` with the storage passwords and keys),
@@ -73,11 +97,8 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   turn on client-side encryption for the PBS storage, or use a folder only you can read (archives are
   written readable by root only). To rebuild a node: reinstall Proxmox, restore `/etc/network`, then
   `/etc/pve` (or re-add storage and restore the guests from their own backups).
-  The dialog also lets you pick **a folder or network share** instead (a path on the machine, with the
-  share already mounted there; for Incus, a path inside the dashboard's container). A folder that does not
-  exist is an error, so nothing lands on the local disk by mistake. Tick *Always back up this machine here*
-  to remember the choice for that machine (each machine has its own); leave it unticked to choose every
-  time. The newest 7 archives or settings files the dashboard made in a place are kept, and only those are
+  Tick *Always back up this machine here* to remember the choice for that machine (each machine has
+  its own); leave it unticked to choose every time. The newest 7 archives or settings files the dashboard made in a place are kept, and only those are
   ever deleted. It is a manual button; schedule real backups on the hosts and let *Last backup* watch them.
 * **Snapshot first:** the Update dialog can snapshot Proxmox LXCs/VMs and Incus instances before
   upgrading (on by default, `snapshot_before_upgrade`). A guest whose storage can't snapshot at all

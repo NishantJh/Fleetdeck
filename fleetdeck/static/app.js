@@ -247,6 +247,7 @@ async function load(refresh = false) {
     state.errors = data.errors;
     state.settings = data.settings || {};
     state.backupPlaces = data.backup_places || {};
+    state.backupFolder = data.backup_folder || null;
     state.jobs = await api("/api/jobs");
     state.schedule = await api("/api/schedule");
     // Drop selections for targets that disappeared or can no longer be upgraded.
@@ -308,9 +309,12 @@ function confirmAction(action, ids) {
   placeRow.hidden = action !== "backup";
   if (action === "backup") {
     const saved = state.backupPlaces[ids[0]] || "";
+    const onDashboard = saved === "dashboard";
     $("#confirm-place-default").checked = !saved;
-    $("#confirm-place-custom").checked = !!saved;
-    $("#confirm-place-path").value = saved;
+    $("#confirm-place-dashboard").checked = onDashboard;
+    $("#confirm-place-dashboard-path").textContent = state.backupFolder || "its backup folder";
+    $("#confirm-place-custom").checked = !!saved && !onDashboard;
+    $("#confirm-place-path").value = onDashboard ? "" : saved;
     $("#confirm-place-remember").checked = !!saved;
   }
   $("#confirm-list").innerHTML = ids.map((id) => {
@@ -347,7 +351,8 @@ function confirmAction(action, ids) {
     const upgrade = action === "upgrade";
     let destination = null;
     if (action === "backup") {
-      destination = $("#confirm-place-custom").checked ? $("#confirm-place-path").value.trim() : null;
+      destination = $("#confirm-place-dashboard").checked ? "dashboard"
+        : $("#confirm-place-custom").checked ? $("#confirm-place-path").value.trim() : null;
       if ($("#confirm-place-custom").checked && !destination) { alert("Enter the folder to back up to, or choose the default place."); return; }
       if ($("#confirm-place-remember").checked) {
         // Choosing the default place and remembering it clears an earlier choice.

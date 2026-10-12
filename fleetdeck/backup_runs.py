@@ -14,14 +14,23 @@ Each run can name a folder instead (a network share mounted on the machine; for 
 the dashboard's container). It must already exist, so a share that is not mounted is an error and
 nothing lands on the wrong disk.
 
+Or it can save **on the dashboard** (``DASHBOARD``): the archive is streamed back over the connection
+the dashboard already has (SSH) into ``<backup folder>/<machine>/``, so every machine ends up in one
+folder mounted in the dashboard's container. Nothing is written on the machine, and it is the same
+for a machine reached through a tunnel.
+
 Nothing here deletes anything but older backups this dashboard made itself, found by their name.
 Every step runs even if an earlier one failed; the run fails at the end if any step did.
 """
 
 from __future__ import annotations
 
+import asyncio
+import gzip
 import json
 import logging
+import os
+import re
 import shlex
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -40,17 +49,23 @@ log = logging.getLogger(__name__)
 FILE_PREFIX = "homelab-config-"
 LOCAL_DIR = "/var/backups/homelab-manager"
 KEEP_FILES = 7
+# The place to choose for "save on the dashboard", in a run's destination and a machine's saved place.
+DASHBOARD = "dashboard"
 
 
 class BackupRun(Protocol):
     """Makes one host's backup, reporting progress with ``on_line``. Raises if any step failed."""
 
-    async def run(self, on_line: LineCallback, destination: str | None = None) -> None: ...
+    async def run(
+        self, on_line: LineCallback, destination: str | None = None, dashboard_folder: Path | None = None
+    ) -> None: ...
 
 
 def check_destination(value: str) -> str:
-    """A folder to back up to, as the user typed it. Raises ValueError with a message to show."""
+    """A folder to back up to, as the user typed it, or DASHBOARD. Raises ValueError with a message to show."""
     value = value.strip()
+    if value == DASHBOARD:
+        return value
     if not value.startswith("/") or len(value) > 1024:
         raise ValueError("the backup folder must be a full path starting with /, e.g. /mnt/nas/backups")
     if any(ord(c) < 32 or ord(c) == 127 for c in value) or ".." in value.split("/"):
@@ -60,6 +75,33 @@ def check_destination(value: str) -> str:
 
 def _stamp() -> str:
     return datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
+
+
+def machine_folder(folder: Path | None, name: str) -> Path:
+    """``<folder>/<machine>/`` in the dashboard's backup folder, made if needed. The backup folder itself
+    must be there already, so a share that is not mounted is an error, not a folder on the wrong disk."""
+    if folder is None:
+        raise RuntimeError("no backup folder on the dashboard is set: set backup_folder in the config")
+    if not folder.is_dir():
+        raise RuntimeError(f"{folder} does not exist in the dashboard's container (is the folder mounted?)")
+    sub = folder / (re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".") or "machine")
+    try:
+        sub.mkdir(mode=0o700, exist_ok=True)
+        probe = sub / ".write-test"
+        probe.touch()
+        probe.unlink()
+    except OSError as e:
+        raise RuntimeError(
+            f"the dashboard can't write to {sub} ({e.strerror or e}). The folder has to be writable by the "
+            "user the dashboard runs as (see PUID/PGID)"
+        ) from None
+    return sub
+
+
+def _prune(folder: Path, pattern: str, steps: _Steps) -> None:
+    for f in sorted(folder.glob(pattern))[:-KEEP_FILES]:
+        f.unlink(missing_ok=True)
+        steps.say(f"removed old {f.name}")
 
 
 class _Steps:
@@ -102,12 +144,14 @@ def config_script(
     paths: tuple[str, ...] = DEFAULT_PATHS,
     local_dir: str = LOCAL_DIR,
     destination: str | None = None,
+    stream: bool = False,
 ) -> str:
     """A POSIX sh script that backs up the machine's config where its ``backup:`` entry says.
 
     It only reads the machine's files and writes the archive. Where ``cfg`` is None: on a Proxmox node
     to its Proxmox Backup Server storage (the credentials are the ones Proxmox keeps for that storage),
-    else to /var/backups/homelab-manager. With ``destination``, to that folder instead, which must exist."""
+    else to /var/backups/homelab-manager. With ``destination``, to that folder instead, which must exist.
+    With ``stream`` the tar.gz goes to stdout and nothing is written here (see SshHostBackup)."""
     local_dir = shlex.quote(local_dir)
     extra = " ".join(shlex.quote(p) for p in (*paths, *(cfg.include if cfg else [])))
     head = f"""\
@@ -142,6 +186,13 @@ archive() {{
   done
 }}
 """
+    if stream:
+        return head + (
+            'tar -czf - "$@" "$W/packages.txt" 2>"$W/err"\n'
+            "rc=$?\n"
+            "grep -v 'Removing leading' \"$W/err\" >&2\n"
+            '[ "$rc" -le 1 ] || { echo "tar failed" >&2; exit 4; }\n'
+        )
     if destination:
         # Asked for by the user for this run: a folder that must already exist (a share that is not
         # mounted is an error, not a reason to write to the mount point on the local disk).
@@ -232,16 +283,60 @@ async def _config_step(
         raise RuntimeError(f"exited with code {res.rc}")
 
 
+def _check_gzip(path: Path) -> None:
+    """Reads the whole file through gzip, which checks its CRC, so a cut-off stream is never kept."""
+    with gzip.open(path) as f:
+        while f.read(1 << 20):
+            pass
+
+
+async def _stream_step(
+    ssh: SSHExecutor, cfg: HostBackupConfig | None, steps: _Steps, folder: Path | None, name: str
+) -> None:
+    """The machine's config as a tar.gz streamed back over SSH into ``<folder>/<name>/``. It is written under a
+    temporary name and renamed once complete, so a failed run leaves nothing that looks like a backup."""
+    sub = machine_folder(folder, name)
+    final = sub / f"{FILE_PREFIX}{_stamp()}.tar.gz"
+    part = sub / f".{final.name}.part"
+    try:
+        with open(os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as out:
+            rc = await ssh.run_to_file(config_script(cfg, stream=True), out, steps.on_line, timeout=3600)
+            out.flush()
+            os.fsync(out.fileno())
+        if rc == 127:
+            raise RuntimeError("a command it needs (tar or gzip) is not installed on this machine")
+        if rc != 0:
+            raise RuntimeError(f"exited with code {rc}")
+        await asyncio.to_thread(_check_gzip, part)
+        os.replace(part, final)
+    except BaseException:
+        part.unlink(missing_ok=True)
+        raise
+    steps.say(f"wrote {final} ({final.stat().st_size} bytes)")
+    _prune(sub, f"{FILE_PREFIX}*.tar.gz", steps)
+
+
 class SshHostBackup:
-    """A plain machine reached over SSH, or a Proxmox node (``proxmox=True``)."""
+    """A plain machine reached over SSH, or a Proxmox node (``proxmox=True``). ``name`` is the machine's
+    folder under the dashboard's backup folder."""
 
-    def __init__(self, ssh: SSHExecutor, cfg: HostBackupConfig | None, *, proxmox: bool = False):
-        self.ssh, self.cfg, self.proxmox = ssh, cfg, proxmox
+    def __init__(self, ssh: SSHExecutor, cfg: HostBackupConfig | None, *, proxmox: bool = False, name: str = ""):
+        self.ssh, self.cfg, self.proxmox, self.name = (
+            ssh,
+            cfg,
+            proxmox,
+            name or getattr(getattr(ssh, "cfg", None), "host", "machine"),
+        )
 
-    async def run(self, on_line: LineCallback, destination: str | None = None) -> None:
+    async def run(
+        self, on_line: LineCallback, destination: str | None = None, dashboard_folder: Path | None = None
+    ) -> None:
         steps = _Steps(on_line)
         title = "Backing up the node's config" if self.proxmox else "Archiving the machine's config"
-        await steps.step(title, lambda: _config_step(self.ssh, self.cfg, steps, destination, proxmox=self.proxmox))
+        if destination == DASHBOARD:
+            await steps.step(title, lambda: _stream_step(self.ssh, self.cfg, steps, dashboard_folder, self.name))
+        else:
+            await steps.step(title, lambda: _config_step(self.ssh, self.cfg, steps, destination, proxmox=self.proxmox))
         steps.finish()
 
 
@@ -283,37 +378,40 @@ class IncusHostBackup:
             out["projects"][name] = entry
         return out
 
-    async def _dump(self, steps: _Steps, destination: str | None) -> None:
-        folder = Path(destination) if destination else self.dump_dir
+    async def _dump(self, steps: _Steps, destination: str | None, dashboard_folder: Path | None) -> None:
+        prefix = f"incus-{self.cfg.name}-"
+        if destination == DASHBOARD:
+            folder, prefix = machine_folder(dashboard_folder, self.cfg.name), "incus-settings-"
+        else:
+            folder = Path(destination) if destination else self.dump_dir
         if folder is None:
             raise RuntimeError("no state_file is set, so there is no data folder to keep it in")
-        if destination:
+        if destination and destination != DASHBOARD:
             # The folder of a share, which must be there already (see the module docstring).
             if not folder.is_dir():
                 raise RuntimeError(f"{folder} does not exist in the dashboard's container (is the share mounted?)")
         else:
             folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         data = await self.settings()
-        path = folder / f"incus-{self.cfg.name}-{_stamp()}.json"
+        path = folder / f"{prefix}{_stamp()}.json"
         path.touch(mode=0o600)
         path.write_text(json.dumps(data, indent=2, default=str))
         steps.say(f"wrote {path} ({path.stat().st_size} bytes)")
-        for f in sorted(folder.glob(f"incus-{self.cfg.name}-*.json"))[:-KEEP_FILES]:
-            f.unlink(missing_ok=True)
-            steps.say(f"removed old {f.name}")
+        _prune(folder, f"{prefix}*.json", steps)
 
-    async def run(self, on_line: LineCallback, destination: str | None = None) -> None:
+    async def run(
+        self, on_line: LineCallback, destination: str | None = None, dashboard_folder: Path | None = None
+    ) -> None:
         steps = _Steps(on_line)
-        await steps.step("Saving the Incus settings", lambda: self._dump(steps, destination))
+        await steps.step("Saving the Incus settings", lambda: self._dump(steps, destination, dashboard_folder))
         if self.ssh is not None:
-            # The host's own backup: entry is not used when the user named a folder for this run.
-            await steps.step(
-                "Archiving the host's config",
-                lambda: _config_step(
-                    self.ssh,  # type: ignore[arg-type]
-                    self.cfg.ssh.backup if self.cfg.ssh else None,
-                    steps,
-                    destination,
-                ),
-            )
+            ssh, cfg = self.ssh, self.cfg.ssh.backup if self.cfg.ssh else None
+            # The host's own backup: entry is not used when the user named a place for this run.
+            if destination == DASHBOARD:
+                await steps.step(
+                    "Archiving the host's config",
+                    lambda: _stream_step(ssh, cfg, steps, dashboard_folder, self.cfg.name),
+                )
+            else:
+                await steps.step("Archiving the host's config", lambda: _config_step(ssh, cfg, steps, destination))
         steps.finish()

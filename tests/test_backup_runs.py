@@ -2,12 +2,13 @@ import json
 import os
 import stat
 import subprocess
+import tarfile
 
 import httpx
 import pytest
 
 from fleetdeck import backup_runs
-from fleetdeck.backup_runs import IncusHostBackup, SshHostBackup, check_destination, config_script
+from fleetdeck.backup_runs import DASHBOARD, IncusHostBackup, SshHostBackup, check_destination, config_script
 from fleetdeck.config import HostBackupConfig, IncusConfig
 from fleetdeck.inventory import Inventory
 from fleetdeck.jobs import JobManager
@@ -29,6 +30,14 @@ class LocalExecutor:
         for line in p.stderr.splitlines():
             on_line and on_line("stderr", line)
         return ExecResult(rc=p.returncode, stdout=p.stdout, stderr=p.stderr)
+
+    async def run_to_file(self, script, out, on_line=None, timeout=0):
+        self.scripts.append(script)
+        p = subprocess.run(["sh", "-c", script], capture_output=True, env={**os.environ, **(self.env or {})})
+        out.write(p.stdout)
+        for line in p.stderr.decode().splitlines():
+            on_line and on_line("stderr", line)
+        return p.returncode
 
 
 def lines():
@@ -270,7 +279,8 @@ class Runs:
     def __init__(self, fail=False):
         self.fail = fail
 
-    async def run(self, on_line, destination=None):
+    async def run(self, on_line, destination=None, dashboard_folder=None):
+        self.folder = dashboard_folder
         on_line("stdout", f"step one {destination or ''}".strip())
         if self.fail:
             raise RuntimeError("step two failed")
@@ -350,3 +360,124 @@ async def test_backup_is_refused_where_there_is_none():
 
 def test_module_names_only_its_own_backups_for_pruning():
     assert backup_runs.FILE_PREFIX.startswith("homelab-config-")
+
+
+# ---- save on the dashboard: the archive is streamed back over SSH ----
+
+
+class FakeSSH(LocalExecutor):
+    class cfg:  # noqa: N801 - stands in for SSHConfig
+        host = "10.0.0.5"
+
+
+async def run_stream(tmp, etc, folder, name="pi-4", ssh=None):
+    run = SshHostBackup(ssh or FakeSSH(), None, name=name)
+    got, cb = lines()
+    old = backup_runs.DEFAULT_PATHS
+    backup_runs.DEFAULT_PATHS = (str(etc),)
+    try:
+        await run.run(cb, DASHBOARD, folder)
+    finally:
+        backup_runs.DEFAULT_PATHS = old
+    return got
+
+
+async def test_save_on_dashboard_streams_a_valid_archive_into_the_machine_folder(tree):
+    tmp, etc = tree
+    folder = tmp / "backups"
+    folder.mkdir()
+    got = await run_stream(tmp, etc, folder, "my pi/4")
+    files = list((folder / "my_pi_4").glob("homelab-config-*.tar.gz"))
+    assert len(files) == 1 and f"wrote {files[0]}" in got[-1]
+    assert not list((folder / "my_pi_4").glob(".*.part")) and not (tmp / "out").exists()
+    with tarfile.open(files[0]) as t:
+        assert any(n.endswith("hosts") for n in t.getnames()) and any(n.endswith("packages.txt") for n in t.getnames())
+    assert stat.S_IMODE(files[0].stat().st_mode) == 0o600
+
+
+async def test_save_on_dashboard_keeps_the_newest_seven_and_only_ours(tree):
+    tmp, etc = tree
+    sub = tmp / "backups" / "pi"
+    sub.mkdir(parents=True)
+    for i in range(9):
+        (sub / f"homelab-config-2020010{i}_000000.tar.gz").write_text("x")
+    (sub / "mine.tar.gz").write_text("not ours")
+    await run_stream(tmp, etc, tmp / "backups", "pi")
+    assert len(list(sub.glob("homelab-config-*.tar.gz"))) == 7 and (sub / "mine.tar.gz").exists()
+
+
+async def test_save_on_dashboard_needs_the_folder_to_be_there_and_writable(tree):
+    tmp, etc = tree
+    with pytest.raises(RuntimeError, match="does not exist in the dashboard's container"):
+        await run_stream(tmp, etc, tmp / "nas")
+    assert not (tmp / "nas").exists()
+    with pytest.raises(RuntimeError, match="no backup folder"):
+        await run_stream(tmp, etc, None)
+    if os.geteuid() != 0:
+        ro = tmp / "ro"
+        ro.mkdir(mode=0o500)
+        with pytest.raises(RuntimeError, match="can't write"):
+            await run_stream(tmp, etc, ro)
+
+
+async def test_a_failed_stream_leaves_no_partial_file(tree):
+    tmp, etc = tree
+    folder = tmp / "backups"
+    folder.mkdir()
+
+    class Cut(FakeSSH):
+        async def run_to_file(self, script, out, on_line=None, timeout=0):
+            out.write(b"\x1f\x8b half an archive")
+            return 4
+
+    with pytest.raises(RuntimeError, match="exited with code 4"):
+        await run_stream(tmp, etc, folder, ssh=Cut())
+    assert list((folder / "pi-4").iterdir()) == []
+
+    class Truncated(FakeSSH):
+        async def run_to_file(self, script, out, on_line=None, timeout=0):
+            out.write(b"not gzip at all")
+            return 0
+
+    with pytest.raises(RuntimeError):
+        await run_stream(tmp, etc, folder, ssh=Truncated())
+    assert list((folder / "pi-4").iterdir()) == []
+
+
+def test_stream_script_writes_nothing_on_the_machine_and_keeps_stdout_clean(tree):
+    tmp, etc = tree
+    s = script(None, tmp, etc, stream=True)
+    p = subprocess.run(["sh", "-c", s], capture_output=True)
+    assert p.returncode == 0 and p.stdout[:2] == b"\x1f\x8b" and not (tmp / "out").exists()
+
+
+async def test_incus_saves_settings_and_etc_into_the_machine_folder(tmp_path):
+    folder = tmp_path / "backups"
+    folder.mkdir()
+    inc, _ = incus(tmp_path, IncusConfig(name="skulls", socket="/x"))
+    got, cb = lines()
+    host = IncusHostBackup(inc.client, inc.cfg, tmp_path / "data", FakeSSH())
+    old = backup_runs.DEFAULT_PATHS
+    backup_runs.DEFAULT_PATHS = (str(tmp_path),)
+    try:
+        await host.run(cb, DASHBOARD, folder)
+    finally:
+        backup_runs.DEFAULT_PATHS = old
+    assert len(list((folder / "skulls").glob("incus-settings-*.json"))) == 1
+    assert len(list((folder / "skulls").glob("homelab-config-*.tar.gz"))) == 1
+    assert not (tmp_path / "data").exists()
+
+
+def test_dashboard_is_a_valid_destination_and_the_job_gets_the_folder(tmp_path):
+    assert check_destination(" dashboard ") == "dashboard"
+
+
+async def test_backup_job_hands_the_dashboard_folder_to_the_run(tmp_path):
+    runs = Runs()
+    inv = Inventory([])
+    t = Target(id="h", name="h", platform="ssh", source="hosts", kind="host", can_backup=True)
+    inv.targets, inv.backup_runs = {"h": (t, None)}, {"h": runs}
+    jobs = JobManager(inv, backup_folder=tmp_path)
+    job = jobs.submit("h", "backup", destination="dashboard")
+    await finish(jobs)
+    assert job.status == "succeeded" and runs.folder == tmp_path and job.log[0] == f"== Backing up h to {tmp_path}/"

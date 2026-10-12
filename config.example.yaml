@@ -57,6 +57,11 @@ notify: []
 # A relative path is relative to this file.
 # state_file: ./data/state.db
 
+# Where "Back up" saves a machine's config when you choose "On the dashboard": one subfolder per machine.
+# Default: host-backups/ next to the state file. To use a NAS or other folder, mount it into the container
+# and set it here (or FLEETDECK_BACKUP_FOLDER). It must exist and be writable by the dashboard.
+# backup_folder: /backups
+
 # SSH host keys of every machine (`ssh-keyscan host1 host2 ... > config/known_hosts`). Every SSH entry
 # uses this unless it names its own; a machine with neither is refused. A Proxmox cluster already
 # keeps all its nodes' keys in /etc/pve/priv/known_hosts. Include each node's cluster IP (the address
