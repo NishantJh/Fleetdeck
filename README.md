@@ -143,7 +143,7 @@ Installing takes one compose file and a web page:
 1. Run [`docker-compose.yml`](docker-compose.yml): `docker compose up -d` in a folder holding it,
    or paste it into whatever manages your containers (Portainer, Dockge, Arcane, Komodo, ...) as a
    new stack and deploy. Plain Docker works too:
-   `docker run -d --name fleetdeck -p 8080:8080 -v homelab-data:/data --restart unless-stopped ghcr.io/nishantjh/fleetdeck:latest`.
+   `docker run -d --name fleetdeck -p 8080:8080 -v fleetdeck-data:/data --restart unless-stopped ghcr.io/nishantjh/fleetdeck:latest`.
    Nothing else is needed: no `.env` file, no config file and no `chown`. If port 8080 is already
    used on that host, Docker refuses to start it ("port is already allocated"); set
    `FLEETDECK_PORT=8081` (or any free port) in the stack's environment and deploy again.
@@ -238,7 +238,7 @@ Do a hard reload: `Ctrl+Shift+R` (Windows, Linux), `Cmd+Shift+R` (Mac, Chrome an
 
 ### The data folder
 
-Everything the dashboard keeps is in `/data` (the `homelab-data` volume, or a folder if you mount
+Everything the dashboard keeps is in `/data` (the `fleetdeck-data` volume, or a folder if you mount
 one there instead): `config.yaml`, its SSH key, the pinned host keys, the Incus client certificate
 and the check history. Back it up and you have backed up the whole install. Every file in it is
 readable only by the dashboard; edit the config on the setup page. Nothing else on the host (the
@@ -277,8 +277,29 @@ An install that mounts `./config:/config:ro` keeps working unchanged: the dashbo
 switch, remove the `config` volume and `user:` from the compose file, deploy, and set the
 machines up again from the setup page.
 
-The compose file now uses a named volume (`homelab-data`). If yours mounts `./data:/data`, keep
+The compose file now uses a named volume (`fleetdeck-data`). If yours mounts `./data:/data`, keep
 that line instead, or the check history in it is left behind.
+
+#### Moving an older `homelab-data` volume to `fleetdeck-data`
+
+Docker can't rename a volume, so copy it. Your machines, keys and history come along, and nothing
+needs re-running on any machine. Do this on the machine running the dashboard (for Arcane, the
+LXC's console); **STACK** is your stack's name in Arcane.
+
+1. In Arcane, **stop** the stack (don't delete it).
+2. Find the exact volume name; Docker puts the stack name in front:
+   `docker volume ls | grep homelab-data` (e.g. `STACK_homelab-data`).
+3. Copy it into a new one (the old one is left untouched):
+   ```
+   docker volume create STACK_fleetdeck-data
+   docker run --rm -v STACK_homelab-data:/from:ro -v STACK_fleetdeck-data:/to alpine sh -c 'cp -a /from/. /to/'
+   ```
+4. Put the new compose file in the stack (it uses `fleetdeck-data`) and deploy. Compose may warn
+   that the volume "was not created by Compose"; that is harmless.
+5. Open the dashboard: your machines should be there with no setup. Once happy, remove the old
+   volume with `docker volume rm STACK_homelab-data` (or keep it as a spare backup).
+
+The older `HOMELAB_PORT` setting is no longer read; use `FLEETDECK_PORT`.
 
 Removing a machine on the setup page leaves the machine itself as it is: delete the `homelab`
 user and `/etc/sudoers.d/homelab-manager` there, and on Proxmox the `homelab@pve` token (or on

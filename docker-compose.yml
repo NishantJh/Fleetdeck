@@ -14,17 +14,16 @@ services:
     ports:
       # Port 8080 taken on this host? Set FLEETDECK_PORT (e.g. 8081) in the environment or .env
       # instead of editing this. To listen on one interface only: "192.168.1.50:${FLEETDECK_PORT:-8080}:8080"
-      # (the older HOMELAB_PORT still works).
-      - "${FLEETDECK_PORT:-${HOMELAB_PORT:-8080}}:8080"
+      - "${FLEETDECK_PORT:-8080}:8080"
     environment:
       # Only so the setup link in the logs shows the right port.
-      FLEETDECK_PORT: ${FLEETDECK_PORT:-${HOMELAB_PORT:-8080}}
+      FLEETDECK_PORT: ${FLEETDECK_PORT:-8080}
     volumes:
       # Config, the dashboard's own keys and its history: the whole install, so back it up.
       # A named volume works the same in every tool. To keep it in a folder instead, use e.g.
       # `- ./data:/data`. The app runs as the folder's owner, so it stays yours (a root-owned one
       # goes to uid 10001). Rootless Docker/Podman: add `environment: {PUID: "0"}`.
-      - homelab-data:/data
+      - fleetdeck-data:/data
     # Hardening: read-only filesystem, and only the capabilities needed to sort out /data's owner at
     # start. The app drops them, and root, before it does anything else.
     read_only: true
@@ -42,4 +41,4 @@ services:
       - no-new-privileges:true
 
 volumes:
-  homelab-data:
+  fleetdeck-data:
