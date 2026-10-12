@@ -55,6 +55,17 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   * *Any other machine over SSH (Pi, VPS):* an archive of `/etc`, `/usr/local/etc`, `/usr/local/bin`,
     `/var/spool/cron` and the package list, plus any `include:` folders from its `backup:` entry. It goes
     to that entry's folder, restic or borg repository, else to `/var/backups/homelab-manager`.
+  **What a Proxmox node backup contains:** all of `/etc` on the node, which includes `/etc/pve` (the
+  cluster filesystem: `storage.cfg`, every guest's config in `qemu-server/` and `lxc/`, users, ACLs and
+  API tokens, firewall, backup jobs, certificates, and `priv/` with the storage passwords and keys),
+  plus network (`/etc/network/interfaces`, `hosts`, `hostname`), `fstab`, apt sources, `vzdump.conf`,
+  modprobe/GRUB settings and the node's SSH host keys. The archive form also has `/usr/local/etc`,
+  `/usr/local/bin`, `/var/spool/cron` and the installed package list; the PBS form is `/etc` only.
+  It does **not** contain guests or their disks, `/root`, `/home`, `/var/lib/vz`, ZFS pool layout or
+  anything else outside those folders. Because it holds secrets, keep it where you keep other secrets:
+  turn on client-side encryption for the PBS storage, or use a folder only you can read (archives are
+  written readable by root only). To rebuild a node: reinstall Proxmox, restore `/etc/network`, then
+  `/etc/pve` (or re-add storage and restore the guests from their own backups).
   The dialog also lets you pick **a folder or network share** instead (a path on the machine, with the
   share already mounted there; for Incus, a path inside the dashboard's container). A folder that does not
   exist is an error, so nothing lands on the local disk by mistake. Tick *Always back up this machine here*
