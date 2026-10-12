@@ -134,10 +134,6 @@ FLEETDECK_DEMO=1 python -m fleetdeck   # http://localhost:8080
 
 ## Install
 
-Every push to `main` publishes `ghcr.io/nishantjh/fleetdeck:latest` (amd64 and arm64).
-Every release tag (`v1.2.3`) publishes `:1.2.3`, `:1.2` and `:1`, so you can pin how much
-moves under you: `:1.2.3` never changes, `:1.2` takes patch fixes, `:1` takes any 1.x update.
-`:latest` follows `main` and may change at any time.
 Installing takes one compose file and a web page:
 
 1. Run [`docker-compose.yml`](docker-compose.yml): `docker compose up -d` in a folder holding it,
