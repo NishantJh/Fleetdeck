@@ -57,6 +57,10 @@ class PveNodeExecutor:
         self.node = node
         self.ssh = ssh
 
+    @property
+    def detached(self) -> bool:
+        return self.ssh is not None
+
     async def run(self, script, on_line=None, timeout=DEFAULT_TIMEOUT) -> ExecResult:
         if self.ssh is None:
             raise RuntimeError("upgrading the Proxmox host needs ssh settings for this node")
