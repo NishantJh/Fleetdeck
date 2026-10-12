@@ -31,13 +31,9 @@ def server_options(cfg: AppConfig) -> dict:
     return opts
 
 
-def own_backup_folder(uid: int, gid: int) -> None:
-    """Check that the app user can write the folder for backups saved on the dashboard, before dropping root.
-
-    Nothing is changed by default: a NAS folder may be shared with other things. If the folder looks closed to
-    uid:gid, the log says which uid to allow or to pass as PUID/PGID. Only with FLEETDECK_BACKUP_FOLDER_CHOWN=1
-    is the folder itself (not what is in it) given to that user. A folder that is not there is left alone, so a
-    share that is not mounted stays an error."""
+def check_backup_folder() -> None:
+    """After dropping root: try to write in the folder for backups saved on the dashboard, and say what to do
+    if that fails. Nothing is changed or created: a share that is not mounted stays an error at backup time."""
     folder = env("BACKUP_FOLDER")
     if not folder:
         try:
@@ -47,22 +43,17 @@ def own_backup_folder(uid: int, gid: int) -> None:
     if not folder or not os.path.isdir(folder):
         return
     try:
-        st = os.stat(folder)
-        bits = st.st_mode & (0o200 if st.st_uid == uid else 0o020 if st.st_gid == gid else 0o002)
-        if bits or uid == 0:
-            return
-        if env("BACKUP_FOLDER_CHOWN") == "1":
-            os.chown(folder, uid, gid)
-            log.info("Gave the backup folder %s to uid %s, gid %s.", folder, uid, gid)
-            return
-        log.warning(
-            "The backup folder %s may not be writable by uid %s, gid %s (it belongs to %s:%s). Allow that user on "
-            "it, run the dashboard as a user it already allows (PUID/PGID), or set FLEETDECK_BACKUP_FOLDER_CHOWN=1 "
-            "to give the folder to uid %s.",
-            folder, uid, gid, st.st_uid, st.st_gid, uid,
-        )  # fmt: skip
+        probe = os.path.join(folder, f".fleetdeck-write-test-{os.getpid()}")
+        with open(probe, "wb"):
+            pass
+        os.unlink(probe)
     except OSError as e:
-        log.warning("Can't check or change the backup folder %s: %s", folder, e)
+        log.warning(
+            "The backup folder %s is not writable as uid %s (%s). On the NAS, allow that user to write there or map "
+            "all users to one that can; the dashboard never changes the folder's owner. Backups saved on the "
+            "dashboard fail until then.",
+            folder, os.getuid(), e.strerror or e,
+        )  # fmt: skip
 
 
 def drop_privileges() -> None:
@@ -98,7 +89,6 @@ def drop_privileges() -> None:
                     os.lchown(path, uid, gid)
             except OSError as e:  # e.g. rootless Docker can't map the uid; the app reports what it can't read
                 log.warning("Can't change the owner of %s: %s", path, e)
-    own_backup_folder(uid, gid)
     os.setgroups([])
     os.setgid(gid)
     os.setuid(uid)
@@ -125,6 +115,7 @@ def serve(path: str) -> bool:
 def main() -> None:
     configure_logging()
     drop_privileges()
+    check_backup_folder()
     path = config_path()
     # The setup page saves the config and asks for a restart; the new config is loaded in-process.
     while serve(path):

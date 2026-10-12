@@ -81,12 +81,12 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
           - /apps/backups:/backups
     ```
 
-    The folder must exist (mount it first) and be writable by the user the dashboard runs as (uid 10001 by
-    default, or `PUID`/`PGID`). The dashboard never changes a mounted folder's owner on its own: if the
-    folder looks closed to that user, the log at start says which uid to allow. Fix it on the NAS, run the
-    dashboard as a user the share already allows (`PUID`/`PGID`), or set `FLEETDECK_BACKUP_FOLDER_CHOWN=1` to
-    have the container give that one folder (not its contents) to the app user at start. A missing or
-    unwritable folder is an error when you back up, never a silent write to the container's disk.
+    The folder must exist (mount it first) and be writable by the user the dashboard runs as (uid 10001
+    by default; `PUID`/`PGID` only if you really need another). The dashboard never changes the owner of a
+    mounted folder. At start it tries to write a small test file there and, if that fails, the log says so
+    and names the uid: allow that user on the NAS, or map all users to one that can write (a share owned by
+    `nobody` usually already does). A missing or unwritable folder is an error when you back up, never a
+    silent write to the container's disk.
   * **A folder on the machine itself**: a full path on that machine (for Proxmox, on the node), with any
     network share already mounted there. For Incus it is a path inside the dashboard's container.
     A folder that does not exist is an error.

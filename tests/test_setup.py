@@ -395,31 +395,21 @@ def test_drop_privileges_ownership(tmp_path, monkeypatch, owner, env, expected):
     assert oct(data.stat().st_mode & 0o777) == "0o755"  # the folder's mode is left alone
 
 
-@pytest.mark.skipif(not hasattr(os, "getuid") or os.getuid() != 0, reason="needs root")
-def test_backup_folder_owner_is_only_changed_when_asked(tmp_path, monkeypatch, caplog):
-    from fleetdeck.__main__ import own_backup_folder
+def test_backup_folder_check_writes_and_removes_a_probe_and_warns_when_it_cannot(tmp_path, monkeypatch, caplog):
+    from fleetdeck.__main__ import check_backup_folder
 
     nas = tmp_path / "nas"
-    (nas / "old").mkdir(parents=True)
-    os.chown(nas, 1000, 1000)
-    os.chmod(nas, 0o755)
+    nas.mkdir()
     monkeypatch.setenv("FLEETDECK_BACKUP_FOLDER", str(nas))
-    monkeypatch.delenv("FLEETDECK_BACKUP_FOLDER_CHOWN", raising=False)
-    own_backup_folder(10001, 10001)  # not writable for that user: says so, changes nothing
-    assert nas.stat().st_uid == 1000 and "uid 10001" in caplog.text and "PUID" in caplog.text
+    check_backup_folder()
+    assert list(nas.iterdir()) == [] and not caplog.text
+    monkeypatch.setattr(os, "unlink", lambda p: (_ for _ in ()).throw(PermissionError(13, "Permission denied")))
+    check_backup_folder()
+    assert "not writable as uid" in caplog.text and "never changes the folder's owner" in caplog.text
     caplog.clear()
-    own_backup_folder(1000, 1000)  # already the owner: silent
-    assert not caplog.text
-    os.chmod(nas, 0o777)
-    own_backup_folder(10001, 10001)  # open to everyone: silent
-    assert not caplog.text and nas.stat().st_uid == 1000
-    os.chmod(nas, 0o755)
-    monkeypatch.setenv("FLEETDECK_BACKUP_FOLDER_CHOWN", "1")
-    own_backup_folder(10001, 10001)  # opted in: the folder, not its contents
-    assert (nas.stat().st_uid, nas.stat().st_gid) == (10001, 10001) and (nas / "old").stat().st_uid == 0
-    monkeypatch.setenv("FLEETDECK_BACKUP_FOLDER", str(tmp_path / "missing"))
-    own_backup_folder(10001, 10001)  # an unmounted share is not made
-    assert not (tmp_path / "missing").exists()
+    monkeypatch.setenv("FLEETDECK_BACKUP_FOLDER", str(tmp_path / "missing"))  # an unmounted share is not made
+    check_backup_folder()
+    assert not caplog.text and not (tmp_path / "missing").exists()
 
 
 def test_reconnecting_keeps_a_hand_added_backup():
