@@ -391,4 +391,4 @@ See [docs/PLAN.md](docs/PLAN.md) for the roadmap.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE).
+GNU General Public License v3.0. See [LICENSE](LICENSE).
