@@ -102,7 +102,16 @@ def create_app(
         log.warning("No `auth:` in the config: the dashboard stays locked until an admin login is set up.")
     inventory = inventory or Inventory(build_providers(cfg) if not locked else [])
     store = _open_store(cfg.state_file)
-    jobs = JobManager(inventory, cfg.max_parallel, store, cfg.snapshot_keep, cfg.community_scripts_update)
+    backup_folder = cfg.dashboard_backup_folder
+    if backup_folder is not None and not cfg.backup_folder:
+        # The default sits in the data volume, so it is ours to make; a folder the user names must be there already.
+        try:
+            backup_folder.mkdir(parents=True, exist_ok=True, mode=0o700)
+        except OSError as e:
+            log.warning("Could not create %s for backups saved on the dashboard: %s", backup_folder, e)
+    jobs = JobManager(
+        inventory, cfg.max_parallel, store, cfg.snapshot_keep, cfg.community_scripts_update, backup_folder
+    )
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
     scheduler = Scheduler(cfg.schedule.check_every, inventory, jobs, notifier)
 
@@ -187,6 +196,7 @@ def create_app(
             "targets": views,
             "errors": inventory.errors,
             "backup_places": jobs.backup_places,
+            "backup_folder": str(backup_folder) if backup_folder else None,
             "settings": {
                 "snapshot_before_upgrade": cfg.snapshot_before_upgrade,
                 "community_scripts_update": cfg.community_scripts_update,

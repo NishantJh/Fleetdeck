@@ -98,6 +98,28 @@ class SSHExecutor:
     async def run(self, script, on_line=None, timeout=DEFAULT_TIMEOUT) -> ExecResult:
         return await self.run_command(f"sh -c {shlex.quote(script)}", on_line, timeout)
 
+    async def run_to_file(self, script, out, on_line: LineCallback | None = None, timeout=DEFAULT_TIMEOUT) -> int:
+        """Runs the script and writes its raw stdout, as bytes, to the open binary file ``out`` while it arrives
+        (nothing is held in memory). stderr lines go to ``on_line``. Returns the exit code."""
+
+        async def pump_out(stream) -> None:
+            while chunk := await stream.read(1 << 16):
+                await asyncio.to_thread(out.write, chunk)
+
+        async def pump_err(stream) -> None:
+            async for line in stream:
+                if on_line and (text := line.decode(errors="replace").rstrip("\n")):
+                    on_line("stderr", text)
+
+        async with asyncssh.connect(**self._connect_kwargs()) as conn:
+            proc = await conn.create_process(self._as_root(f"sh -c {shlex.quote(script)}"), encoding=None)
+            try:
+                await asyncio.wait_for(asyncio.gather(pump_out(proc.stdout), pump_err(proc.stderr)), timeout)
+                await proc.wait()
+            finally:
+                proc.close()
+            return proc.exit_status if proc.exit_status is not None else -1
+
 
 class PctExecutor:
     """Runs inside a Proxmox LXC via `pct exec` on the node (the PVE API has no LXC exec)."""

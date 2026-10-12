@@ -395,6 +395,23 @@ def test_drop_privileges_ownership(tmp_path, monkeypatch, owner, env, expected):
     assert oct(data.stat().st_mode & 0o777) == "0o755"  # the folder's mode is left alone
 
 
+def test_backup_folder_check_writes_and_removes_a_probe_and_warns_when_it_cannot(tmp_path, monkeypatch, caplog):
+    from fleetdeck.__main__ import check_backup_folder
+
+    nas = tmp_path / "nas"
+    nas.mkdir()
+    monkeypatch.setenv("FLEETDECK_BACKUP_FOLDER", str(nas))
+    check_backup_folder()
+    assert list(nas.iterdir()) == [] and not caplog.text
+    monkeypatch.setattr(os, "unlink", lambda p: (_ for _ in ()).throw(PermissionError(13, "Permission denied")))
+    check_backup_folder()
+    assert "not writable as uid" in caplog.text and "never changes the folder's owner" in caplog.text
+    caplog.clear()
+    monkeypatch.setenv("FLEETDECK_BACKUP_FOLDER", str(tmp_path / "missing"))  # an unmounted share is not made
+    check_backup_folder()
+    assert not caplog.text and not (tmp_path / "missing").exists()
+
+
 def test_reconnecting_keeps_a_hand_added_backup():
     data = {"hosts": [{"name": "pi", "host": "a", "backup": {"type": "path", "path": "/b"}}]}
     ob.upsert(data, "host", {"name": "pi", "host": "b"})

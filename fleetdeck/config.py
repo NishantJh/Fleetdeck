@@ -278,6 +278,10 @@ class AppConfig(BaseModel):
     # SQLite file for check results and job history, so a restart doesn't lose them.
     # Unset keeps everything in memory. FLEETDECK_STATE overrides it (the Docker image sets /data/state.db).
     state_file: str | None = None
+    # Folder, as the dashboard sees it, that the "Back up" button fills when a machine is set to save on the
+    # dashboard: one subfolder per machine. FLEETDECK_BACKUP_FOLDER overrides it. Unset: `host-backups` next
+    # to the state file (in the data volume). Mount a NAS or other folder there to keep them elsewhere.
+    backup_folder: str | None = None
     # known_hosts file for every SSH connection that doesn't name its own.
     known_hosts: str | None = None
     # Running without `auth:` against real machines must be asked for explicitly.
@@ -288,6 +292,13 @@ class AppConfig(BaseModel):
     # Reverse proxies whose X-Forwarded-For is believed (IPs or CIDRs). Without it, everyone behind a
     # proxy shares the proxy's address, so the login lockout would lock them all out together.
     trusted_proxies: list[str] = Field(default_factory=list)
+
+    @property
+    def dashboard_backup_folder(self) -> Path | None:
+        """Where "save on the dashboard" backups go (see backup_folder), None with no state file either."""
+        if self.backup_folder:
+            return Path(self.backup_folder)
+        return Path(self.state_file).parent / "host-backups" if self.state_file else None
 
     @property
     def has_real_targets(self) -> bool:
@@ -375,12 +386,16 @@ def load_config(path: str | None = None) -> AppConfig:
     p = Path(path)
     if not p.exists():
         log.info("Config file %s not found yet; open /setup to create it.", p)
-        return AppConfig(demo=env("DEMO", "") == "1", state_file=env("STATE") or None)
+        return AppConfig(
+            demo=env("DEMO", "") == "1", state_file=env("STATE") or None, backup_folder=env("BACKUP_FOLDER") or None
+        )
     if problem := unreadable(str(p)):
         raise ValueError(problem)
     cfg = validate_raw(yaml.safe_load(p.read_text()), str(p))
     if env("DEMO") == "1":
         cfg.demo = True
+    if env("BACKUP_FOLDER"):
+        cfg.backup_folder = env("BACKUP_FOLDER")
     if env("STATE"):
         cfg.state_file = env("STATE")
     elif cfg.state_file and not Path(cfg.state_file).is_absolute():

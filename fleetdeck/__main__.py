@@ -31,6 +31,31 @@ def server_options(cfg: AppConfig) -> dict:
     return opts
 
 
+def check_backup_folder() -> None:
+    """After dropping root: try to write in the folder for backups saved on the dashboard, and say what to do
+    if that fails. Nothing is changed or created: a share that is not mounted stays an error at backup time."""
+    folder = env("BACKUP_FOLDER")
+    if not folder:
+        try:
+            folder = load_config(config_path()).backup_folder
+        except Exception:  # noqa: BLE001 - a bad config is reported later, with the setup page
+            return
+    if not folder or not os.path.isdir(folder):
+        return
+    try:
+        probe = os.path.join(folder, f".fleetdeck-write-test-{os.getpid()}")
+        with open(probe, "wb"):
+            pass
+        os.unlink(probe)
+    except OSError as e:
+        log.warning(
+            "The backup folder %s is not writable as uid %s (%s). On the NAS, allow that user to write there or map "
+            "all users to one that can; the dashboard never changes the folder's owner. Backups saved on the "
+            "dashboard fail until then.",
+            folder, os.getuid(), e.strerror or e,
+        )  # fmt: skip
+
+
 def drop_privileges() -> None:
     """In the container: run as the owner of the data folder, never as root.
 
@@ -90,6 +115,7 @@ def serve(path: str) -> bool:
 def main() -> None:
     configure_logging()
     drop_privileges()
+    check_backup_folder()
     path = config_path()
     # The setup page saves the config and asks for a restart; the new config is loaded in-process.
     while serve(path):

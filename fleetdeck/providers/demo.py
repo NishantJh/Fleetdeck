@@ -155,12 +155,15 @@ class DemoBackup:
     def __init__(self, steps: list[str]):
         self.steps = steps
 
-    async def run(self, on_line, destination: str | None = None) -> None:
+    async def run(self, on_line, destination: str | None = None, dashboard_folder=None) -> None:
         for step in self.steps:
             on_line("stdout", step)
             await asyncio.sleep(0.5)
         if destination:
-            on_line("stdout", f"(demo: nothing was written to {destination})")
+            on_line(
+                "stdout",
+                f"(demo: nothing was written to {dashboard_folder if destination == 'dashboard' else destination})",
+            )
 
 
 _DEMO_BACKUPS = {

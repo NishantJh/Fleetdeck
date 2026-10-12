@@ -22,7 +22,9 @@ class SSHHostsProvider:
 
     async def discover(self) -> Discovered:
         self.backup_runs = {
-            f"ssh:{h.name}": SshHostBackup(SSHExecutor(h), h.backup) for h in self.hosts if h.host_key_problem is None
+            f"ssh:{h.name}": SshHostBackup(SSHExecutor(h), h.backup, name=h.name)
+            for h in self.hosts
+            if h.host_key_problem is None
         }
         backups = await asyncio.gather(*(self.backups.for_machine(h.name, h) for h in self.hosts))
         return [

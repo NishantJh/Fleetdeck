@@ -24,6 +24,10 @@ services:
       # `- ./data:/data`. The app runs as the folder's owner, so it stays yours (a root-owned one
       # goes to uid 10001). Rootless Docker/Podman: add `environment: {PUID: "0"}`.
       - fleetdeck-data:/data
+      # Optional: one folder for every machine's config backup ("Back up" > "On the dashboard"). Without
+      # this they go to host-backups/ in the data volume. Uncomment, put your folder on the left, and
+      # set FLEETDECK_BACKUP_FOLDER: /backups above.
+      # - /apps/backups:/backups
     # Hardening: read-only filesystem, and only the capabilities needed to sort out /data's owner at
     # start. The app drops them, and root, before it does anything else.
     read_only: true
