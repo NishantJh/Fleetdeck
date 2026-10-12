@@ -112,6 +112,12 @@ function backupCell(t) {
   return html;
 }
 
+function csTip(app) {
+  return `Installed by the community-scripts helper script for ${app}. ` + (state.settings.community_scripts_update
+    ? `Updating it also runs ${app}'s own update afterwards (like typing "update" in it), which keeps the app working.`
+    : `Its own update is turned off (community_scripts_update), so after an OS update run "update" inside it if ${app} misbehaves.`);
+}
+
 function rowHtml(v, withBackup) {
   const t = v.target, c = v.check;
   const busy = !!v.active_job;
@@ -121,9 +127,11 @@ function rowHtml(v, withBackup) {
     : "";
   const pending = c && !c.error && c.packages.length > 0;
   const self = v.runs_dashboard ? ` <span class="chip" title="This dashboard runs here">dashboard</span>` : "";
+  const cs = c?.community_script
+    ? ` <span class="chip" title="${esc(csTip(c.community_script))}">helper script</span>` : "";
   let html = `<tr class="${t.kind === "host" ? "host" : "guest"}${v.hidden ? " is-hidden" : ""}">
     <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) ? "" : "disabled"}></td>
-    <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${self}${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
+    <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${self}${cs}${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
     <td class="muted os" data-label="OS">${esc(c?.os || "")}</td>
     <td data-label="State"><span class="dot ${DOT[t.status] || ""}"></span>${esc(t.status)}</td>
     ${withBackup ? `<td data-label="Last backup">${backupCell(t)}</td>` : ""}
@@ -273,6 +281,12 @@ function confirmAction(action, ids) {
       if (guests) detail += `${detail ? " · " : ""}and every guest running on it (${guests})`;
     }
     if (action === "upgrade" && v?.target.no_reboot) detail += ` · won't reboot: ${v.target.no_reboot}`;
+    const app = v?.check?.community_script;
+    if (action === "upgrade" && app) {
+      detail += state.settings.community_scripts_update
+        ? ` · then runs ${app}'s own update (helper script)`
+        : ` · ${app}'s own update is off: run "update" in it if it misbehaves`;
+    }
     return `<li>${esc(v?.target.name || id)} <span class="muted">${esc(detail)}</span></li>`;
   }).join("");
   const snapshottable = action === "upgrade" && ids.some((id) => byId.get(id)?.target.can_snapshot);

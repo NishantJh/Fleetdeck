@@ -24,6 +24,9 @@ max_parallel: 4
 # (ZFS, LVM-thin, Ceph, qcow2) and VM.Snapshot + VM.Snapshot.Rollback on the token.
 snapshot_before_upgrade: true
 snapshot_keep: 3
+# Containers made by the Proxmox VE Helper-Scripts (community-scripts) also get their app's own
+# update after the OS upgrade, the same as typing `update` in them. false: only warn.
+community_scripts_update: true
 # Check every machine on a timer (e.g. 30m, 6h, 1d; at least 5m). Nothing is ever upgraded
 # automatically; you get a notification when something new is pending.
 schedule:

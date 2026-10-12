@@ -88,7 +88,7 @@ def create_app(
         log.warning("No `auth:` in the config: the dashboard stays locked until an admin login is set up.")
     inventory = inventory or Inventory(build_providers(cfg) if not locked else [])
     store = _open_store(cfg.state_file)
-    jobs = JobManager(inventory, cfg.max_parallel, store, cfg.snapshot_keep)
+    jobs = JobManager(inventory, cfg.max_parallel, store, cfg.snapshot_keep, cfg.community_scripts_update)
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
     scheduler = Scheduler(cfg.schedule.check_every, inventory, jobs, notifier)
 
@@ -166,7 +166,10 @@ def create_app(
         return {
             "targets": views,
             "errors": inventory.errors,
-            "settings": {"snapshot_before_upgrade": cfg.snapshot_before_upgrade},
+            "settings": {
+                "snapshot_before_upgrade": cfg.snapshot_before_upgrade,
+                "community_scripts_update": cfg.community_scripts_update,
+            },
         }
 
     @app.post("/api/actions")
