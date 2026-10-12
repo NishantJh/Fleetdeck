@@ -29,8 +29,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: |
-          ghcr.io/${{ github.repository_owner }}/fleetdeck
-          ghcr.io/${{ github.repository_owner }}/homelab-manager
+            ghcr.io/${{ github.repository_owner }}/fleetdeck
+            ghcr.io/${{ github.repository_owner }}/homelab-manager
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             # A tag like v1.2.3 publishes :1.2.3, :1.2 and :1 (:1 is skipped for 0.x releases).

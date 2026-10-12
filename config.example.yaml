@@ -6,7 +6,7 @@
 # 10 wrong passwords from one IP within 5 minutes lock that IP out for 5 minutes.
 auth:
   username: admin
-  password: ${HOMELAB_PASSWORD}
+  password: ${FLEETDECK_PASSWORD}
 
 # The names/IPs you open the dashboard by. Anything else is refused (stops DNS rebinding).
 # Keep localhost in the list if you open it on the machine itself or a health check does.
@@ -53,7 +53,7 @@ notify: []
 #    url: https://example.com/hook
 
 # Where check results and job history are saved, so a restart doesn't lose them.
-# The Docker image already sets this to /data/state.db (HOMELAB_STATE); omit to keep state in memory.
+# The Docker image already sets this to /data/state.db (FLEETDECK_STATE); omit to keep state in memory.
 # A relative path is relative to this file.
 # state_file: ./data/state.db
 

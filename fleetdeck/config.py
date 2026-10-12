@@ -1,6 +1,6 @@
 """Configuration loading.
 
-The config is a YAML file (default ``config.yaml``, override with ``HOMELAB_CONFIG``).
+The config is a YAML file (default ``config.yaml``, override with ``FLEETDECK_CONFIG``).
 ``${VAR}`` references are expanded from the environment so secrets can stay out of
 the file.
 """
@@ -183,7 +183,7 @@ def check_username(v: str) -> str:
 
 class AuthConfig(BaseModel):
     username: str = Field("admin", min_length=1)
-    # Either the password itself (e.g. ${HOMELAB_PASSWORD}), or a hash of it as the setup page writes it.
+    # Either the password itself (e.g. ${FLEETDECK_PASSWORD}), or a hash of it as the setup page writes it.
     password: str | None = Field(None, min_length=1)
     password_hash: str | None = None
 
@@ -276,7 +276,7 @@ class AppConfig(BaseModel):
     # The dashboard's address, linked from notifications (e.g. http://192.168.1.50:8080).
     public_url: str | None = None
     # SQLite file for check results and job history, so a restart doesn't lose them.
-    # Unset keeps everything in memory. HOMELAB_STATE overrides it (the Docker image sets /data/state.db).
+    # Unset keeps everything in memory. FLEETDECK_STATE overrides it (the Docker image sets /data/state.db).
     state_file: str | None = None
     # known_hosts file for every SSH connection that doesn't name its own.
     known_hosts: str | None = None
@@ -349,7 +349,7 @@ LEGACY_CONFIG = "/config/config.yaml"
 
 
 def config_path() -> str:
-    """The config file to use: ``HOMELAB_CONFIG``, else ``config.yaml``, else an older install's /config."""
+    """The config file to use: ``FLEETDECK_CONFIG``, else ``config.yaml``, else an older install's /config."""
     path = env("CONFIG", "config.yaml")
     if not os.path.exists(path) and os.path.exists(LEGACY_CONFIG):
         log.info("Using %s (from an older install; the setup page can't edit it).", LEGACY_CONFIG)

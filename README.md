@@ -146,7 +146,7 @@ Installing takes one compose file and a web page:
    `docker run -d --name fleetdeck -p 8080:8080 -v homelab-data:/data --restart unless-stopped ghcr.io/nishantjh/fleetdeck:latest`.
    Nothing else is needed: no `.env` file, no config file and no `chown`. If port 8080 is already
    used on that host, Docker refuses to start it ("port is already allocated"); set
-   `HOMELAB_PORT=8081` (or any free port) in the stack's environment and deploy again.
+   `FLEETDECK_PORT=8081` (or any free port) in the stack's environment and deploy again.
 2. Open `http://<this machine>:8080` in a browser. Until the admin login exists it goes straight
    to the setup page, which asks for the **setup code** from the container's log (the logs view of
    your container manager, or `docker logs fleetdeck 2>&1 | grep "Setup code"`). The code

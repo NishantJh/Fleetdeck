@@ -38,7 +38,7 @@ def drop_privileges() -> None:
     the app runs as that user, so you can still read and back it up. A folder owned by root (one
     Docker created) or a named volume is given to uid 10001. PUID/PGID override both; PUID=0 keeps
     root, for rootless Docker/Podman, where root in the container is your own user. After switching
-    user the process keeps no capabilities. Only runs when HOMELAB_DATA is set (the image sets it),
+    user the process keeps no capabilities. Only runs when FLEETDECK_DATA is set (the image sets it),
     so running from a checkout as root is left alone.
     """
     data = env("DATA")
