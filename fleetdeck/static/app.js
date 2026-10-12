@@ -16,8 +16,6 @@ const remember = {
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private window */ } },
 };
 state.showHidden = !!remember.get("showHidden");
-// Machines whose "runs this dashboard, hide it?" hint was dismissed.
-const dismissed = new Set(remember.get("dismissedSelfHint") || []);
 // Hidden machines stay out of the counts, Check all and Update selected, even while shown.
 const active = () => state.targets.filter((v) => !v.hidden);
 
@@ -183,12 +181,6 @@ function render() {
   toggle.hidden = hiddenCount === 0;
   toggle.textContent = `Show hidden (${hiddenCount})`;
   toggle.setAttribute("aria-pressed", String(state.showHidden));
-  const hint = active().find((v) => v.runs_dashboard && !dismissed.has(v.target.id));
-  $("#self-hint").innerHTML = hint
-    ? `<div class="hint-banner"><span><b>${esc(hint.target.name)}</b> looks like the machine this dashboard runs on. It can be updated from here (the update keeps going if the dashboard restarts), but you may prefer to hide it so it isn't touched by accident.</span>
-       <span><button class="small primary" data-hide="1" data-id="${esc(hint.target.id)}">Hide it</button> <button class="small" data-dismiss="${esc(hint.target.id)}">Keep it</button></span></div>`
-    : "";
-
   $("#groups").innerHTML = groups().map((g) => {
     const withBackup = g.rows.some((v) => v.target.backup);
     return `
@@ -379,14 +371,10 @@ async function setHidden(id, hidden) {
 }
 
 document.addEventListener("click", (e) => {
-  const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide],[data-dismiss]");
+  const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide]");
   if (!el) return;
   if (el.dataset.hide) {
     setHidden(el.dataset.id, el.dataset.hide === "1");
-  } else if (el.dataset.dismiss) {
-    dismissed.add(el.dataset.dismiss);
-    remember.set("dismissedSelfHint", [...dismissed]);
-    render();
   } else if (el.dataset.toggle) {
     const id = el.dataset.toggle;
     state.expanded.has(id) ? state.expanded.delete(id) : state.expanded.add(id);

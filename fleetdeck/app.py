@@ -19,7 +19,6 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .backup import add_backup_routes
 from .backup_runs import check_destination
 from .config import AppConfig, config_path, load_config
-from .envvars import env
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
 from .models import CheckResult, Job, JobAction, Target
@@ -43,7 +42,7 @@ class TargetView(BaseModel):
     check: CheckResult | None = None
     active_job: Job | None = None
     hidden: bool = False
-    # Looks like the machine this dashboard runs on: the dashboard suggests hiding it.
+    # Looks like the machine this dashboard runs on: shown with a "dashboard" tag.
     runs_dashboard: bool = False
 
 
@@ -344,7 +343,7 @@ async def _keep_tunnels(tunnels: TunnelManager, wanted: dict) -> None:
 
 def _published_port() -> str:
     """The port people open the dashboard on: the host side of the Docker mapping, when known."""
-    return env("PORT") or os.environ.get("PORT", "8080")
+    return os.environ.get("FLEETDECK_PORT") or os.environ.get("PORT", "8080")
 
 
 def _open_store(path: str | None) -> Store | None:
