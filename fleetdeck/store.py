@@ -11,7 +11,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .models import CheckResult, Job
+from .models import CheckResult, Job, StacksResult
 
 log = logging.getLogger(__name__)
 # Upgrade logs can be long; keep the end, which is where errors are.
@@ -41,6 +41,7 @@ class Store:
             "CREATE TABLE IF NOT EXISTS jobs (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL,"
             " data TEXT NOT NULL)"
         )
+        self.db.execute("CREATE TABLE IF NOT EXISTS stacks (target_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS hidden (target_id TEXT PRIMARY KEY)")
         self.db.execute("CREATE TABLE IF NOT EXISTS backup_places (target_id TEXT PRIMARY KEY, path TEXT NOT NULL)")
 
@@ -61,6 +62,22 @@ class Store:
                 out[target_id] = CheckResult.model_validate_json(data)
             except ValueError:
                 log.warning("dropping unreadable stored check for %s", target_id)
+        return out
+
+    def save_stacks(self, target_id: str, result: StacksResult) -> None:
+        self.db.execute(
+            "INSERT INTO stacks (target_id, data) VALUES (?, ?)"
+            " ON CONFLICT(target_id) DO UPDATE SET data = excluded.data",
+            (target_id, result.model_dump_json()),
+        )
+
+    def load_stacks(self) -> dict[str, StacksResult]:
+        out: dict[str, StacksResult] = {}
+        for target_id, data in self.db.execute("SELECT target_id, data FROM stacks"):
+            try:
+                out[target_id] = StacksResult.model_validate_json(data)
+            except ValueError:
+                log.warning("dropping unreadable stored Docker check for %s", target_id)
         return out
 
     def save_job(self, job: Job) -> None:

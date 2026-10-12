@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 from ..host_backups import NOT_SET_UP
 from ..models import BackupInfo, ExecResult, Target
+from ..stacks import SCAN_SCRIPT, US
 from ..updates import BOOT_ID_SCRIPT, CHECK_SCRIPT, COMMUNITY_UPDATE_SCRIPT, REBOOT_NOW_SCRIPT
 from . import Discovered
 
@@ -55,6 +56,43 @@ class DemoExecutor:
         self.app = app
         self.boot_id = uuid.uuid4().hex
         self.reboot_pending = any("kernel" in line for line in lines)
+        # Demo Docker: stack name -> (services, behind). None: Docker is not installed here.
+        self.stacks: dict[str, tuple[list[str], bool]] | None = None
+
+    def _scan(self) -> str:
+        if self.stacks is None:
+            return "__DOCKER__=none\n"
+        out = ["__DOCKER__=yes", "__COMPOSE__=v2"]
+        images = {}
+        for name, (services, behind) in self.stacks.items():
+            for svc in services:
+                image = f"{svc}:latest" if svc != "arcane" else "ghcr.io/getarcaneapp/arcane:latest"
+                images[image] = "sha256:new"
+                row = ["__C__", name, svc, f"/opt/{name}", f"/opt/{name}/compose.yaml", image]
+                row += ["sha256:old" if behind else "sha256:new", "running", uuid.uuid4().hex * 2]
+                out.append(US.join(row))
+        out += [US.join(["__I__", image, image_id]) for image, image_id in images.items()]
+        return "\n".join(out) + "\n"
+
+    async def _docker(self, script: str, on_line) -> ExecResult:
+        """The Docker check, pull and update scripts (see stacks.py), as a pretend run."""
+        if script == SCAN_SCRIPT:
+            return ExecResult(rc=0, stdout=self._scan())
+        stacks = self.stacks or {}
+        if " up -d " in script:
+            name = script.split(" -p ", 1)[1].split(" ", 1)[0]
+            for line in (f"== Pulling {name}", f"Image {name} Pulled", f"== Restarting what changed in {name}"):
+                if on_line:
+                    on_line("stdout", line)
+                await asyncio.sleep(0.5)
+            if name in stacks:
+                stacks[name] = (stacks[name][0], False)
+            return ExecResult(rc=0)
+        for name in stacks:  # a check: pull every stack
+            if on_line:
+                on_line("stdout", f"== Checking {name}")
+            await asyncio.sleep(0.3)
+        return ExecResult(rc=0)
 
     def _check_output(self, body: str) -> list[tuple[str, str]]:
         """What the real check script prints, so the Activity log looks like a real run."""
@@ -78,6 +116,8 @@ class DemoExecutor:
             head += f"__CSAPP__={self.app}\n"
         if script == BOOT_ID_SCRIPT:
             return ExecResult(rc=0, stdout=f"__BOOT__={self.boot_id}\n")
+        if script == SCAN_SCRIPT or "docker compose version" in script:
+            return await self._docker(script, on_line)
         if script == REBOOT_NOW_SCRIPT:
             self.boot_id, self.reboot_pending = uuid.uuid4().hex, False
             return ExecResult(rc=0, stdout="== Reboot scheduled (demo)\n")
@@ -182,6 +222,10 @@ class DemoProvider:
             if t.can_backup:
                 self.backup_runs[t.id] = DemoBackup(_DEMO_BACKUPS[name])
             ex = DemoExecutor(pm, os_name, list(lines), app="pihole" if name == "pihole" else None)
+            if name == "docker-vm":
+                ex.stacks = {"arcane": (["arcane"], False), "media": (["jellyfin", "sonarr"], True)}
+            elif name == "pi4":
+                ex.stacks = {"pihole": (["pihole"], False)}
             if t.can_snapshot:
                 self.snapshots[t.id] = DemoSnapshots(ex)
             found.append((t, ex))
