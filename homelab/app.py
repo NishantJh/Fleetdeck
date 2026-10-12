@@ -96,13 +96,17 @@ def create_app(
     async def lifespan(_: FastAPI):
         if locked:
             log.warning(
-                "First run: open http://<this machine>:%s/setup#token=%s to create the admin login and add "
-                "machines. The link changes every time the container starts.",
+                "First run: open http://<this machine>:%s to create the admin login and add machines. "
+                "It asks for the setup code below, which changes every time the container starts. "
+                "Or open http://<this machine>:%s/setup#token=%s",
+                _published_port(),
                 _published_port(),
                 setup_token,
             )
+            log.warning("Setup code: %s", setup_token)
         elif setup_token:
             log.info("Setup page: http://<this machine>:%s/setup#token=%s", _published_port(), setup_token)
+            log.info("Setup code: %s", setup_token)
         elif cfg.auth is not None:
             # Setup is done: the one-time link is gone, so say where to go instead.
             log.info(

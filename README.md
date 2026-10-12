@@ -95,10 +95,13 @@ Installing takes one compose file and a web page:
    Nothing else is needed: no `.env` file, no config file and no `chown`. If port 8080 is already
    used on that host, Docker refuses to start it ("port is already allocated"); set
    `HOMELAB_PORT=8081` (or any free port) in the stack's environment and deploy again.
-2. The container's log prints a one-time link (`docker logs homelab-manager`, or the logs view
-   of your container manager):
-   `http://<this machine>:8080/setup#token=...`. Open it and create the admin login.
-   The link is only printed until the login exists. After that the log says
+2. Open `http://<this machine>:8080` in a browser. Until the admin login exists it goes straight
+   to the setup page, which asks for the **setup code** from the container's log (the logs view of
+   your container manager, or `docker logs homelab-manager 2>&1 | grep "Setup code"`). The code
+   proves you run the server, so nobody else on your network can claim the dashboard; it changes
+   each time the container starts. The log also prints a link with the code already in it
+   (`http://<this machine>:8080/setup#token=...`). Enter the code and create the admin login.
+   The code is only printed until the login exists. After that the log says
    `Setup is done: open http://<this machine>:8080 and log in`, and the dashboard's Setup button
    takes you back to the setup page.
 3. Add each machine: pick its type (Proxmox VE, Incus, or a Linux host such as a Raspberry Pi or
@@ -193,7 +196,7 @@ compose file, an `.env`) is touched, so your container manager can still edit th
 login, every key and token, and the job history, encrypted with a passphrase you choose
 (AES-256-GCM, key from scrypt). Keep it off this server; without the passphrase nobody, including
 you, can open it. To restore, pick the file in the same dialog: it first shows what is in it, then
-replaces the current files and restarts once you confirm. On a fresh install, open the setup link from the logs and use **Or restore from a backup** instead of creating a login: it brings back the login, the machines and the keys, so the machines need nothing run again. What was there before is kept as an
+replaces the current files and restarts once you confirm. On a fresh install, open the dashboard, enter the setup code from the logs and use **Or restore from a backup** instead of creating a login: it brings back the login, the machines and the keys, so the machines need nothing run again. What was there before is kept as an
 encrypted file in `/data/backups/`, with the same passphrase. Key files the backup doesn't have
 are left in place. Files outside `/data` (say a key file the config points at elsewhere) aren't
 in it.

@@ -10,12 +10,13 @@ const DRAFTS = "homelab-setup-drafts";
 const ALLOW = "homelab-setup-allow-from";
 
 // The one-time link from the logs carries the setup token in the URL fragment (never sent to the server).
+// Opening the plain address instead asks for it on the page (#unlock).
 const hashToken = new URLSearchParams(location.hash.slice(1)).get("token");
 if (hashToken) {
   sessionStorage.setItem("setup-token", hashToken);
   history.replaceState(null, "", location.pathname);
 }
-const token = sessionStorage.getItem("setup-token");
+let token = sessionStorage.getItem("setup-token");
 let state = null;
 
 async function api(path, opts = {}) {
@@ -429,11 +430,35 @@ async function render() {
   if (!state.machines.length && !drafts.length) addCard();
 }
 
+// Accepts the code alone or the whole link (…/setup#token=CODE) pasted from the logs.
+function setupCode(text) {
+  text = text.trim();
+  const m = text.match(/[#&?]token=([^&\s]+)/);
+  return m ? m[1] : text.replace(/^Setup code:\s*/i, "");
+}
+
+$("#unlock-form").onsubmit = (e) => {
+  e.preventDefault();
+  token = setupCode($("#unlock-code").value);
+  sessionStorage.setItem("setup-token", token);
+  start(true);
+};
+
+function start(typed = false) {
+  render().then(() => {
+    $("#unlock").hidden = true;
+    if (typed) notice("");
+  }).catch((e) => {
+    if (e.message.includes("setup code")) {
+      sessionStorage.removeItem("setup-token");
+      $("#unlock").hidden = false;
+      notice(typed || token ? "That setup code isn't right. It changes every time the container starts, so copy the newest one from the logs." : "");
+      $("#unlock-code").focus();
+    } else {
+      notice(e.message);
+    }
+  });
+}
+
 $("#allow-from").value = load(ALLOW, "");
-render().catch((e) => {
-  if (e.message.includes("setup link")) {
-    notice("Open this page with the link printed in the container's logs (it looks like http://<host>:8080/setup#token=...).");
-  } else {
-    notice(e.message);
-  }
-});
+start();
