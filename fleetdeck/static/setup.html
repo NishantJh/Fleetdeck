@@ -3,13 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Homelab Manager setup</title>
+  <title>Fleetdeck setup</title>
   <link rel="stylesheet" href="/static/style.css?v=7">
   <script src="/static/theme.js?v=7"></script>
 </head>
 <body>
   <header>
-    <h1>Homelab Manager setup</h1>
+    <h1>Fleetdeck setup</h1>
     <div class="toolbar">
       <a id="to-dashboard" class="button" href="/" hidden>Dashboard</a>
     </div>
@@ -22,8 +22,8 @@
       <h2>Enter the setup code</h2>
       <p class="muted">Only someone who can see this server's logs can set it up, so nobody else on your network can claim the admin login. The code is in a log line like <code>Setup code: ...</code> and changes every time the container starts.</p>
       <ul class="muted">
-        <li>Portainer, Dockge, Arcane, Komodo, ...: open the <b>homelab-manager</b> container's logs.</li>
-        <li>A shell on the Docker host: <code>docker logs homelab-manager 2&gt;&amp;1 | grep "Setup code"</code></li>
+        <li>Portainer, Dockge, Arcane, Komodo, ...: open the <b>fleetdeck</b> container's logs.</li>
+        <li>A shell on the Docker host: <code>docker logs fleetdeck 2&gt;&amp;1 | grep "Setup code"</code></li>
       </ul>
       <form id="unlock-form" class="form-grid">
         <label>Setup code <input id="unlock-code" placeholder="the code, or the whole setup link" spellcheck="false" autocomplete="off" required></label>

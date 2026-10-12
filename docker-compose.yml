@@ -3,21 +3,22 @@
 # setup code from the container's logs.
 # Nothing else to create, copy or chown.
 services:
-  homelab-manager:
+  fleetdeck:
     # Pin a release rather than :latest so an update is something you choose:
     # :1.2.3 = exactly that release, :1.2 = patch fixes only, :1 = any 1.x update.
-    image: ghcr.io/nishantjh/homelab-manager:latest
+    image: ghcr.io/nishantjh/fleetdeck:latest
     # To build from source instead of pulling the image:
     # build: .
-    container_name: homelab-manager
+    container_name: fleetdeck
     restart: unless-stopped
     ports:
-      # Port 8080 taken on this host? Set HOMELAB_PORT (e.g. 8081) in the environment or .env
-      # instead of editing this. To listen on one interface only: "192.168.1.50:${HOMELAB_PORT:-8080}:8080"
-      - "${HOMELAB_PORT:-8080}:8080"
+      # Port 8080 taken on this host? Set FLEETDECK_PORT (e.g. 8081) in the environment or .env
+      # instead of editing this. To listen on one interface only: "192.168.1.50:${FLEETDECK_PORT:-8080}:8080"
+      # (the older HOMELAB_PORT still works).
+      - "${FLEETDECK_PORT:-${HOMELAB_PORT:-8080}}:8080"
     environment:
       # Only so the setup link in the logs shows the right port.
-      HOMELAB_PORT: ${HOMELAB_PORT:-8080}
+      FLEETDECK_PORT: ${FLEETDECK_PORT:-${HOMELAB_PORT:-8080}}
     volumes:
       # Config, the dashboard's own keys and its history: the whole install, so back it up.
       # A named volume works the same in every tool. To keep it in a folder instead, use e.g.

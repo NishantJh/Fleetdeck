@@ -6,10 +6,10 @@ import pytest
 from fastapi.testclient import TestClient
 from test_setup import PASSWORD, _admin, _fake_machine
 
-import homelab.onboarding as ob
-import homelab.tunnels as tun
-from homelab.app import create_app
-from homelab.config import load_config
+import fleetdeck.onboarding as ob
+import fleetdeck.tunnels as tun
+from fleetdeck.app import create_app
+from fleetdeck.config import load_config
 
 
 def test_pending_keeps_keys_and_picks_free_subnets(tmp_path):

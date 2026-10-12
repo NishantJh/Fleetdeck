@@ -18,6 +18,10 @@ jobs:
   cleanup:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        # homelab-manager is the old image name, still published as an alias.
+        package: [fleetdeck, homelab-manager]
     permissions:
       packages: write
     steps:
@@ -28,7 +32,7 @@ jobs:
       # so remaining tags still pull, and validate: true checks that after the run.
       - uses: dataaxiom/ghcr-cleanup-action@d52806a0dc70b430571a37da1fde39733ffd640f # v1.2.2
         with:
-          package: homelab-manager
+          package: ${{ matrix.package }}
           delete-tags: sha-*
           keep-n-tagged: 10
           exclude-tags: latest

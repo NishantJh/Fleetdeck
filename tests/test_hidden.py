@@ -4,14 +4,14 @@ from fastapi.testclient import TestClient
 from test_jobs import FakeExecutor, _inventory, _target
 from test_scheduler import PkgExecutor, RecordingNotifier, _noop_refresh
 
-import homelab.app
-from homelab.app import create_app
-from homelab.config import AppConfig
-from homelab.jobs import JobManager
-from homelab.models import ExecResult
-from homelab.scheduler import Scheduler
-from homelab.store import Store
-from homelab.updates import parse_check, self_script
+import fleetdeck.app
+from fleetdeck.app import create_app
+from fleetdeck.config import AppConfig
+from fleetdeck.jobs import JobManager
+from fleetdeck.models import ExecResult
+from fleetdeck.scheduler import Scheduler
+from fleetdeck.store import Store
+from fleetdeck.updates import parse_check, self_script
 
 CID = "0123456789abcdef" * 4
 
@@ -63,9 +63,9 @@ def test_hidden_survives_a_restart(tmp_path):
 
 
 async def test_scheduled_checks_skip_hidden_machines(monkeypatch):
-    import homelab.scheduler
+    import fleetdeck.scheduler
 
-    monkeypatch.setattr(homelab.scheduler, "POLL", 0)
+    monkeypatch.setattr(fleetdeck.scheduler, "POLL", 0)
     inv = _inventory((_target("pi4"), PkgExecutor(["curl"])), (_target("dash"), PkgExecutor(["docker-ce"])))
     inv.refresh = _noop_refresh
     jobs = JobManager(inv)
@@ -77,7 +77,7 @@ async def test_scheduled_checks_skip_hidden_machines(monkeypatch):
 
 
 def test_hide_and_unhide_from_the_dashboard(monkeypatch):
-    monkeypatch.setattr(homelab.app.socket, "gethostname", lambda: "Pi4.lan")
+    monkeypatch.setattr(fleetdeck.app.socket, "gethostname", lambda: "Pi4.lan")
     with TestClient(create_app(AppConfig(demo=True))) as client:
         targets = {t["target"]["name"]: t for t in client.get("/api/targets").json()["targets"]}
         pi = targets["pi4"]

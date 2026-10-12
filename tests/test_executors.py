@@ -9,8 +9,8 @@ import asyncssh
 import httpx
 import pytest
 
-from homelab.config import SSHConfig
-from homelab.executors import IncusExecutor, PctExecutor, PveAgentExecutor, SSHExecutor
+from fleetdeck.config import SSHConfig
+from fleetdeck.executors import IncusExecutor, PctExecutor, PveAgentExecutor, SSHExecutor
 
 
 async def _shell_process(process: asyncssh.SSHServerProcess) -> None:

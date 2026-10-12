@@ -2,7 +2,7 @@
 
 ## Supported versions
 
-Only the latest release (the newest `v*` tag, published as `ghcr.io/nishantjh/homelab-manager:latest`
+Only the latest release (the newest `v*` tag, published as `ghcr.io/nishantjh/fleetdeck:latest`
 and its numbered tags) and `main` get security fixes. Older tags do not.
 
 ## Reporting a vulnerability

@@ -5,10 +5,10 @@ import subprocess
 import pytest
 from fastapi.testclient import TestClient
 
-from homelab.app import create_app
-from homelab.config import AppConfig, AuthConfig, HostConfig
-from homelab.models import ExecResult
-from homelab.updates import CHECK_SCRIPT, UPGRADE_SCRIPT
+from fleetdeck.app import create_app
+from fleetdeck.config import AppConfig, AuthConfig, HostConfig
+from fleetdeck.models import ExecResult
+from fleetdeck.updates import CHECK_SCRIPT, UPGRADE_SCRIPT
 
 
 def _wait_for_jobs(client: TestClient, timeout: float = 20) -> list[dict]:
@@ -97,7 +97,7 @@ def test_job_query_validation():
 @pytest.mark.skipif(shutil.which("apt-get") is None, reason="needs a Debian-family box")
 def test_check_script_runs_locally():
     """Smoke-test the real script against this machine (read-only apart from apt-get update)."""
-    from homelab.updates import parse_check
+    from fleetdeck.updates import parse_check
 
     p = subprocess.run(["sh", "-c", CHECK_SCRIPT], capture_output=True, text=True, timeout=300)
     res = parse_check(ExecResult(rc=p.returncode, stdout=p.stdout, stderr=p.stderr))
@@ -106,14 +106,14 @@ def test_check_script_runs_locally():
 
 
 def test_scripts_are_valid_sh():
-    from homelab.updates import BOOT_ID_SCRIPT, REBOOT_NOW_SCRIPT
+    from fleetdeck.updates import BOOT_ID_SCRIPT, REBOOT_NOW_SCRIPT
 
     for script in (CHECK_SCRIPT, UPGRADE_SCRIPT, BOOT_ID_SCRIPT, REBOOT_NOW_SCRIPT):
         assert subprocess.run(["sh", "-n", "-c", script]).returncode == 0
 
 
 def test_boot_id_script_runs_locally():
-    from homelab.updates import BOOT_ID_SCRIPT, parse_boot_id
+    from fleetdeck.updates import BOOT_ID_SCRIPT, parse_boot_id
 
     p = subprocess.run(["sh", "-c", BOOT_ID_SCRIPT], capture_output=True, text=True)
     boot = parse_boot_id(p.stdout)
@@ -121,9 +121,9 @@ def test_boot_id_script_runs_locally():
 
 
 def test_demo_reboot(monkeypatch):
-    import homelab.jobs
+    import fleetdeck.jobs
 
-    monkeypatch.setattr(homelab.jobs, "REBOOT_POLL", 0)
+    monkeypatch.setattr(fleetdeck.jobs, "REBOOT_POLL", 0)
     with TestClient(create_app(AppConfig(demo=True))) as client:
         targets = client.get("/api/targets").json()["targets"]
         pve = next(t for t in targets if t["target"]["name"] == "pve")["target"]["id"]
@@ -135,7 +135,7 @@ def test_demo_reboot(monkeypatch):
 
 
 def test_reboot_detection_compares_kernels(tmp_path):
-    from homelab.updates import REBOOT_SCRIPT
+    from fleetdeck.updates import REBOOT_SCRIPT
 
     if os.path.exists("/var/run/reboot-required"):
         pytest.skip("this machine already needs a reboot")
@@ -167,7 +167,7 @@ def test_check_script_uses_documented_apk_and_apt_lock_options():
 def test_start_log_says_where_to_go_once_setup_is_done(caplog):
     # The one-time setup link is gone once a login exists; the log still says what to open.
     cfg = AppConfig(demo=True, auth=AuthConfig(username="nishant", password="s3cret"))
-    with caplog.at_level("INFO", logger="homelab"), TestClient(create_app(cfg)):
+    with caplog.at_level("INFO", logger="fleetdeck"), TestClient(create_app(cfg)):
         pass
     assert "Setup is done: open http://<this machine>:" in caplog.text and "'nishant'" in caplog.text
     assert "setup#token" not in caplog.text and "Setup code" not in caplog.text
@@ -175,7 +175,7 @@ def test_start_log_says_where_to_go_once_setup_is_done(caplog):
 
 def test_first_run_log_prints_the_setup_code(caplog, tmp_path):
     app = create_app(AppConfig(hosts=[HostConfig(name="pi", host="10.0.0.2")]), config_file=str(tmp_path / "c.yaml"))
-    with caplog.at_level("INFO", logger="homelab"), TestClient(app):
+    with caplog.at_level("INFO", logger="fleetdeck"), TestClient(app):
         pass
     assert f"Setup code: {app.state.setup_token}" in caplog.text
     assert f"/setup#token={app.state.setup_token}" in caplog.text
@@ -184,8 +184,8 @@ def test_first_run_log_prints_the_setup_code(caplog, tmp_path):
 def test_error_report_lists_errors_without_secrets():
     from datetime import UTC, datetime
 
-    from homelab.config import NotifyConfig
-    from homelab.models import CheckResult
+    from fleetdeck.config import NotifyConfig
+    from fleetdeck.models import CheckResult
 
     cfg = AppConfig(demo=True, notify=[NotifyConfig(type="gotify", url="https://g.example", token="tok-abc123")])
     app = create_app(cfg)

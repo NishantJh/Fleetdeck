@@ -5,8 +5,9 @@ import uvicorn
 
 from .app import create_app
 from .config import AppConfig, config_path, load_config
+from .envvars import env
 
-log = logging.getLogger("homelab")
+log = logging.getLogger("fleetdeck")
 APP_UID = 10001
 
 
@@ -37,10 +38,10 @@ def drop_privileges() -> None:
     the app runs as that user, so you can still read and back it up. A folder owned by root (one
     Docker created) or a named volume is given to uid 10001. PUID/PGID override both; PUID=0 keeps
     root, for rootless Docker/Podman, where root in the container is your own user. After switching
-    user the process keeps no capabilities. Only runs when HOMELAB_DATA is set (the image sets it),
+    user the process keeps no capabilities. Only runs when FLEETDECK_DATA is set (the image sets it),
     so running from a checkout as root is left alone.
     """
-    data = os.environ.get("HOMELAB_DATA")
+    data = env("DATA")
     if not data or not hasattr(os, "getuid") or os.getuid() != 0:
         return
     os.makedirs(data, exist_ok=True)

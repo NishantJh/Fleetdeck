@@ -1,6 +1,6 @@
 """Configuration loading.
 
-The config is a YAML file (default ``config.yaml``, override with ``HOMELAB_CONFIG``).
+The config is a YAML file (default ``config.yaml``, override with ``FLEETDECK_CONFIG``).
 ``${VAR}`` references are expanded from the environment so secrets can stay out of
 the file.
 """
@@ -15,6 +15,8 @@ from typing import Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
+
+from .envvars import env
 
 log = logging.getLogger(__name__)
 
@@ -181,7 +183,7 @@ def check_username(v: str) -> str:
 
 class AuthConfig(BaseModel):
     username: str = Field("admin", min_length=1)
-    # Either the password itself (e.g. ${HOMELAB_PASSWORD}), or a hash of it as the setup page writes it.
+    # Either the password itself (e.g. ${FLEETDECK_PASSWORD}), or a hash of it as the setup page writes it.
     password: str | None = Field(None, min_length=1)
     password_hash: str | None = None
 
@@ -274,7 +276,7 @@ class AppConfig(BaseModel):
     # The dashboard's address, linked from notifications (e.g. http://192.168.1.50:8080).
     public_url: str | None = None
     # SQLite file for check results and job history, so a restart doesn't lose them.
-    # Unset keeps everything in memory. HOMELAB_STATE overrides it (the Docker image sets /data/state.db).
+    # Unset keeps everything in memory. FLEETDECK_STATE overrides it (the Docker image sets /data/state.db).
     state_file: str | None = None
     # known_hosts file for every SSH connection that doesn't name its own.
     known_hosts: str | None = None
@@ -321,10 +323,14 @@ def _expand(value, missing: set[str]):
     if isinstance(value, str):
 
         def sub(m: re.Match) -> str:
-            if m[1] not in os.environ:
+            name = m[1]
+            if name not in os.environ and name.startswith(("FLEETDECK_", "HOMELAB_")):
+                # The same variable under its other name (the project used to be called Homelab Manager).
+                name = ("HOMELAB_" if name.startswith("FLEETDECK_") else "FLEETDECK_") + name.split("_", 1)[1]
+            if name not in os.environ:
                 missing.add(m[1])
                 return m[0]
-            return os.environ[m[1]]
+            return os.environ[name]
 
         return _VAR.sub(sub, value)
     if isinstance(value, list):
@@ -347,8 +353,8 @@ LEGACY_CONFIG = "/config/config.yaml"
 
 
 def config_path() -> str:
-    """The config file to use: ``HOMELAB_CONFIG``, else ``config.yaml``, else an older install's /config."""
-    path = os.environ.get("HOMELAB_CONFIG", "config.yaml")
+    """The config file to use: ``FLEETDECK_CONFIG``, else ``config.yaml``, else an older install's /config."""
+    path = env("CONFIG", "config.yaml")
     if not os.path.exists(path) and os.path.exists(LEGACY_CONFIG):
         log.info("Using %s (from an older install; the setup page can't edit it).", LEGACY_CONFIG)
         return LEGACY_CONFIG
@@ -369,16 +375,14 @@ def load_config(path: str | None = None) -> AppConfig:
     p = Path(path)
     if not p.exists():
         log.info("Config file %s not found yet; open /setup to create it.", p)
-        return AppConfig(
-            demo=os.environ.get("HOMELAB_DEMO", "") == "1", state_file=os.environ.get("HOMELAB_STATE") or None
-        )
+        return AppConfig(demo=env("DEMO", "") == "1", state_file=env("STATE") or None)
     if problem := unreadable(str(p)):
         raise ValueError(problem)
     cfg = validate_raw(yaml.safe_load(p.read_text()), str(p))
-    if os.environ.get("HOMELAB_DEMO") == "1":
+    if env("DEMO") == "1":
         cfg.demo = True
-    if os.environ.get("HOMELAB_STATE"):
-        cfg.state_file = os.environ["HOMELAB_STATE"]
+    if env("STATE"):
+        cfg.state_file = env("STATE")
     elif cfg.state_file and not Path(cfg.state_file).is_absolute():
         # Relative to the config file, like the other paths people put next to it.
         cfg.state_file = str(p.parent / cfg.state_file)

@@ -4,12 +4,12 @@ import signal
 
 import pytest
 
-from homelab import detached
-from homelab.inventory import Inventory
-from homelab.jobs import JobManager
-from homelab.models import ExecResult, Target
-from homelab.store import Store
-from homelab.updates import BOOT_ID_SCRIPT, CHECK_SCRIPT, UPGRADE_SCRIPT
+from fleetdeck import detached
+from fleetdeck.inventory import Inventory
+from fleetdeck.jobs import JobManager
+from fleetdeck.models import ExecResult, Target
+from fleetdeck.store import Store
+from fleetdeck.updates import BOOT_ID_SCRIPT, CHECK_SCRIPT, UPGRADE_SCRIPT
 
 
 class LocalExecutor:
@@ -45,7 +45,7 @@ def _jobs(ex, store=None):
 def fast(monkeypatch):
     monkeypatch.setattr(detached, "WINDOW", 4)
     monkeypatch.setattr(detached, "RETRY_EVERY", 0.1)
-    monkeypatch.setattr("homelab.jobs.RESUME_POLL", 0.1)
+    monkeypatch.setattr("fleetdeck.jobs.RESUME_POLL", 0.1)
     real = detached.follow
     monkeypatch.setattr(detached, "follow", lambda *a, **k: real(*a, **{**k, "window": 4}))
 
@@ -111,7 +111,7 @@ async def test_waiting_for_reboot_is_resumed(tmp_path):
     jobs = _jobs(Rebooted(str(tmp_path)), store)
     job = jobs.submit("t1", "check")
     await asyncio.gather(*jobs._tasks)
-    from homelab.models import Job
+    from fleetdeck.models import Job
 
     stuck = Job(
         id="r1",

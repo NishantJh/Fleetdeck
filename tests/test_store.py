@@ -4,11 +4,11 @@ from datetime import UTC, datetime
 from fastapi.testclient import TestClient
 from test_jobs import FakeExecutor, _finish, _inventory, _target
 
-from homelab.app import create_app
-from homelab.config import AppConfig
-from homelab.jobs import JobManager
-from homelab.models import CheckResult, Job, Package
-from homelab.store import INTERRUPTED, MAX_STORED_LOG_LINES, NEVER_STARTED, Store
+from fleetdeck.app import create_app
+from fleetdeck.config import AppConfig
+from fleetdeck.jobs import JobManager
+from fleetdeck.models import CheckResult, Job, Package
+from fleetdeck.store import INTERRUPTED, MAX_STORED_LOG_LINES, NEVER_STARTED, Store
 
 
 def _job(jid: str, status="succeeded", log=None, started=False) -> Job:
@@ -60,9 +60,9 @@ async def test_job_manager_persists_and_reloads(tmp_path):
 
 
 async def test_eviction_deletes_stored_jobs(tmp_path, monkeypatch):
-    import homelab.jobs
+    import fleetdeck.jobs
 
-    monkeypatch.setattr(homelab.jobs, "MAX_JOBS", 2)
+    monkeypatch.setattr(fleetdeck.jobs, "MAX_JOBS", 2)
     store = Store(tmp_path / "state.db")
     jobs = JobManager(_inventory((_target(), FakeExecutor())), store=store)
     for _ in range(3):

@@ -1,5 +1,5 @@
 [project]
-name = "homelab-manager"
+name = "fleetdeck"
 version = "0.1.0"
 description = "One dashboard to manage a homelab: OS updates across Proxmox, Incus and plain hosts."
 requires-python = ">=3.11"
@@ -21,10 +21,10 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["homelab*"]
+include = ["fleetdeck*"]
 
 [tool.setuptools.package-data]
-homelab = ["static/*"]
+fleetdeck = ["static/*"]
 
 [tool.ruff]
 line-length = 120

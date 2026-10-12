@@ -39,6 +39,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from . import onboarding as ob
 from .config import AppConfig, validate_raw
+from .envvars import env
 from .setup_routes import refuse_while_busy
 from .store import Store
 
@@ -74,7 +75,7 @@ def encrypt(plain: bytes, passphrase: str) -> bytes:
 def decrypt(blob: bytes, passphrase: str) -> bytes:
     size = len(MAGIC) + _HEADER.size
     if len(blob) < size or not blob.startswith(MAGIC):
-        raise BackupError("this isn't a Homelab Manager backup file")
+        raise BackupError("this isn't a Fleetdeck backup file")
     n, r, p, salt, nonce = _HEADER.unpack(blob[len(MAGIC) : size])
     # Only settings we know; anything else is a newer version's, or a damaged or crafted file (a huge
     # n would eat memory).
@@ -166,7 +167,7 @@ def unpack(archive: bytes) -> dict[str, bytes]:
     except ValueError:
         raise BackupError("the backup has no readable manifest") from None
     if not isinstance(manifest, dict) or manifest.get("version") != VERSION:
-        raise BackupError("this backup was made by a newer version of Homelab Manager")
+        raise BackupError("this backup was made by a newer version of Fleetdeck")
     return files
 
 
@@ -250,8 +251,8 @@ def restore_files(paths: ob.Paths, files: dict[str, bytes]) -> None:
 
 def _state_file(new: AppConfig, paths: ob.Paths) -> str | None:
     """The restored config's state file, resolved the way ``load_config`` will after the restart."""
-    if os.environ.get("HOMELAB_STATE"):
-        return os.environ["HOMELAB_STATE"]
+    if env("STATE"):
+        return env("STATE")
     if not new.state_file:
         return None
     p = Path(new.state_file)

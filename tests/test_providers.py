@@ -1,9 +1,9 @@
 import httpx
 
-from homelab.config import IncusConfig, ProxmoxConfig, SSHConfig
-from homelab.models import ExecResult
-from homelab.providers.incus import IncusProvider
-from homelab.providers.proxmox import ProxmoxProvider
+from fleetdeck.config import IncusConfig, ProxmoxConfig, SSHConfig
+from fleetdeck.models import ExecResult
+from fleetdeck.providers.incus import IncusProvider
+from fleetdeck.providers.proxmox import ProxmoxProvider
 
 PVE = {
     "/api2/json/cluster/status": [{"type": "node", "name": "pve", "ip": "10.0.0.1"}],
@@ -92,7 +92,7 @@ async def test_incus_discovery_without_ssh():
 async def test_pve_node_check_uses_pve_api(monkeypatch):
     import asyncio
 
-    from homelab.providers.proxmox import PveNodeExecutor
+    from fleetdeck.providers.proxmox import PveNodeExecutor
 
     real_sleep = asyncio.sleep
     monkeypatch.setattr(asyncio, "sleep", lambda _: real_sleep(0))
@@ -140,14 +140,14 @@ async def test_pve_node_check_uses_pve_api(monkeypatch):
 async def test_pve_node_upgrade_needs_ssh():
     import pytest
 
-    from homelab.providers.proxmox import PveNodeExecutor
+    from fleetdeck.providers.proxmox import PveNodeExecutor
 
     with pytest.raises(RuntimeError, match="ssh"):
         await PveNodeExecutor(httpx.AsyncClient(), "pve", None).run("true")
 
 
 async def test_proxmox_cluster_uses_each_nodes_address():
-    from homelab.executors import PctExecutor
+    from fleetdeck.executors import PctExecutor
 
     data = {
         "/api2/json/cluster/status": [
@@ -276,8 +276,8 @@ async def test_proxmox_backups_hidden_by_missing_backup_privileges():
 
 
 async def test_pve_role_can_list_backups():
-    from homelab.onboarding import PVE_PRIVS
-    from homelab.providers.proxmox import BACKUP_PRIVS
+    from fleetdeck.onboarding import PVE_PRIVS
+    from fleetdeck.providers.proxmox import BACKUP_PRIVS
 
     assert set(BACKUP_PRIVS) <= set(PVE_PRIVS.split())
 
@@ -388,8 +388,8 @@ async def test_incus_restricted_certificate_lists_per_project():
 
 
 async def test_unknown_ssh_host_key_is_shown_on_the_dashboard():
-    from homelab.config import HostConfig
-    from homelab.providers.ssh_hosts import SSHHostsProvider
+    from fleetdeck.config import HostConfig
+    from fleetdeck.providers.ssh_hosts import SSHHostsProvider
 
     cfg = ProxmoxConfig(
         name="lab", api_url="https://pve:8006", token_id="t", token_secret="x", ssh=SSHConfig(host="10.0.0.1")
@@ -414,7 +414,7 @@ async def test_unknown_ssh_host_key_is_shown_on_the_dashboard():
 
 
 async def test_pve_node_check_flags_security_updates_over_ssh():
-    from homelab.providers.proxmox import APT_LIST_SCRIPT, PveNodeExecutor
+    from fleetdeck.providers.proxmox import APT_LIST_SCRIPT, PveNodeExecutor
 
     def handler(req):
         path = req.url.path.removeprefix("/api2/json/nodes/pve")
@@ -508,9 +508,9 @@ async def test_incus_backups_unreadable_is_unknown_not_none():
 
 
 async def test_nodes_and_incus_host_run_their_own_backup_check(monkeypatch):
-    from homelab.config import HostBackupConfig
-    from homelab.host_backups import HostBackups
-    from homelab.models import BackupInfo
+    from fleetdeck.config import HostBackupConfig
+    from fleetdeck.host_backups import HostBackups
+    from fleetdeck.models import BackupInfo
 
     seen = []
 
@@ -549,7 +549,7 @@ async def test_nodes_and_incus_host_run_their_own_backup_check(monkeypatch):
 
 
 async def test_incus_backup_failure_retries_only_that_instance(monkeypatch):
-    from homelab.providers import incus as incus_mod
+    from fleetdeck.providers import incus as incus_mod
 
     p = IncusProvider(IncusConfig(name="incus01", socket="/nonexistent"))
     calls = []

@@ -6,13 +6,13 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from test_jobs import FakeExecutor, _inventory, _target
 
-from homelab.app import create_app
-from homelab.config import AppConfig, NotifyConfig, ScheduleConfig
-from homelab.jobs import JobManager
-from homelab.models import ExecResult
-from homelab.notify import Notifier
-from homelab.scheduler import Scheduler
-from homelab.updates import CHECK_SCRIPT
+from fleetdeck.app import create_app
+from fleetdeck.config import AppConfig, NotifyConfig, ScheduleConfig
+from fleetdeck.jobs import JobManager
+from fleetdeck.models import ExecResult
+from fleetdeck.notify import Notifier
+from fleetdeck.scheduler import Scheduler
+from fleetdeck.updates import CHECK_SCRIPT
 
 
 def test_schedule_durations():
@@ -86,9 +86,9 @@ class RecordingNotifier:
 
 
 async def test_scheduled_run_notifies_only_about_new_things(monkeypatch):
-    import homelab.scheduler
+    import fleetdeck.scheduler
 
-    monkeypatch.setattr(homelab.scheduler, "POLL", 0)
+    monkeypatch.setattr(fleetdeck.scheduler, "POLL", 0)
     pi, vps = PkgExecutor(["curl"]), PkgExecutor([])
     inv = _inventory((_target("pi4"), pi), (_target("vps"), vps), (_target("off", updatable=False), FakeExecutor()))
     inv.refresh = _noop_refresh
@@ -138,10 +138,10 @@ def test_schedule_api_and_test_notification(monkeypatch):
 async def test_hung_check_does_not_hold_back_the_report(monkeypatch):
     import asyncio
 
-    import homelab.scheduler
+    import fleetdeck.scheduler
 
-    monkeypatch.setattr(homelab.scheduler, "POLL", 0)
-    monkeypatch.setattr(homelab.scheduler, "RUN_TIMEOUT", 0)
+    monkeypatch.setattr(fleetdeck.scheduler, "POLL", 0)
+    monkeypatch.setattr(fleetdeck.scheduler, "RUN_TIMEOUT", 0)
     hung = FakeExecutor(gate=asyncio.Event())
     inv = _inventory((_target("pi4"), PkgExecutor(["curl"])), (_target("vps"), hung))
     inv.refresh = _noop_refresh
@@ -159,7 +159,7 @@ async def test_hung_check_does_not_hold_back_the_report(monkeypatch):
 async def test_notification_tokens_stay_out_of_the_log(caplog):
     import logging
 
-    from homelab.__main__ import configure_logging
+    from fleetdeck.__main__ import configure_logging
 
     configure_logging()
     client = httpx.AsyncClient(transport=httpx.MockTransport(lambda req: httpx.Response(200)))

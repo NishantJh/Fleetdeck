@@ -11,12 +11,12 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from homelab import backup
-from homelab.app import _when_idle, create_app
-from homelab.config import load_config
-from homelab.jobs import _now
-from homelab.models import Job
-from homelab.security import hash_password
+from fleetdeck import backup
+from fleetdeck.app import _when_idle, create_app
+from fleetdeck.config import load_config
+from fleetdeck.jobs import _now
+from fleetdeck.models import Job
+from fleetdeck.security import hash_password
 
 AUTH = ("admin", "s3cret-pass")
 PASS = "correct horse battery"
@@ -86,7 +86,7 @@ def test_backup_needs_login_and_a_long_passphrase(tmp_path):
 
 
 def test_no_backups_without_a_login():
-    from homelab.config import AppConfig
+    from fleetdeck.config import AppConfig
 
     with TestClient(create_app(AppConfig(demo=True, allow_no_auth=True))) as client:
         assert client.post("/api/backup", json={"passphrase": PASS}).status_code == 403
@@ -185,7 +185,7 @@ def test_restore_refuses_junk(tmp_path):
         for blob in (b"not a backup", backup.MAGIC + b"short"):
             req = {"passphrase": PASS, "data": base64.b64encode(blob).decode()}
             r = client.post("/api/backup/restore", json=req, auth=AUTH)
-            assert r.status_code == 400 and "isn't a Homelab Manager backup" in r.text
+            assert r.status_code == 400 and "isn't a Fleetdeck backup" in r.text
         r = client.post("/api/backup/restore", json={"passphrase": PASS, "data": "%%%"}, auth=AUTH)
         assert r.status_code == 400
         good = (tmp_path / "data" / "config.yaml").read_bytes()
