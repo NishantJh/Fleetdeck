@@ -303,34 +303,6 @@ class JobManager:
                     job.log.append("== Running OS upgrade")
                     stdout = await self._upgrade(job, executor, on_line)
                     await self._after_upgrade(job, target, executor, on_line, slot, stdout)
-
-                    res = await executor.run(UPGRADE_SCRIPT, on_line)
-                    if res.rc != 0:
-                        raise RuntimeError(f"upgrade exited with code {res.rc}")
-                    reboot = parse_reboot(res.stdout)
-                    job.log.append("== Upgrade finished" + ("; reboot required" if reboot else ""))
-                    if app := parse_community_script(res.stdout):
-                        await self._community_update(job, executor, app, on_line)
-                    job.log.append("== Re-checking for remaining updates")
-                    # The upgrade itself worked; a failed re-check is reported but doesn't fail the job.
-                    try:
-                        check = await _check(executor)
-                    except Exception as e:  # noqa: BLE001
-                        check = CheckResult(checked_at=_now(), error=str(e) or type(e).__name__)
-                    self._set_check(job.target_id, check)
-                    if check.error:
-                        job.log.append(f"! re-check failed: {check.error}")
-                    else:
-                        job.log.append(f"== {len(check.packages)} update(s) still available")
-                    if job.reboot_if_required:
-                        # Trust the re-check when it worked; it also sees reboots pending from before.
-                        pending = check.reboot_required if not check.error else reboot
-                        if not pending:
-                            job.log.append("== No reboot needed")
-                        elif target.no_reboot:
-                            job.log.append(f"! Not rebooting: {target.no_reboot}")
-                        else:
-                            await self._reboot(job, target, executor, on_line, slot)
                 job.status = "succeeded"
             except Exception as e:  # noqa: BLE001 - surface every failure in the UI
                 log.exception("job %s failed", job.id)
