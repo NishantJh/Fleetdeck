@@ -141,7 +141,7 @@ def config_script(
     cfg: HostBackupConfig | None,
     *,
     proxmox: bool = False,
-    paths: tuple[str, ...] = DEFAULT_PATHS,
+    paths: tuple[str, ...] | None = None,
     local_dir: str = LOCAL_DIR,
     destination: str | None = None,
     stream: bool = False,
@@ -153,7 +153,7 @@ def config_script(
     else to /var/backups/homelab-manager. With ``destination``, to that folder instead, which must exist.
     With ``stream`` the tar.gz goes to stdout and nothing is written here (see SshHostBackup)."""
     local_dir = shlex.quote(local_dir)
-    extra = " ".join(shlex.quote(p) for p in (*paths, *(cfg.include if cfg else [])))
+    extra = " ".join(shlex.quote(p) for p in (*(paths or DEFAULT_PATHS), *(cfg.include if cfg else [])))
     head = f"""\
 umask 077
 STAMP=$(date -u +%Y%m%d_%H%M%S)
