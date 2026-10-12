@@ -5,7 +5,7 @@ import pytest
 from homelab.inventory import Inventory
 from homelab.jobs import JobManager
 from homelab.models import ExecResult, Target
-from homelab.updates import CHECK_SCRIPT
+from homelab.updates import CHECK_SCRIPT, COMMUNITY_UPDATE_SCRIPT, UPGRADE_SCRIPT
 
 
 class FakeExecutor:
@@ -277,3 +277,66 @@ async def test_recheck_after_reboot_is_retried(fast_reboot):
     await _finish(jobs)
     assert job.status == "succeeded" and ex.failed_checks == 2
     assert jobs.checks["t1"].error is None
+
+
+class CommunityExecutor:
+    """A helper-script container: the upgrade reports the app, then its own update runs."""
+
+    def __init__(self, update_rc=0):
+        self.update_rc = update_rc
+        self.scripts: list[str] = []
+
+    async def run(self, script, on_line=None, timeout=0):
+        self.scripts.append(script)
+        if script == COMMUNITY_UPDATE_SCRIPT:
+            if on_line:
+                on_line("stdout", "\x1b[33m⏳\x1b[m Updating Plex\r\x1b[32m✔️\x1b[m Updated Plex")
+            return ExecResult(rc=self.update_rc)
+        if script == CHECK_SCRIPT:
+            return ExecResult(rc=0, stdout="__PM__=apt\n__BEGIN__\n__END__\n__REBOOT__=no\n__CSAPP__=plex\n")
+        return ExecResult(rc=0, stdout="__PM__=apt\n__REBOOT__=no\n__CSAPP__=plex\n")
+
+
+async def test_upgrade_runs_helper_scripts_own_update_afterwards():
+    ex = CommunityExecutor()
+    jobs = JobManager(_inventory((_target(), ex)))
+    job = jobs.submit("t1", "upgrade")
+    await _finish(jobs)
+    assert job.status == "succeeded", job.error
+    assert ex.scripts.index(COMMUNITY_UPDATE_SCRIPT) == ex.scripts.index(UPGRADE_SCRIPT) + 1
+    assert "✔️ Updated Plex" in job.log  # colours and the spinner frame are dropped
+    assert jobs.checks["t1"].community_script == "plex"
+
+
+async def test_helper_script_update_failing_fails_the_job():
+    ex = CommunityExecutor(update_rc=1)
+    jobs = JobManager(_inventory((_target(), ex)))
+    job = jobs.submit("t1", "upgrade")
+    await _finish(jobs)
+    assert job.status == "failed" and "plex's own update exited with code 1" in job.error
+
+
+async def test_helper_script_update_off_only_warns():
+    ex = CommunityExecutor()
+    jobs = JobManager(_inventory((_target(), ex)), community_scripts_update=False)
+    job = jobs.submit("t1", "upgrade")
+    await _finish(jobs)
+    assert job.status == "succeeded"
+    assert COMMUNITY_UPDATE_SCRIPT not in ex.scripts
+    assert any("run `update` inside it" in line for line in job.log)
+
+
+async def test_plain_upgrade_does_not_run_helper_update():
+    ex = FakeExecutor()
+    seen = []
+    orig = ex.run
+
+    async def run(script, on_line=None, timeout=0):
+        seen.append(script)
+        return await orig(script, on_line, timeout)
+
+    ex.run = run
+    jobs = JobManager(_inventory((_target(), ex)))
+    job = jobs.submit("t1", "upgrade")
+    await _finish(jobs)
+    assert job.status == "succeeded" and COMMUNITY_UPDATE_SCRIPT not in seen

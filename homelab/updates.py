@@ -13,6 +13,7 @@ Check output on stdout looks like::
     __END__
     __REBOOT__=yes|no|unknown
     __SELF__=yes            (only on the machine whose Docker/Podman runs this dashboard)
+    __CSAPP__=plex          (only in a container installed by the community-scripts helper scripts)
 
 Refresh logs go to stderr so they never pollute the package list.
 """
@@ -64,6 +65,43 @@ elif command -v needs-restarting >/dev/null 2>&1; then
   if needs-restarting -r >/dev/null 2>&1; then echo "__REBOOT__=no"; else echo "__REBOOT__=yes"; fi
 else echo "__REBOOT__=no"; fi
 """
+
+# Containers made by the Proxmox VE Helper-Scripts (community-scripts) get a /usr/bin/update that
+# downloads and runs the app's own script (ct/<app>.sh). That script knows the app: it moves its
+# apt repository when the vendor changes it, reinstalls or rebuilds it, and restarts it. A plain OS
+# upgrade knows none of that, so after one the app may need its own update to work again.
+COMMUNITY_SCRIPT_DETECT = r"""
+if [ -f /usr/bin/update ] && grep -q 'community-scripts/' /usr/bin/update 2>/dev/null; then
+  app=$(grep -o 'ct/[A-Za-z0-9._-]*[.]sh' /usr/bin/update | head -n 1 | sed 's#^ct/##; s#[.]sh$##')
+  echo "__CSAPP__=${app:-unknown}"
+fi
+"""
+
+# Runs the helper script's own update, unattended (PHS_SILENT=1 skips its menus and prompts and
+# makes it abort instead of asking). The script is fetched from GitHub on every run, exactly as when
+# you type `update` in the container. /usr/bin/update has no #! line, so it is run with sh. It runs
+# `bash -c "$(curl ...)"`, which succeeds doing nothing when the download fails, so check the
+# download first.
+COMMUNITY_UPDATE_SCRIPT = r"""
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
+export DEBIAN_FRONTEND=noninteractive PHS_SILENT=1 TERM=dumb
+for c in bash curl; do
+  command -v $c >/dev/null 2>&1 || { echo "$c is not installed, so the helper script can't run" >&2; exit 3; }
+done
+url=$(grep -o 'https://[^)"]*ct/[A-Za-z0-9._-]*[.]sh' /usr/bin/update | head -n 1)
+[ -n "$url" ] || { echo "can't find the helper script's address in /usr/bin/update" >&2; exit 3; }
+curl -fsS -o /dev/null "$url" || { echo "can't download $url" >&2; exit 4; }
+sh /usr/bin/update </dev/null
+"""
+
+_ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b[()][A-Za-z0-9]")
+
+
+def clean_line(line: str) -> str:
+    """A helper-script log line without colours, cursor moves or spinner frames (only what is
+    left after the last carriage return is what a terminal would show)."""
+    return _ANSI.sub("", line).rsplit("\r", 1)[-1].strip()
+
 
 _CONTAINER_ID = re.compile(r"[0-9a-f]{64}")
 _SAFE_PATH = re.compile(r"^/[A-Za-z0-9/._-]+$")
@@ -150,6 +188,7 @@ case "$PM" in
 esac
 """
     + REBOOT_SCRIPT
+    + COMMUNITY_SCRIPT_DETECT
     + SELF_SCRIPT
     + "exit $rc\n"
 )
@@ -171,6 +210,7 @@ case "$PM" in
 esac
 """
     + REBOOT_SCRIPT
+    + COMMUNITY_SCRIPT_DETECT
 )
 
 
@@ -320,9 +360,16 @@ def parse_check(result: ExecResult) -> CheckResult:
         checked_at=now,
         error=error,
         runs_dashboard=meta.get("SELF") == "yes",
+        community_script=parse_community_script(result.stdout),
     )
 
 
 def parse_reboot(stdout: str) -> bool | None:
     meta, _ = _markers(stdout)
     return _reboot(meta)
+
+
+def parse_community_script(stdout: str) -> str | None:
+    """The helper-script app (e.g. "plex") the check or upgrade found, if any."""
+    meta, _ = _markers(stdout)
+    return meta.get("CSAPP") or None

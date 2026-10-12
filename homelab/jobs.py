@@ -16,10 +16,13 @@ from .store import Store, mark_interrupted
 from .updates import (
     BOOT_ID_SCRIPT,
     CHECK_SCRIPT,
+    COMMUNITY_UPDATE_SCRIPT,
     REBOOT_NOW_SCRIPT,
     UPGRADE_SCRIPT,
+    clean_line,
     parse_boot_id,
     parse_check,
+    parse_community_script,
     parse_reboot,
 )
 
@@ -79,9 +82,17 @@ class JobManager:
     results and finished jobs are saved and reloaded on the next start.
     """
 
-    def __init__(self, inventory: Inventory, max_parallel: int = 4, store: Store | None = None, snapshot_keep: int = 3):
+    def __init__(
+        self,
+        inventory: Inventory,
+        max_parallel: int = 4,
+        store: Store | None = None,
+        snapshot_keep: int = 3,
+        community_scripts_update: bool = True,
+    ):
         self.inventory = inventory
         self.snapshot_keep = snapshot_keep
+        self.community_scripts_update = community_scripts_update
         self.sem = asyncio.Semaphore(max_parallel)
         self.store = store
         self.jobs: OrderedDict[str, Job] = OrderedDict()
@@ -267,7 +278,35 @@ class JobManager:
                         await self._snapshot(job)
                     job.log.append("== Running OS upgrade")
                     stdout = await self._upgrade(job, executor, on_line)
-                    await self._after_upgrade(job, target, executor, on_line, slot, parse_reboot(stdout))
+                    await self._after_upgrade(job, target, executor, on_line, slot, stdout)
+
+                    res = await executor.run(UPGRADE_SCRIPT, on_line)
+                    if res.rc != 0:
+                        raise RuntimeError(f"upgrade exited with code {res.rc}")
+                    reboot = parse_reboot(res.stdout)
+                    job.log.append("== Upgrade finished" + ("; reboot required" if reboot else ""))
+                    if app := parse_community_script(res.stdout):
+                        await self._community_update(job, executor, app, on_line)
+                    job.log.append("== Re-checking for remaining updates")
+                    # The upgrade itself worked; a failed re-check is reported but doesn't fail the job.
+                    try:
+                        check = await _check(executor)
+                    except Exception as e:  # noqa: BLE001
+                        check = CheckResult(checked_at=_now(), error=str(e) or type(e).__name__)
+                    self._set_check(job.target_id, check)
+                    if check.error:
+                        job.log.append(f"! re-check failed: {check.error}")
+                    else:
+                        job.log.append(f"== {len(check.packages)} update(s) still available")
+                    if job.reboot_if_required:
+                        # Trust the re-check when it worked; it also sees reboots pending from before.
+                        pending = check.reboot_required if not check.error else reboot
+                        if not pending:
+                            job.log.append("== No reboot needed")
+                        elif target.no_reboot:
+                            job.log.append(f"! Not rebooting: {target.no_reboot}")
+                        else:
+                            await self._reboot(job, target, executor, on_line, slot)
                 job.status = "succeeded"
             except Exception as e:  # noqa: BLE001 - surface every failure in the UI
                 log.exception("job %s failed", job.id)
@@ -300,7 +339,7 @@ class JobManager:
         """Carry on with a job from where a restart cut it off."""
         if job.remote is not None:
             stdout = await self._upgrade(job, executor, on_line)
-            await self._after_upgrade(job, target, executor, on_line, slot, parse_reboot(stdout))
+            await self._after_upgrade(job, target, executor, on_line, slot, stdout)
         else:  # waiting for a reboot, on its own or after an upgrade
             await self._reboot(job, target, executor, on_line, slot)
 
@@ -344,8 +383,11 @@ class JobManager:
             raise RuntimeError(f"upgrade exited with code {rc}")
         return "".join(out)
 
-    async def _after_upgrade(self, job: Job, target: Target, executor, on_line, slot: _Slot, reboot) -> None:
+    async def _after_upgrade(self, job: Job, target: Target, executor, on_line, slot: _Slot, stdout: str) -> None:
+        reboot = parse_reboot(stdout)
         job.log.append("== Upgrade finished" + ("; reboot required" if reboot else ""))
+        if app := parse_community_script(stdout):
+            await self._community_update(job, executor, app, on_line)
         job.log.append("== Re-checking for remaining updates")
         # The upgrade itself worked; a failed re-check is reported but doesn't fail the job.
         try:
@@ -471,6 +513,30 @@ class JobManager:
             job.reboot_from = None
             raise
         job.log.append("== Waiting for it to come back")
+
+    async def _community_update(self, job: Job, executor, app: str, on_line) -> None:
+        """Run the app's own helper-script update after the OS upgrade, as `update` in the container
+        would. A plain OS upgrade can leave such an app broken (e.g. Plex after its vendor moved
+        its apt repository); its own update script repairs and restarts it."""
+        if not self.community_scripts_update:
+            job.log.append(
+                f"! {app} was installed by a community-scripts helper script and its own update was not run "
+                "(community_scripts_update is off). If it misbehaves, run `update` inside it."
+            )
+            return
+        job.log.append(f"== Running {app}'s own update (community-scripts helper script, fetched from GitHub)")
+
+        def cleaned(stream: str, line: str) -> None:
+            if line := clean_line(line):
+                on_line(stream, line)
+
+        res = await executor.run(COMMUNITY_UPDATE_SCRIPT, cleaned)
+        if res.rc != 0:
+            raise RuntimeError(
+                f"the OS upgrade worked, but {app}'s own update exited with code {res.rc}. "
+                "Run `update` inside it to finish, or roll back to the snapshot."
+            )
+        job.log.append(f"== {app}'s own update finished")
 
     async def _snapshot(self, job: Job) -> None:
         snaps = self.inventory.snapshots.get(job.target_id)
