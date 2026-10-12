@@ -87,6 +87,10 @@ td[data-label] > span, th, td.actions { white-space: nowrap; }
 .dot.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 22%, transparent); }
 .dot.off { background: var(--bad); }
 .pkgs > td { background: var(--panel-2); }
+.docker-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 8px 10px 4px; }
+.docker-head label { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; white-space: nowrap; }
+.docker-head input { width: auto; margin: 0; }
+.docker-head + p, .docker-head ~ p { padding: 4px 10px 8px; margin: 0; }
 .pkgs table td { padding: 2px 10px; border: none; font-family: var(--mono); font-size: 12px; background: none; }
 
 /* Activity */

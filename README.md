@@ -87,6 +87,17 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   `snapshot_keep` (3) snapshots per guest, named `homelab_<date>_<time>`, and never touches
   snapshots it didn't make. The button only covers the job's own snapshot while it is still kept
   and the job is still in Activity; roll back to anything older in Proxmox or Incus.
+* **Docker Compose stacks:** the **Docker** button on any machine (host, VM or LXC) lists the Compose
+  stacks running on it, found through the labels Compose puts on its containers, so no paths to set up.
+  *Check for new images* downloads newer images for every running stack (nothing is restarted) and marks
+  the stacks that are behind; **Update** on a stack pulls and runs `docker compose up -d` for the services
+  running now. A service you stopped stays stopped, a stopped stack is not started, and a failed pull
+  leaves the stack as it was. Tick *remove old images after an update* to also run `docker image prune`
+  (unused, untagged images only). Like OS upgrades, it keeps running on the machine if the dashboard
+  restarts. The stack that runs the dashboard itself is shown but not updated from here (it would stop
+  halfway); update it with `docker compose pull && docker compose up -d`. It needs nothing new on machines
+  you already set up: the dashboard's sudo rule already allows `docker`. Docker must be reachable as root
+  (rootless Docker for a normal user isn't supported).
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,
   never two jobs on the same machine at once).
 

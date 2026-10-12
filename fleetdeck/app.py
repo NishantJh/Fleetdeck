@@ -21,7 +21,7 @@ from .backup_runs import check_destination
 from .config import AppConfig, config_path, load_config
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
-from .models import CheckResult, Job, JobAction, Target
+from .models import CheckResult, Job, JobAction, StacksResult, Target
 from .notify import Notifier
 from .onboarding import Paths
 from .providers.proxmox import PROTECTED_NOTE
@@ -42,6 +42,8 @@ class TargetView(BaseModel):
     check: CheckResult | None = None
     active_job: Job | None = None
     hidden: bool = False
+    # What the last Docker check found (None: never checked).
+    stacks: StacksResult | None = None
     # Looks like the machine this dashboard runs on: shown with a "dashboard" tag.
     runs_dashboard: bool = False
 
@@ -55,6 +57,9 @@ class ActionRequest(BaseModel):
     snapshot_first: bool = False
     # Backup only: a folder (or mounted network share) on the machine to put it in, instead of the default.
     destination: str | None = Field(None, max_length=1024)
+    # Stack update only: the Compose project to update, and whether to remove unused old images after.
+    stack: str | None = Field(None, max_length=128)
+    prune: bool = False
 
 
 class BackupPlaceRequest(BaseModel):
@@ -173,6 +178,7 @@ def create_app(
                 check=(check := jobs.checks.get(t.id)),
                 active_job=_light(jobs.active_job(t.id)),
                 hidden=t.id in jobs.hidden,
+                stacks=jobs.stacks.get(t.id),
                 runs_dashboard=_runs_dashboard(t, check, hostname),
             )
             for t, _ in inventory.targets.values()
@@ -205,7 +211,7 @@ def create_app(
                     _light(
                         jobs.submit(
                             tid, req.action, req.reboot_if_required, snapshot_first=req.snapshot_first,
-                            destination=destination,
+                            destination=destination, stack=req.stack, prune=req.prune,
                         )
                     )
                 )  # fmt: skip

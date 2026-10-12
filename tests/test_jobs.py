@@ -349,3 +349,18 @@ async def test_plain_upgrade_does_not_run_helper_update():
     job = jobs.submit("t1", "upgrade")
     await _finish(jobs)
     assert job.status == "succeeded" and COMMUNITY_UPDATE_SCRIPT not in seen
+
+
+async def test_upgrade_script_runs_once():
+    class Counting(FakeExecutor):
+        runs = 0
+
+        async def run(self, script, on_line=None, timeout=0):
+            self.runs += script == UPGRADE_SCRIPT
+            return await super().run(script, on_line, timeout)
+
+    ex = Counting()
+    jobs = JobManager(_inventory((_target(), ex)))
+    jobs.submit("t1", "upgrade")
+    await _finish(jobs)
+    assert ex.runs == 1

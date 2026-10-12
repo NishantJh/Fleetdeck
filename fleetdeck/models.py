@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 
 Platform = Literal["proxmox", "incus", "ssh", "demo"]
 Kind = Literal["host", "lxc", "vm", "container"]
@@ -79,7 +79,58 @@ class ExecResult(BaseModel):
     stderr: str = ""
 
 
-JobAction = Literal["check", "upgrade", "reboot", "rollback", "backup"]
+class StackService(BaseModel):
+    """One service of a Docker Compose stack, as its container runs now."""
+
+    name: str
+    image: str
+    status: str  # the container's state: running, exited, restarting...
+    # A newer image for this tag is already on the machine (pulled by a check), but the container
+    # was made from an older one.
+    outdated: bool = False
+
+
+class Stack(BaseModel):
+    """A Docker Compose project found on a machine through its containers' compose labels."""
+
+    name: str
+    working_dir: str = ""
+    config_files: list[str] = Field(default_factory=list)
+    services: list[StackService] = Field(default_factory=list)
+    # The stack that holds this dashboard's own container: never updated from here.
+    is_dashboard: bool = False
+    # The last pull of this stack's images failed (private registry, no network, a typo in a tag).
+    error: str | None = None
+
+    @property
+    def running(self) -> list[StackService]:
+        return [s for s in self.services if s.status in ("running", "restarting")]
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def state(self) -> str:
+        n = len(self.running)
+        return "stopped" if n == 0 else "running" if n == len(self.services) else "partial"
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def update_available(self) -> bool:
+        return any(s.outdated for s in self.running)
+
+
+class StacksResult(BaseModel):
+    """What the last Docker check found on a machine."""
+
+    # "yes", "none" (Docker is not installed) or "down" (Docker did not answer this account).
+    docker: str = "yes"
+    # "v2" (docker compose), "v1" (docker-compose) or "none".
+    compose: str = "none"
+    stacks: list[Stack] = Field(default_factory=list)
+    checked_at: datetime
+    error: str | None = None
+
+
+JobAction = Literal["check", "upgrade", "reboot", "rollback", "backup", "stacks", "stack-update"]
 JobStatus = Literal["queued", "running", "succeeded", "failed"]
 
 
@@ -95,6 +146,9 @@ class Job(BaseModel):
     snapshot: str | None = None
     # Backup only: the folder the user asked for this time (None: the default place).
     destination: str | None = None
+    # Stack update only: the Compose project to update, and whether to delete unused old images after.
+    stack: str | None = None
+    prune: bool = False
     status: JobStatus = "queued"
     created_at: datetime
     started_at: datetime | None = None

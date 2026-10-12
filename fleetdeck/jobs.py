@@ -10,8 +10,9 @@ from datetime import UTC, datetime
 
 from . import detached
 from .inventory import Inventory
-from .models import CheckResult, Job, JobAction, Target
+from .models import CheckResult, Job, JobAction, Stack, StacksResult, Target
 from .snapshots import Snapshots, prune, snapshot_name, unsupported
+from .stacks import SCAN_SCRIPT, _own_id, parse_pull_failures, parse_scan, pull_script, update_script
 from .store import Store, mark_interrupted
 from .updates import (
     BOOT_ID_SCRIPT,
@@ -39,6 +40,8 @@ REBOOT_POLL = 5.0
 RECHECK_TRIES = 6
 # An upgrade running detached on its target gets this long before the dashboard stops waiting.
 UPGRADE_TIMEOUT = 3600.0
+# Pulling every stack's images on a machine.
+PULL_TIMEOUT = 3600.0
 # After a restart, how long to wait for a job's machine to show up in the inventory again.
 RESUME_WAIT = 600.0
 RESUME_POLL = 15.0
@@ -98,6 +101,8 @@ class JobManager:
         self.store = store
         self.jobs: OrderedDict[str, Job] = OrderedDict()
         self.checks: dict[str, CheckResult] = {}
+        # Machine id -> what its last Docker check found (see stacks.py).
+        self.stacks: dict[str, StacksResult] = {}
         self._target_locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task] = set()
         # Hosts that are rebooting, or waiting for their guests' jobs so they can reboot.
@@ -108,6 +113,7 @@ class JobManager:
         self.backup_places: dict[str, str] = {}
         if store is not None:
             self.checks = store.load_checks()
+            self.stacks = store.load_stacks()
             self.hidden = store.load_hidden()
             self.backup_places = store.load_backup_places()
             self.jobs = OrderedDict((j.id, j) for j in store.load_jobs(MAX_JOBS))
@@ -116,6 +122,11 @@ class JobManager:
         self.checks[target_id] = check
         if self.store is not None:
             self._persist(self.store.save_check, target_id, check)
+
+    def _set_stacks(self, target_id: str, result: StacksResult) -> None:
+        self.stacks[target_id] = result
+        if self.store is not None:
+            self._persist(self.store.save_stacks, target_id, result)
 
     def set_hidden(self, target_ids: list[str], hidden: bool) -> None:
         if hidden:
@@ -187,6 +198,8 @@ class JobManager:
         snapshot_first: bool = False,
         snapshot: str | None = None,
         destination: str | None = None,
+        stack: str | None = None,
+        prune: bool = False,
     ) -> Job:
         target, executor = self.inventory.get(target_id)
         if action == "rollback":
@@ -197,11 +210,13 @@ class JobManager:
             _ensure_can_back_up(target, self.inventory.backup_runs.get(target_id))
         else:
             _ensure_runnable(target, executor, action)
+            if action == "stack-update":
+                _ensure_stack_updatable(target, self.stacks.get(target_id), stack)
         host_id = self._host_id(target)
         if host_id in self._rebooting:
             raise ValueError(f"{target.name}: its host {target.parent} is rebooting")
         existing = self.active_job(target_id)
-        if existing and existing.action == action:
+        if existing and existing.action == action and existing.stack == stack:
             # Asking again with "reboot if required" ticked still counts, even though the job exists.
             if action == "upgrade" and reboot_if_required:
                 existing.reboot_if_required = True
@@ -215,6 +230,8 @@ class JobManager:
             snapshot_first=snapshot_first and action == "upgrade",
             snapshot=snapshot if action == "rollback" else None,
             destination=destination if action == "backup" else None,
+            stack=stack if action == "stack-update" else None,
+            prune=prune and action == "stack-update",
             created_at=_now(),
         )
         self.jobs[job.id] = job
@@ -297,6 +314,10 @@ class JobManager:
                             self._set_check(job.target_id, await _check(executor))
                         except Exception as e:  # noqa: BLE001 - the rollback itself worked
                             job.log.append(f"! re-check failed: {e}")
+                elif job.action == "stacks":
+                    await self._stacks_check(job, executor, on_line)
+                elif job.action == "stack-update":
+                    await self._stack_update(job, executor, on_line)
                 else:
                     if job.snapshot_first:
                         await self._snapshot(job)
@@ -333,28 +354,31 @@ class JobManager:
 
     async def _continue(self, job: Job, target: Target, executor, on_line, slot: _Slot) -> None:
         """Carry on with a job from where a restart cut it off."""
-        if job.remote is not None:
+        if job.action == "stack-update":
+            await self._stack_update(job, executor, on_line)
+        elif job.remote is not None:
             stdout = await self._upgrade(job, executor, on_line)
             await self._after_upgrade(job, target, executor, on_line, slot, stdout)
         else:  # waiting for a reboot, on its own or after an upgrade
             await self._reboot(job, target, executor, on_line, slot)
 
-    async def _upgrade(self, job: Job, executor, on_line) -> str:
-        """Runs the upgrade and returns its output. Detached on the target where the executor allows,
-        so the upgrade goes on if the dashboard restarts, and :meth:`resume` follows it again."""
+    async def _upgrade(self, job: Job, executor, on_line, script: str = UPGRADE_SCRIPT, what: str = "upgrade") -> str:
+        """Runs the upgrade (or another long ``script``) and returns its output. Detached on the target
+        where the executor allows, so it goes on if the dashboard restarts, and :meth:`resume`
+        follows it again."""
         if not getattr(executor, "detached", False):
-            return await _attached(executor, on_line)
+            return await _attached(executor, on_line, script, what)
         if job.remote is None:
             # Saved before starting, so a restart right after it still finds the run.
             job.remote, job.remote_offset = job.id, 0
             self._save_job(job)
             try:
-                how = await detached.start(executor, job.remote, UPGRADE_SCRIPT)
+                how = await detached.start(executor, job.remote, script)
             except detached.NotStarted as e:
                 job.remote = None
                 self._save_job(job)
                 job.log.append(f"! can't run it detached ({e}), so a dashboard restart would stop it")
-                return await _attached(executor, on_line)
+                return await _attached(executor, on_line, script, what)
             job.log.append(f"== Running on the machine ({how}): a dashboard restart won't stop it")
         out: list[str] = []
         carry = ""
@@ -376,8 +400,77 @@ class JobManager:
         self._save_job(job)
         await detached.cleanup(executor, run_id)
         if rc != 0:
-            raise RuntimeError(f"upgrade exited with code {rc}")
+            raise RuntimeError(f"{what} exited with code {rc}")
         return "".join(out)
+
+    async def _stacks_check(self, job: Job, executor, on_line) -> None:
+        """Find the Compose stacks, pull their images (nothing restarts), and see which are behind."""
+        job.log.append("== Looking for Docker Compose stacks")
+        found = parse_scan(await executor.run(SCAN_SCRIPT), _own_id())
+        if found.docker != "yes" or not found.stacks:
+            self._set_stacks(job.target_id, found)
+            if found.docker == "down":
+                raise RuntimeError(found.error)
+            job.log.append(f"== {found.error or 'No Docker Compose stacks found'}")
+            return
+        if found.compose == "none":
+            self._set_stacks(job.target_id, found.model_copy(update={"error": "Docker Compose is not installed"}))
+            raise RuntimeError("Docker Compose is not installed on this machine")
+        running = [s for s in found.stacks if s.running]
+        job.log.append(f"== Found {len(found.stacks)} stack(s); fetching newer images (nothing is restarted)")
+
+        def shown(stream: str, line: str) -> None:
+            if line := clean_line(line):
+                if not line.startswith("__PULLFAIL__"):
+                    on_line(stream, line)
+
+        res = await executor.run(pull_script(running), shown, timeout=PULL_TIMEOUT)
+        if res.rc != 0:
+            raise RuntimeError(f"pulling images exited with code {res.rc}: {(res.stderr or res.stdout).strip()[-300:]}")
+        failures = parse_pull_failures(res.stdout)
+        result = parse_scan(await executor.run(SCAN_SCRIPT), _own_id())
+        for s in result.stacks:
+            s.error = failures.get(s.name)
+            if s.error:
+                job.log.append(f"! {s.name}: could not fetch images: {s.error}")
+            elif s.update_available:
+                job.log.append(f"== {s.name}: update available ({', '.join(x.name for x in s.services if x.outdated)})")
+            else:
+                job.log.append(f"== {s.name}: up to date")
+        self._set_stacks(job.target_id, result)
+
+    async def _stack_update(self, job: Job, executor, on_line) -> None:
+        def cleaned(stream: str, line: str) -> None:
+            if line := clean_line(line):
+                on_line(stream, line)
+
+        script = ""
+        if job.remote is None:  # not a resume: the script is built from the last check
+            stack = _ensure_stack_updatable(None, self.stacks.get(job.target_id), job.stack)
+            script = update_script(stack, job.prune)
+            job.log.append(f"== Updating Docker stack {stack.name}")
+        await self._upgrade(job, executor, cleaned, script, "stack update")
+        job.log.append("== Stack updated; checking it")
+        try:
+            result = parse_scan(await executor.run(SCAN_SCRIPT), _own_id())
+        except Exception as e:  # noqa: BLE001 - the update itself worked
+            job.log.append(f"! re-check failed: {e}")
+            return
+        # Keep the other stacks' pull errors; only this stack was just made current.
+        old = {s.name: s.error for s in (self.stacks.get(job.target_id) or StacksResult(checked_at=_now())).stacks}
+        for s in result.stacks:
+            s.error = old.get(s.name) if s.name != job.stack else None
+        self._set_stacks(job.target_id, result)
+        now = next((s for s in result.stacks if s.name == job.stack), None)
+        if now is None:
+            job.log.append("! the stack is no longer there after the update")
+        elif now.update_available:
+            behind = ", ".join(x.name for x in now.services if x.outdated)
+            job.log.append(f"! some services still run an older image: {behind}")
+        elif now.state != "running":
+            job.log.append(f"! the stack is {now.state}: some services are not running")
+        else:
+            job.log.append("== Stack is running the newest images")
 
     async def _after_upgrade(self, job: Job, target: Target, executor, on_line, slot: _Slot, stdout: str) -> None:
         reboot = parse_reboot(stdout)
@@ -588,10 +681,27 @@ class JobManager:
 def _ensure_runnable(target: Target, executor, action: JobAction) -> None:
     if not target.updatable or executor is None:
         raise ValueError(f"{target.name}: {target.note or 'not updatable'}")
-    if action in ("upgrade", "reboot") and target.check_only:
+    if action in ("upgrade", "reboot", "stacks", "stack-update") and target.check_only:
         raise ValueError(f"{target.name}: {target.note or 'can only be checked'}")
     if action == "reboot" and target.no_reboot:
         raise ValueError(f"{target.name}: {target.no_reboot}")
+
+
+def _ensure_stack_updatable(target: Target | None, result: StacksResult | None, name: str | None) -> Stack:
+    who = f"{target.name}: " if target else ""
+    if target is not None and target.check_only:
+        raise ValueError(f"{who}{target.note or 'can only be checked'}")
+    stack = next((s for s in result.stacks if s.name == name), None) if result else None
+    if stack is None:
+        raise ValueError(f"{who}no Docker stack {name!r} known: check Docker on this machine first")
+    if stack.is_dashboard:
+        raise ValueError(
+            f"{who}{stack.name} runs this dashboard, which would stop in the middle of its own update. "
+            "Update it from a terminal: docker compose pull && docker compose up -d"
+        )
+    if not stack.running:
+        raise ValueError(f"{who}{stack.name} is stopped; it is not started by an update. Start it first")
+    return stack
 
 
 def _ensure_can_roll_back(target: Target, snaps: Snapshots | None) -> None:
@@ -608,10 +718,10 @@ def _ensure_can_back_up(target: Target, run) -> None:
         raise ValueError(f"{target.name}: {target.note or 'cannot be backed up from here'}")
 
 
-async def _attached(executor, on_line) -> str:
-    res = await executor.run(UPGRADE_SCRIPT, on_line)
+async def _attached(executor, on_line, script: str = UPGRADE_SCRIPT, what: str = "upgrade") -> str:
+    res = await executor.run(script, on_line)
     if res.rc != 0:
-        raise RuntimeError(f"upgrade exited with code {res.rc}")
+        raise RuntimeError(f"{what} exited with code {res.rc}")
     return res.stdout
 
 

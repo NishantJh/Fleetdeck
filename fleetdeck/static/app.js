@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), logJob: null, logLines: [], showHidden: false };
+const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), docker: new Set(), logJob: null, logLines: [], showHidden: false };
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const PLATFORM = { proxmox: "Proxmox", incus: "Incus", ssh: "Standalone", demo: "Demo" };
@@ -75,7 +75,7 @@ function groups() {
 const canUpgrade = (t) => t.updatable && !t.check_only;
 const selectable = (v) => canUpgrade(v.target) && !v.hidden;
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
-const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up" };
+const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "checking Docker", "stack-update": "updating Docker" };
 
 function updatesCell(v) {
   const t = v.target;
@@ -118,6 +118,39 @@ function csTip(app) {
     : `Its own update is turned off (community_scripts_update), so after an OS update run "update" inside it if ${app} misbehaves.`);
 }
 
+const dockerBehind = (v) => (v.stacks?.stacks || []).filter((s) => s.update_available && s.state !== "stopped" && !s.is_dashboard).length;
+
+function stackPanel(v) {
+  const id = esc(v.target.id), r = v.stacks, busy = !!v.active_job;
+  const prune = !!remember.get("pruneImages");
+  let body;
+  if (!r) body = `<p class="muted">Not checked yet.</p>`;
+  else if (r.error) body = `<p class="${r.docker === "none" ? "muted" : "bad"}">${esc(r.error)}</p>`;
+  else if (!r.stacks.length) body = `<p class="muted">No Docker Compose stacks found on this machine.</p>`;
+  else {
+    const rows = r.stacks.map((s) => {
+      const behind = s.services.filter((x) => x.outdated && s.state !== "stopped").map((x) => x.name);
+      let status;
+      if (s.error) status = `<span class="bad" title="${esc(s.error)}">could not fetch images</span>`;
+      else if (s.state === "stopped") status = `<span class="muted">stopped</span>`;
+      else if (behind.length) status = `<span class="warn" title="${esc(behind.join(", "))}">update available</span>`;
+      else status = `<span class="ok">up to date</span>`;
+      const up = s.state === "partial" ? ` <span class="chip warn" title="Services that are stopped stay stopped">partly running</span>` : "";
+      const self = s.is_dashboard ? ` <span class="chip" title="This dashboard runs in this stack. Updating it would stop the update itself: run docker compose pull && docker compose up -d in a terminal.">dashboard</span>` : "";
+      const can = !busy && s.state !== "stopped" && !s.is_dashboard && r.compose !== "none";
+      const btn = `<button class="small ${behind.length && can ? "primary" : ""}" data-stack="${esc(s.name)}" data-id="${id}" ${can ? "" : "disabled"}>Update</button>`;
+      return `<tr><td>${esc(s.name)}${self}${up}</td><td class="muted">${s.services.map((x) => esc(x.name)).join(", ")}</td><td>${status}</td><td>${btn}</td></tr>`;
+    }).join("");
+    body = `<table>${rows}</table>`;
+  }
+  return `<tr class="pkgs"><td></td><td colspan="8">
+    <div class="docker-head"><b>Docker Compose stacks</b>
+      <span class="muted">${r ? `checked ${ago(r.checked_at)}` : ""}</span>
+      <button class="small" data-act="stacks" data-id="${id}" ${busy ? "disabled" : ""} title="Downloads newer images for every running stack. Nothing is restarted.">Check for new images</button>
+      <label class="muted"><input type="checkbox" data-prune ${prune ? "checked" : ""}> remove old images after an update</label></div>
+    ${body}</td></tr>`;
+}
+
 function rowHtml(v, withBackup) {
   const t = v.target, c = v.check;
   const busy = !!v.active_job;
@@ -141,6 +174,7 @@ function rowHtml(v, withBackup) {
       <button class="small" data-act="check" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Check</button>
       <button class="small ${pending && !t.check_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy ? "" : "disabled"} title="${t.check_only ? esc(t.note) : ""}">Update</button>
       <button class="small" data-act="reboot" data-id="${esc(t.id)}" ${canReboot(t) && !busy ? "" : "disabled"} title="${esc(t.no_reboot || (t.check_only ? t.note : ""))}">Reboot</button>
+      ${canUpgrade(t) ? `<button class="small ${dockerBehind(v) ? "primary" : ""}" data-act="docker" data-id="${esc(t.id)}" title="Docker Compose stacks on this machine">Docker${dockerBehind(v) ? ` (${dockerBehind(v)} ↑)` : ""}</button>` : ""}
       ${t.can_backup ? `<button class="small" data-act="backup" data-id="${esc(t.id)}" ${busy ? "disabled" : ""} title="Back up this machine">Back up</button>` : ""}
       <button class="small ghost" data-hide="${v.hidden ? "0" : "1"}" data-id="${esc(t.id)}" title="${v.hidden ? "Show this machine on the dashboard again" : "Hide from the dashboard, Check all and scheduled checks"}">${v.hidden ? "Unhide" : "Hide"}</button>
     </td></tr>`;
@@ -150,6 +184,7 @@ function rowHtml(v, withBackup) {
     const rows = pkgs.map((p) => `<tr><td>${esc(p.name)}${p.security ? ` <span class="chip sec">security</span>` : ""}</td><td>${esc(p.current || "")}</td><td>→ ${esc(p.available)}</td></tr>`).join("");
     html += `<tr class="pkgs"><td></td><td colspan="${withBackup ? 7 : 6}"><table>${rows}</table></td></tr>`;
   }
+  if (state.docker.has(t.id) && canUpgrade(t)) html += stackPanel(v);
   return html;
 }
 
@@ -223,11 +258,11 @@ async function load(refresh = false) {
   render();
 }
 
-async function act(action, ids, { rebootIfRequired = false, snapshotFirst = false, destination = null } = {}) {
+async function act(action, ids, { rebootIfRequired = false, snapshotFirst = false, destination = null, stack = null, prune = false } = {}) {
   if (!ids.length) return;
   let res;
   try {
-    const body = { action, target_ids: ids, reboot_if_required: rebootIfRequired, snapshot_first: snapshotFirst, destination };
+    const body = { action, target_ids: ids, reboot_if_required: rebootIfRequired, snapshot_first: snapshotFirst, destination, stack, prune };
     res = await api("/api/actions", { method: "POST", body: JSON.stringify(body) });
   } catch (e) {
     alert(`Could not start ${action}: ${e.message}`);
@@ -371,9 +406,25 @@ async function setHidden(id, hidden) {
 }
 
 document.addEventListener("click", (e) => {
-  const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide]");
+  const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide],[data-stack]");
   if (!el) return;
-  if (el.dataset.hide) {
+  if (el.dataset.stack) {
+    const id = el.dataset.id, name = el.dataset.stack;
+    const host = state.targets.find((v) => v.target.id === id)?.target.name || id;
+    if (!confirm(`Update ${name} on ${host}?\n\nPulls newer images and restarts the containers that changed. Stopped services stay stopped.`)) return;
+    act("stack-update", [id], { stack: name, prune: !!remember.get("pruneImages") });
+  } else if (el.dataset.act === "docker") {
+    const id = el.dataset.id;
+    if (state.docker.has(id)) state.docker.delete(id);
+    else {
+      state.docker.add(id);
+      // Nothing known yet: look right away.
+      if (!state.targets.find((v) => v.target.id === id)?.stacks) act("stacks", [id]);
+    }
+    render();
+  } else if (el.dataset.act === "stacks") {
+    act("stacks", [el.dataset.id]);
+  } else if (el.dataset.hide) {
     setHidden(el.dataset.id, el.dataset.hide === "1");
   } else if (el.dataset.toggle) {
     const id = el.dataset.toggle;
@@ -389,6 +440,7 @@ document.addEventListener("click", (e) => {
 });
 
 document.addEventListener("change", (e) => {
+  if (e.target.matches("[data-prune]")) { remember.set("pruneImages", e.target.checked); return; }
   const id = e.target.dataset?.select;
   if (!id) return;
   e.target.checked ? state.selected.add(id) : state.selected.delete(id);
