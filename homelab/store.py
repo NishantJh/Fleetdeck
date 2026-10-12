@@ -42,6 +42,7 @@ class Store:
             " data TEXT NOT NULL)"
         )
         self.db.execute("CREATE TABLE IF NOT EXISTS hidden (target_id TEXT PRIMARY KEY)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS backup_places (target_id TEXT PRIMARY KEY, path TEXT NOT NULL)")
 
     def close(self) -> None:
         self.db.close()
@@ -83,6 +84,19 @@ class Store:
         else:
             sql = "DELETE FROM hidden WHERE target_id = ?"
         self.db.executemany(sql, [(t,) for t in target_ids])
+
+    def load_backup_places(self) -> dict[str, str]:
+        return dict(self.db.execute("SELECT target_id, path FROM backup_places"))
+
+    def set_backup_place(self, target_id: str, path: str | None) -> None:
+        if path is None:
+            self.db.execute("DELETE FROM backup_places WHERE target_id = ?", (target_id,))
+        else:
+            self.db.execute(
+                "INSERT INTO backup_places (target_id, path) VALUES (?, ?)"
+                " ON CONFLICT(target_id) DO UPDATE SET path = excluded.path",
+                (target_id, path),
+            )
 
     def load_jobs(self, limit: int) -> list[Job]:
         """The newest ``limit`` jobs, oldest first. Jobs that were still running are marked as failed,

@@ -112,10 +112,6 @@ class ProxmoxConfig(BaseModel):
     # Flag a guest whose newest backup is older than this many hours. 0 turns backup tracking off.
     # Reading backups needs Datastore.Audit, Datastore.AllocateSpace and VM.Backup.
     backup_max_age_hours: int = Field(48, ge=0)
-    # The "Back up" button on a node: which storage the guests go to (default: a Proxmox Backup Server
-    # storage if there is one, else the first backup storage). False backs up the node's config only.
-    backup_storage: str | None = None
-    backup_guests: bool = True
 
     @field_validator("tls_fingerprint")
     @classmethod
@@ -141,11 +137,6 @@ class IncusConfig(BaseModel):
     exclude: list[str] = Field(default_factory=list)
     # Flag an instance whose newest snapshot or export is older than this many hours. 0 turns it off.
     backup_max_age_hours: int = Field(48, ge=0)
-    # The "Back up" button: instances whose disk use is above this many GB are skipped (an export is
-    # kept on the Incus host, so a huge one could fill it). 0 turns instance exports off. The newest
-    # `backup_keep` exports the dashboard made per instance are kept.
-    backup_max_instance_gb: int = Field(20, ge=0)
-    backup_keep: int = Field(3, ge=1)
 
     @field_validator("tls_fingerprint")
     @classmethod

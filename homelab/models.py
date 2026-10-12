@@ -93,6 +93,8 @@ class Job(BaseModel):
     # Upgrade: take a snapshot first (guests only). Upgrade/rollback: the snapshot taken / restored.
     snapshot_first: bool = False
     snapshot: str | None = None
+    # Backup only: the folder the user asked for this time (None: the default place).
+    destination: str | None = None
     status: JobStatus = "queued"
     created_at: datetime
     started_at: datetime | None = None

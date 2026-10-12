@@ -58,6 +58,23 @@ def test_demo_backup_only_on_hosts():
         assert log[0] == "== Backing up pve" and log[-1] == "== Backup finished"
 
 
+def test_demo_backup_folder_is_checked_and_remembered_per_host():
+    with TestClient(create_app(AppConfig(demo=True))) as client:
+        targets = {t["target"]["name"]: t["target"] for t in client.get("/api/targets").json()["targets"]}
+        pve, pi = targets["pve"]["id"], targets["pi4"]["id"]
+        bad = client.post("/api/actions", json={"action": "backup", "target_ids": [pve], "destination": "nas/../x"})
+        assert bad.status_code == 400
+        r = client.post("/api/actions", json={"action": "backup", "target_ids": [pve], "destination": "/mnt/nas"})
+        assert r.json()["jobs"][0]["destination"] == "/mnt/nas"
+        _wait_for_jobs(client)
+        assert client.put("/api/backup-places", json={"target_id": pve, "path": "/mnt/nas"}).status_code == 200
+        assert client.put("/api/backup-places", json={"target_id": "nope", "path": "/x"}).status_code == 404
+        assert client.put("/api/backup-places", json={"target_id": pi, "path": "relative"}).status_code == 400
+        assert client.get("/api/targets").json()["backup_places"] == {pve: "/mnt/nas"}
+        client.put("/api/backup-places", json={"target_id": pve, "path": None})
+        assert client.get("/api/targets").json()["backup_places"] == {}
+
+
 def test_basic_auth():
 
     with TestClient(create_app(AppConfig(demo=True, auth=AuthConfig(password="s3cret")))) as client:

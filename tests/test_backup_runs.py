@@ -7,11 +7,12 @@ import httpx
 import pytest
 
 from homelab import backup_runs
-from homelab.backup_runs import IncusHostBackup, PveHostBackup, SshHostBackup, config_script
-from homelab.config import HostBackupConfig, IncusConfig, ProxmoxConfig
+from homelab.backup_runs import IncusHostBackup, SshHostBackup, check_destination, config_script
+from homelab.config import HostBackupConfig, IncusConfig
 from homelab.inventory import Inventory
 from homelab.jobs import JobManager
 from homelab.models import ExecResult, Target
+from homelab.store import Store
 
 
 class LocalExecutor:
@@ -182,102 +183,15 @@ async def test_ssh_host_run_reports_a_missing_tool_and_a_failed_script():
     await SshHostBackup(Fixed(0), None).run(cb)
 
 
-# ---- Proxmox ----
-
-PVE_DATA = {
-    "/nodes/pve/lxc": [{"vmid": "101"}, {"vmid": "199"}],
-    "/nodes/pve/qemu": [{"vmid": 200}, {"vmid": 9000, "template": 1}],
-    "/nodes/pve/storage": [
-        {"storage": "local", "type": "dir", "active": 1},
-        {"storage": "off", "type": "pbs", "active": 0},
-        {"storage": "pbs", "type": "pbs", "active": 1},
-    ],
-    "/nodes/pve/tasks/UPID:1/status": {"status": "stopped", "exitstatus": "OK"},
-}
-
-
-def pve(handler_extra=None, cfg=None, ssh=None, **kw):
-    posted = []
-
-    def handler(req):
-        path = req.url.path.removeprefix("/api2/json")
-        if req.method == "POST":
-            posted.append((path, dict(httpx.QueryParams(req.content.decode()))))
-            return handler_extra(req) if handler_extra else httpx.Response(200, json={"data": "UPID:1"})
-        if path.endswith("/log"):
-            start = int(req.url.params["start"])
-            return httpx.Response(200, json={"data": [{"n": 1, "t": "INFO: Finished"}][start:]})
-        return httpx.Response(200, json={"data": PVE_DATA[path]})
-
-    cfg = cfg or ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x", exclude=[199])
-    client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://pve:8006/api2/json")
-    return PveHostBackup(client, "pve", cfg, ssh, poll=0, **kw), posted
-
-
-async def test_proxmox_backs_up_the_guests_to_pbs_with_vzdump():
-    run, posted = pve()
-    got, cb = lines()
-    await run.run(cb)
-    ((path, body),) = posted
-    assert path == "/nodes/pve/vzdump"
-    # Excluded guests and templates are left out; the active PBS storage is chosen over "local".
-    assert body == {"vmid": "101,200", "storage": "pbs", "mode": "snapshot", "compress": "zstd"}
-    assert "INFO: Finished" in got and any("add ssh settings" in line for line in got)
-
-
-async def test_proxmox_configured_storage_wins_and_guests_can_be_left_out():
-    cfg = ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x", backup_storage="local")
-    run, posted = pve(cfg=cfg)
-    await run.run(lines()[1])
-    assert posted[0][1]["storage"] == "local"
-    cfg = cfg.model_copy(update={"backup_guests": False})
-    run, posted = pve(cfg=cfg)
-    await run.run(lines()[1])
-    assert posted == []
-
-
-async def test_proxmox_failed_vzdump_still_backs_up_the_config_then_fails():
-    class Ssh:
-        ran = False
-
-        async def run(self, script, on_line=None, timeout=0):
-            Ssh.ran = True
-            return ExecResult(rc=0)
-
-    run, _ = pve(ssh=Ssh())
-    PVE_DATA["/nodes/pve/tasks/UPID:1/status"] = {"status": "stopped", "exitstatus": "job errors"}
-    try:
-        with pytest.raises(RuntimeError, match="job errors"):
-            await run.run(lines()[1])
-    finally:
-        PVE_DATA["/nodes/pve/tasks/UPID:1/status"] = {"status": "stopped", "exitstatus": "OK"}
-    assert Ssh.ran
-
-
-async def test_proxmox_permission_error_says_what_to_do():
-    run, _ = pve(lambda req: httpx.Response(403, text="Permission check failed (VM.Backup)"))
-    with pytest.raises(RuntimeError, match="Connect on this machine again"):
-        await run.run(lines()[1])
-
-
 # ---- Incus ----
 
-GB = 2**30
 
-
-def incus(tmp_path, instances, cfg=None):
+def incus(tmp_path, cfg=None):
     calls = []
-
-    def op(url):
-        return httpx.Response(202, json={"operation": f"/1.0/operations/{len(calls)}"})
 
     def handler(req):
         path = req.url.path
         calls.append((req.method, path))
-        if path.endswith("/wait"):
-            return httpx.Response(200, json={"metadata": {"status": "Success"}})
-        if req.method == "POST" or req.method == "DELETE":
-            return op(path)
         if path == "/1.0":
             return httpx.Response(
                 200,
@@ -296,33 +210,16 @@ def incus(tmp_path, instances, cfg=None):
             return httpx.Response(403, text="nope")
         if path == "/1.0/storage-pools":
             return httpx.Response(200, json={"metadata": [{"name": "default", "driver": "dir"}]})
-        if path == "/1.0/instances":
-            return httpx.Response(200, json={"metadata": instances})
-        if path.endswith("/backups"):
-            return httpx.Response(
-                200,
-                json={
-                    "metadata": [
-                        f"/1.0/instances/web/backups/{n}"
-                        for n in ("homelab_1", "homelab_2", "homelab_3", "homelab_4", "mine")
-                    ]
-                },
-            )
         raise AssertionError(path)
 
     cfg = cfg or IncusConfig(name="inc", socket="/x")
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://incus")
-    return IncusHostBackup(client, cfg, tmp_path / "dumps", op_timeout=1), calls
+    return IncusHostBackup(client, cfg, tmp_path / "dumps"), calls
 
 
-async def test_incus_saves_settings_and_exports_instances_keeping_the_newest(tmp_path):
-    inst = [
-        {"name": "web", "project": "default", "state": {"disk": {"root": {"usage": GB}}}},
-        {"name": "huge", "project": "default", "state": {"disk": {"root": {"usage": 50 * GB}}}},
-    ]
-    run, calls = incus(tmp_path, inst)
-    got, cb = lines()
-    await run.run(cb)
+async def test_incus_saves_only_the_host_settings(tmp_path):
+    run, calls = incus(tmp_path)
+    await run.run(lines()[1])
     (dump,) = (tmp_path / "dumps").glob("incus-inc-*.json")
     data = json.loads(dump.read_text())
     assert data["server"]["config"] == {"core.https_address": ":8443"}
@@ -330,40 +227,37 @@ async def test_incus_saves_settings_and_exports_instances_keeping_the_newest(tmp
     assert data["projects"]["default"]["profiles"] == [{"name": "default"}]
     assert "error" in data["projects"]["default"]["networks"]
     assert stat.S_IMODE(dump.stat().st_mode) == 0o600
-    exports = [c for c in calls if c == ("POST", "/1.0/instances/web/backups")]
-    assert len(exports) == 1 and not any("huge" in p for _, p in calls)
-    assert any("huge left out" in line for line in got)
-    # 4 of ours listed, 3 kept: the oldest goes; the one not made here is never touched.
-    deletes = [p for m, p in calls if m == "DELETE"]
-    assert deletes == ["/1.0/instances/web/backups/homelab_1"]
+    # Never instances: nothing but settings is read, and nothing is written to Incus.
+    assert not any("instances" in p for _, p in calls) and all(m == "GET" for m, _ in calls)
 
 
-async def test_incus_one_failed_instance_does_not_stop_the_others(tmp_path, monkeypatch):
-    run, calls = incus(tmp_path, [{"name": "a"}, {"name": "web"}])
-    orig = run.client._transport.handle_async_request
-
-    async def flaky(req):
-        if req.method == "POST" and req.url.path == "/1.0/instances/a/backups":
-            return httpx.Response(500, text="disk full")
-        return await orig(req)
-
-    monkeypatch.setattr(run.client._transport, "handle_async_request", flaky)
-    with pytest.raises(RuntimeError, match="could not export a"):
-        await run.run(lines()[1])
-    assert any(p == "/1.0/instances/web/backups" for m, p in calls if m == "GET")
+async def test_incus_keeps_the_newest_seven_settings_files(tmp_path):
+    run, _ = incus(tmp_path)
+    (tmp_path / "dumps").mkdir()
+    for i in range(9):
+        (tmp_path / "dumps" / f"incus-inc-2020010{i}_000000.json").write_text("{}")
+    other = tmp_path / "dumps" / "incus-other-2020.json"
+    other.write_text("{}")
+    await run.run(lines()[1])
+    assert len(list((tmp_path / "dumps").glob("incus-inc-*.json"))) == 7 and other.exists()
 
 
-async def test_incus_without_a_data_folder_still_exports(tmp_path):
-    run, _ = incus(tmp_path, [{"name": "web"}])
+async def test_incus_backs_up_to_a_folder_the_user_names(tmp_path):
+    run, _ = incus(tmp_path)
+    share = tmp_path / "nas"
+    share.mkdir()
+    await run.run(lines()[1], str(share))
+    assert len(list(share.glob("incus-inc-*.json"))) == 1 and not (tmp_path / "dumps").exists()
+    with pytest.raises(RuntimeError, match="is the share mounted"):
+        await run.run(lines()[1], str(tmp_path / "missing"))
+    assert not (tmp_path / "missing").exists()
+
+
+async def test_incus_without_a_data_folder_says_so(tmp_path):
+    run, _ = incus(tmp_path)
     run.dump_dir = None
     with pytest.raises(RuntimeError, match="no state_file"):
         await run.run(lines()[1])
-
-
-async def test_incus_exports_can_be_turned_off(tmp_path):
-    run, calls = incus(tmp_path, [{"name": "web"}], IncusConfig(name="inc", socket="/x", backup_max_instance_gb=0))
-    await run.run(lines()[1])
-    assert not any(p.endswith("/backups") for _, p in calls)
 
 
 # ---- through the job manager ----
@@ -373,8 +267,8 @@ class Runs:
     def __init__(self, fail=False):
         self.fail = fail
 
-    async def run(self, on_line):
-        on_line("stdout", "step one")
+    async def run(self, on_line, destination=None):
+        on_line("stdout", f"step one {destination or ''}".strip())
         if self.fail:
             raise RuntimeError("step two failed")
 
@@ -399,6 +293,44 @@ async def test_backup_job_runs_without_an_executor_and_logs_the_steps():
     assert job.status == "succeeded" and job.log == ["== Backing up h", "step one", "== Backup finished"]
 
 
+async def test_backup_job_passes_the_folder_on():
+    jobs = manager(Runs())
+    job = jobs.submit("h", "backup", destination="/mnt/nas")
+    await finish(jobs)
+    assert job.log == ["== Backing up h to /mnt/nas", "step one /mnt/nas", "== Backup finished"]
+
+
+def test_backup_place_is_remembered_per_host_and_survives_a_restart(tmp_path):
+    store = Store(tmp_path / "s.db")
+    jobs = JobManager(Inventory([]), store=store)
+    jobs.set_backup_place("a", "/mnt/a")
+    jobs.set_backup_place("b", "/mnt/b")
+    jobs.set_backup_place("b", None)
+    assert JobManager(Inventory([]), store=Store(tmp_path / "s.db")).backup_places == {"a": "/mnt/a"}
+
+
+def test_destination_must_be_a_plain_full_path():
+    assert check_destination(" /mnt/nas/backups ") == "/mnt/nas/backups"
+    for bad in ("backups", "/mnt/../etc", "/mnt/a\nb", "/" + "x" * 1030, ""):
+        with pytest.raises(ValueError):
+            check_destination(bad)
+
+
+async def test_destination_script_refuses_a_missing_folder_and_quotes_it(tree):
+    tmp, etc = tree
+    r = await LocalExecutor().run(script(None, tmp, etc, destination=str(tmp / "nas")))
+    assert r.rc == 5 and "is the share mounted" in r.stderr and not (tmp / "nas").exists()
+    odd = tmp / "my $(touch pwned) share"
+    odd.mkdir()
+    r = await LocalExecutor().run(script(None, tmp, etc, destination=str(odd)))
+    assert r.rc == 0 and len(list(odd.glob("homelab-config-*.tar.gz"))) == 1 and not (tmp / "pwned").exists()
+    assert not (tmp / "out").exists()
+    # A folder asked for in this run also beats the PBS storage on a Proxmox node.
+    env = pbs_env(tmp)
+    got = await LocalExecutor(env).run(script(None, tmp, etc, proxmox=True, destination=str(odd)))
+    assert got.rc == 0 and "repo=" not in got.stdout
+
+
 async def test_backup_job_fails_with_the_reason():
     jobs = manager(Runs(fail=True))
     job = jobs.submit("h", "backup")
@@ -414,4 +346,4 @@ async def test_backup_is_refused_where_there_is_none():
 
 
 def test_module_names_only_its_own_backups_for_pruning():
-    assert backup_runs.PREFIX == "homelab_" and backup_runs.FILE_PREFIX.startswith("homelab-config-")
+    assert backup_runs.FILE_PREFIX.startswith("homelab-config-")

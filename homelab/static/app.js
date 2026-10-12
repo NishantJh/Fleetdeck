@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { targets: [], errors: {}, settings: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), logJob: null, logLines: [], showHidden: false };
+const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), logJob: null, logLines: [], showHidden: false };
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const PLATFORM = { proxmox: "Proxmox", incus: "Incus", ssh: "Standalone", demo: "Demo" };
@@ -219,6 +219,7 @@ async function load(refresh = false) {
     state.targets = data.targets;
     state.errors = data.errors;
     state.settings = data.settings || {};
+    state.backupPlaces = data.backup_places || {};
     state.jobs = await api("/api/jobs");
     state.schedule = await api("/api/schedule");
     // Drop selections for targets that disappeared or can no longer be upgraded.
@@ -230,11 +231,11 @@ async function load(refresh = false) {
   render();
 }
 
-async function act(action, ids, { rebootIfRequired = false, snapshotFirst = false } = {}) {
+async function act(action, ids, { rebootIfRequired = false, snapshotFirst = false, destination = null } = {}) {
   if (!ids.length) return;
   let res;
   try {
-    const body = { action, target_ids: ids, reboot_if_required: rebootIfRequired, snapshot_first: snapshotFirst };
+    const body = { action, target_ids: ids, reboot_if_required: rebootIfRequired, snapshot_first: snapshotFirst, destination };
     res = await api("/api/actions", { method: "POST", body: JSON.stringify(body) });
   } catch (e) {
     alert(`Could not start ${action}: ${e.message}`);
@@ -258,7 +259,7 @@ const CONFIRM = {
   },
   backup: {
     title: "Back up these machines?",
-    text: "Proxmox: every guest with vzdump (to Proxmox Backup Server if there is one), plus the node's config. Incus: the settings and an export of each instance. Other machines: an archive of /etc and a few more config folders. Nothing is stopped or changed.",
+    text: "Saves what is needed to set the machine up again, not its guests or instances. Proxmox: the node's config (to Proxmox Backup Server if there is one). Incus: its settings. Other machines: an archive of /etc and a few more config folders. Nothing is stopped or changed.",
     ok: "Back up",
   },
   reboot: {
@@ -276,6 +277,15 @@ function confirmAction(action, ids) {
   $("#confirm-ok").textContent = c.ok;
   $("#confirm-reboot-row").hidden = action !== "upgrade";
   $("#confirm-reboot").checked = false;
+  const placeRow = $("#confirm-place-row");
+  placeRow.hidden = action !== "backup";
+  if (action === "backup") {
+    const saved = state.backupPlaces[ids[0]] || "";
+    $("#confirm-place-default").checked = !saved;
+    $("#confirm-place-custom").checked = !!saved;
+    $("#confirm-place-path").value = saved;
+    $("#confirm-place-remember").checked = !!saved;
+  }
   $("#confirm-list").innerHTML = ids.map((id) => {
     const v = byId.get(id);
     const n = v?.check?.packages?.length;
@@ -304,11 +314,24 @@ function confirmAction(action, ids) {
   const dlg = $("#confirm");
   dlg.returnValue = "";
   dlg.showModal();
-  dlg.addEventListener("close", () => {
+  dlg.addEventListener("close", async () => {
     if (dlg.returnValue !== "ok") return;
     if (action === "upgrade") state.selected.clear();
     const upgrade = action === "upgrade";
+    let destination = null;
+    if (action === "backup") {
+      destination = $("#confirm-place-custom").checked ? $("#confirm-place-path").value.trim() : null;
+      if ($("#confirm-place-custom").checked && !destination) { alert("Enter the folder to back up to, or choose the default place."); return; }
+      if ($("#confirm-place-remember").checked) {
+        // Choosing the default place and remembering it clears an earlier choice.
+        try {
+          const r = await api("/api/backup-places", { method: "PUT", body: JSON.stringify({ target_id: ids[0], path: destination }) });
+          state.backupPlaces = r.backup_places;
+        } catch (e) { alert(`Could not save the backup folder: ${e.message}`); return; }
+      }
+    }
     act(action, ids, {
+      destination,
       rebootIfRequired: upgrade && $("#confirm-reboot").checked,
       snapshotFirst: upgrade && $("#confirm-snapshot").checked,
     });
@@ -384,6 +407,7 @@ document.addEventListener("change", (e) => {
   render();
 });
 
+$("#confirm-place-path").addEventListener("input", () => { $("#confirm-place-custom").checked = true; });
 $("#refresh").onclick = () => load(true);
 $("#show-hidden").onclick = () => {
   state.showHidden = !state.showHidden;

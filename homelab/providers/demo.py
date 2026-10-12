@@ -115,26 +115,20 @@ class DemoBackup:
     def __init__(self, steps: list[str]):
         self.steps = steps
 
-    async def run(self, on_line) -> None:
+    async def run(self, on_line, destination: str | None = None) -> None:
         for step in self.steps:
             on_line("stdout", step)
             await asyncio.sleep(0.5)
+        if destination:
+            on_line("stdout", f"(demo: nothing was written to {destination})")
 
 
 _DEMO_BACKUPS = {
     "pve": [
-        "== Backing up the guests with vzdump",
-        "Backing up 3 guest(s) (100, 101, 102) to the storage pbs",
-        "INFO: Finished Backup of VM 100 (00:00:21)",
         "== Backing up the node's config",
         "sending the node's config to the Proxmox Backup Server storage pbs",
     ],
-    "incus01": [
-        "== Saving the Incus settings",
-        "== Exporting the instances",
-        "Exporting web",
-        "Exporting fedora-vm",
-    ],
+    "incus01": ["== Saving the Incus settings", "== Archiving the host's config"],
     "pi4": ["== Archiving the machine's config", "wrote /var/backups/homelab-manager/homelab-config-pi4.tar.gz"],
 }
 

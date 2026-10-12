@@ -1,25 +1,28 @@
-"""The "Back up" button on a host: makes the host's own backup, with defaults per kind of machine.
+"""The "Back up" button on a host: saves what is needed to set the host up again quickly.
 
-* **Proxmox node:** its guests with vzdump through the API (to a Proxmox Backup Server storage if there
-  is one, else the first backup storage), then, over SSH, the node's config (``/etc``, which holds
-  ``/etc/pve``) to the same Proxmox Backup Server, or to the backup folder if there is none.
+Only the host's own settings, never its guests or instances (those are created separately):
+
+* **Proxmox node:** its config (``/etc``, which holds ``/etc/pve``) over SSH, to the node's Proxmox
+  Backup Server storage, or to an archive when there is none.
 * **Incus host:** the server, project, profile, network and storage settings as a JSON file in the
-  dashboard's data folder, and an export of each instance made by Incus itself.
+  dashboard's data folder, plus ``/etc`` of the host when it has SSH settings.
 * **Any other machine over SSH:** an archive of ``/etc`` and a few more config folders, in the
   folder, restic or borg repository the machine's ``backup:`` entry names, else in
   ``/var/backups/homelab-manager`` on the machine.
 
-Nothing here deletes anything but the older backups this dashboard made itself, found by their name.
+Each run can name a folder instead (a network share mounted on the machine; for Incus, mounted in
+the dashboard's container). It must already exist, so a share that is not mounted is an error and
+nothing lands on the wrong disk.
+
+Nothing here deletes anything but older backups this dashboard made itself, found by their name.
 Every step runs even if an earlier one failed; the run fails at the end if any step did.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import shlex
-import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,26 +30,32 @@ from typing import Protocol
 
 import httpx
 
-from .config import HostBackupConfig, IncusConfig, ProxmoxConfig
+from .config import HostBackupConfig, IncusConfig
 from .executors import LineCallback, SSHExecutor
 from .host_backups import NO_PROMPTS, _env
 
 log = logging.getLogger(__name__)
 
 # Names of what this dashboard makes, so only those are ever pruned.
-PREFIX = "homelab_"
 FILE_PREFIX = "homelab-config-"
 LOCAL_DIR = "/var/backups/homelab-manager"
 KEEP_FILES = 7
-# A node's vzdump of all its guests can take hours.
-TASK_TIMEOUT = 12 * 3600.0
-TASK_POLL = 5.0
 
 
 class BackupRun(Protocol):
     """Makes one host's backup, reporting progress with ``on_line``. Raises if any step failed."""
 
-    async def run(self, on_line: LineCallback) -> None: ...
+    async def run(self, on_line: LineCallback, destination: str | None = None) -> None: ...
+
+
+def check_destination(value: str) -> str:
+    """A folder to back up to, as the user typed it. Raises ValueError with a message to show."""
+    value = value.strip()
+    if not value.startswith("/") or len(value) > 1024:
+        raise ValueError("the backup folder must be a full path starting with /, e.g. /mnt/nas/backups")
+    if any(ord(c) < 32 or ord(c) == 127 for c in value) or ".." in value.split("/"):
+        raise ValueError("the backup folder can't contain control characters or '..'")
+    return value
 
 
 def _stamp() -> str:
@@ -92,12 +101,13 @@ def config_script(
     proxmox: bool = False,
     paths: tuple[str, ...] = DEFAULT_PATHS,
     local_dir: str = LOCAL_DIR,
+    destination: str | None = None,
 ) -> str:
     """A POSIX sh script that backs up the machine's config where its ``backup:`` entry says.
 
     It only reads the machine's files and writes the archive. Where ``cfg`` is None: on a Proxmox node
     to its Proxmox Backup Server storage (the credentials are the ones Proxmox keeps for that storage),
-    else to /var/backups/homelab-manager."""
+    else to /var/backups/homelab-manager. With ``destination``, to that folder instead, which must exist."""
     local_dir = shlex.quote(local_dir)
     extra = " ".join(shlex.quote(p) for p in (*paths, *(cfg.include if cfg else [])))
     head = f"""\
@@ -132,6 +142,16 @@ archive() {{
   done
 }}
 """
+    if destination:
+        # Asked for by the user for this run: a folder that must already exist (a share that is not
+        # mounted is an error, not a reason to write to the mount point on the local disk).
+        return (
+            head + local
+            + "D=" + shlex.quote(destination) + "\n"
+            + '[ -d "$D" ] || { echo "$D does not exist on this machine (is the share mounted?)" >&2; exit 5; }\n'
+            + '[ -w "$D" ] || { echo "$D is not writable" >&2; exit 5; }\n'
+            + 'archive "$D" "$@"\n'
+        )  # fmt: skip
     if cfg is not None and cfg.type == "restic":
         repo = f"-r {shlex.quote(cfg.repository)} " if cfg.repository else ""
         return (
@@ -196,8 +216,10 @@ EOF
 """  # noqa: E501
 
 
-async def _config_step(ssh: SSHExecutor, cfg: HostBackupConfig | None, steps: _Steps, *, proxmox: bool = False) -> None:
-    res = await ssh.run(config_script(cfg, proxmox=proxmox), steps.on_line, timeout=3600)
+async def _config_step(
+    ssh: SSHExecutor, cfg: HostBackupConfig | None, steps: _Steps, destination: str | None, *, proxmox: bool = False
+) -> None:
+    res = await ssh.run(config_script(cfg, proxmox=proxmox, destination=destination), steps.on_line, timeout=3600)
     if res.rc == 127:
         what = cfg.type if cfg and cfg.type != "path" else "a command it needs"
         raise RuntimeError(f"{what} is not installed on this machine")
@@ -206,154 +228,31 @@ async def _config_step(ssh: SSHExecutor, cfg: HostBackupConfig | None, steps: _S
 
 
 class SshHostBackup:
-    """A plain machine reached over SSH."""
+    """A plain machine reached over SSH, or a Proxmox node (``proxmox=True``)."""
 
-    def __init__(self, ssh: SSHExecutor, cfg: HostBackupConfig | None):
-        self.ssh, self.cfg = ssh, cfg
+    def __init__(self, ssh: SSHExecutor, cfg: HostBackupConfig | None, *, proxmox: bool = False):
+        self.ssh, self.cfg, self.proxmox = ssh, cfg, proxmox
 
-    async def run(self, on_line: LineCallback) -> None:
+    async def run(self, on_line: LineCallback, destination: str | None = None) -> None:
         steps = _Steps(on_line)
-        await steps.step("Archiving the machine's config", lambda: _config_step(self.ssh, self.cfg, steps))
+        title = "Backing up the node's config" if self.proxmox else "Archiving the machine's config"
+        await steps.step(title, lambda: _config_step(self.ssh, self.cfg, steps, destination, proxmox=self.proxmox))
         steps.finish()
-
-
-# ---- Proxmox ------------------------------------------------------------------------------------
-
-
-def _check(r: httpx.Response, what: str) -> None:
-    if r.status_code == 403 or (r.status_code >= 400 and "permission" in r.text.lower()):
-        raise RuntimeError(
-            f"{what}: Proxmox says the API token may not do this (it needs VM.Backup and "
-            "Datastore.AllocateSpace). Open Setup and press Connect on this machine again to update its permissions"
-        )
-    if r.status_code >= 400:
-        raise RuntimeError(f"{what} failed ({r.status_code}): {r.text.strip()[:300]}")
-
-
-class PveHostBackup:
-    """A Proxmox node: its guests through the API, its config over SSH when the node has SSH settings."""
-
-    def __init__(
-        self,
-        client: httpx.AsyncClient,
-        node: str,
-        cfg: ProxmoxConfig,
-        ssh: SSHExecutor | None,
-        task_timeout: float = TASK_TIMEOUT,
-        poll: float = TASK_POLL,
-    ):
-        self.client, self.node, self.cfg, self.ssh = client, node, cfg, ssh
-        self.task_timeout, self.poll = task_timeout, poll
-
-    async def _get(self, path: str, **params):
-        r = await self.client.get(f"/nodes/{self.node}{path}", params=params or None)
-        _check(r, path)
-        return r.json()["data"]
-
-    async def _vmids(self) -> list[int]:
-        found: list[int] = []
-        for kind in ("lxc", "qemu"):
-            for g in await self._get(f"/{kind}"):
-                vmid = int(g["vmid"])
-                if vmid not in self.cfg.exclude and not g.get("template"):
-                    found.append(vmid)
-        return sorted(found)
-
-    async def _storage(self) -> str:
-        if self.cfg.backup_storage:
-            return self.cfg.backup_storage
-        storages = [s for s in await self._get("/storage", content="backup", enabled=1) if s.get("active", 1)]
-        if not storages:
-            raise RuntimeError("no active storage takes backups (add one under Datacenter > Storage in Proxmox)")
-        # A Proxmox Backup Server deduplicates, and is meant for this.
-        storages.sort(key=lambda s: s.get("type") != "pbs")
-        return storages[0]["storage"]
-
-    async def _guests(self, steps: _Steps) -> None:
-        vmids = await self._vmids()
-        if not vmids:
-            steps.say("No guests on this node")
-            return
-        storage = await self._storage()
-        steps.say(f"Backing up {len(vmids)} guest(s) ({', '.join(map(str, vmids))}) to the storage {storage}")
-        r = await self.client.post(
-            f"/nodes/{self.node}/vzdump",
-            data={"vmid": ",".join(map(str, vmids)), "storage": storage, "mode": "snapshot", "compress": "zstd"},
-        )
-        _check(r, "vzdump")
-        upid = r.json()["data"]
-        deadline = time.monotonic() + self.task_timeout
-        shown = 0
-        while True:
-            status = await self._get(f"/tasks/{upid}/status")
-            # The task log, as far as it has got.
-            lines = await self._get(f"/tasks/{upid}/log", start=shown, limit=500)
-            for entry in lines:
-                steps.say(entry.get("t", ""))
-            shown += len(lines)
-            if status.get("status") == "stopped":
-                break
-            if time.monotonic() > deadline:
-                raise TimeoutError(
-                    f"not finished after {self.task_timeout / 3600:.0f} h "
-                    "(it keeps running in Proxmox; see its task log)"
-                )
-            await asyncio.sleep(self.poll)
-        exit_status = str(status.get("exitstatus", ""))
-        if exit_status.startswith("WARNINGS"):
-            steps.warn(f"vzdump finished with {exit_status.lower()}")
-        elif exit_status != "OK":
-            raise RuntimeError(exit_status or "vzdump did not finish")
-
-    async def run(self, on_line: LineCallback) -> None:
-        steps = _Steps(on_line)
-        if self.cfg.backup_guests:
-            await steps.step("Backing up the guests with vzdump", lambda: self._guests(steps))
-        else:
-            steps.say("Guests are left out (backup_guests is off)")
-        if self.ssh is None:
-            steps.warn("The node's own config was not backed up: add ssh settings for this node to do that too")
-        else:
-            await steps.step(
-                "Backing up the node's config",
-                lambda: _config_step(self.ssh, None, steps, proxmox=True),  # type: ignore[arg-type]
-            )
-        steps.finish()
-
-
-# ---- Incus --------------------------------------------------------------------------------------
 
 
 class IncusHostBackup:
-    """An Incus host through its REST API: its settings as a file, and an export of each instance."""
+    """An Incus host through its REST API: its settings as a file, and /etc over SSH if it has any."""
 
     def __init__(
-        self,
-        client: httpx.AsyncClient,
-        cfg: IncusConfig,
-        dump_dir: Path | None,
-        ssh: SSHExecutor | None = None,
-        op_timeout: int = 4 * 3600,
+        self, client: httpx.AsyncClient, cfg: IncusConfig, dump_dir: Path | None, ssh: SSHExecutor | None = None
     ):
-        self.client, self.cfg, self.dump_dir, self.ssh, self.op_timeout = client, cfg, dump_dir, ssh, op_timeout
+        self.client, self.cfg, self.dump_dir, self.ssh = client, cfg, dump_dir, ssh
 
     async def _get(self, path: str, **params):
         r = await self.client.get(path, params=params or None)
         if r.status_code >= 400:
             raise RuntimeError(f"{path} failed ({r.status_code}): {r.text.strip()[:200]}")
         return r.json()["metadata"]
-
-    async def _wait(self, r: httpx.Response, what: str) -> None:
-        if r.status_code >= 400:
-            raise RuntimeError(f"{what} failed ({r.status_code}): {r.text.strip()[:300]}")
-        w = await self.client.get(
-            f"{r.json()['operation']}/wait", params={"timeout": self.op_timeout}, timeout=self.op_timeout + 30
-        )
-        if w.status_code >= 400:
-            raise RuntimeError(f"{what} failed ({w.status_code}): {w.text.strip()[:300]}")
-        md = w.json()["metadata"]
-        if md.get("status") != "Success":
-            raise RuntimeError(f"{what} failed: {md.get('err') or md.get('status')}")
 
     async def settings(self) -> dict:
         """Everything `incus admin init --dump` would replay: server, projects, profiles, networks, pools."""
@@ -379,94 +278,37 @@ class IncusHostBackup:
             out["projects"][name] = entry
         return out
 
-    async def _dump(self, steps: _Steps) -> None:
-        if self.dump_dir is None:
+    async def _dump(self, steps: _Steps, destination: str | None) -> None:
+        folder = Path(destination) if destination else self.dump_dir
+        if folder is None:
             raise RuntimeError("no state_file is set, so there is no data folder to keep it in")
+        if destination:
+            # The folder of a share, which must be there already (see the module docstring).
+            if not folder.is_dir():
+                raise RuntimeError(f"{folder} does not exist in the dashboard's container (is the share mounted?)")
+        else:
+            folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         data = await self.settings()
-        self.dump_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
-        path = self.dump_dir / f"incus-{self.cfg.name}-{_stamp()}.json"
+        path = folder / f"incus-{self.cfg.name}-{_stamp()}.json"
         path.touch(mode=0o600)
         path.write_text(json.dumps(data, indent=2, default=str))
         steps.say(f"wrote {path} ({path.stat().st_size} bytes)")
-        old = sorted(self.dump_dir.glob(f"incus-{self.cfg.name}-*.json"))[:-KEEP_FILES]
-        for f in old:
+        for f in sorted(folder.glob(f"incus-{self.cfg.name}-*.json"))[:-KEEP_FILES]:
             f.unlink(missing_ok=True)
             steps.say(f"removed old {f.name}")
 
-    async def _instances(self) -> list[dict]:
-        r = await self.client.get("/1.0/instances", params={"recursion": 2, "all-projects": "true"})
-        if r.status_code >= 400:
-            raise RuntimeError(f"listing instances failed ({r.status_code}): {r.text.strip()[:200]}")
-        return r.json()["metadata"]
-
-    async def _export(self, steps: _Steps, inst: dict) -> None:
-        name, project = inst["name"], inst.get("project", "default")
-        label = name if project == "default" else f"{project}/{name}"
-        params = {"project": project}
-        used = sum(
-            (d.get("usage") or 0) for d in ((inst.get("state") or {}).get("disk") or {}).values()
-        )  # only known while it runs
-        limit = self.cfg.backup_max_instance_gb * 2**30
-        if used > limit:
-            steps.warn(
-                f"{label} left out: it uses {used / 2**30:.0f} GB, above backup_max_instance_gb "
-                f"({self.cfg.backup_max_instance_gb}). Raise that setting to include it"
-            )
-            return
-        backup = f"{PREFIX}{_stamp()}"
-        steps.say(f"Exporting {label}")
-        r = await self.client.post(
-            f"/1.0/instances/{name}/backups",
-            params=params,
-            json={"name": backup, "instance_only": False, "optimized_storage": False, "compression_algorithm": "zstd"},
-        )
-        await self._wait(r, f"export of {label}")
-        ours = sorted(
-            n for u in await self._get(f"/1.0/instances/{name}/backups", **params)
-            if (n := u.split("?")[0].rstrip("/").rsplit("/", 1)[-1]).startswith(PREFIX)
-        )  # fmt: skip
-        for old in ours[: max(len(ours) - self.cfg.backup_keep, 0)]:
-            try:
-                await self._wait(
-                    await self.client.delete(f"/1.0/instances/{name}/backups/{old}", params=params),
-                    f"deleting the old export {old}",
-                )
-                steps.say(f"removed old export {old} of {label}")
-            except Exception as e:  # noqa: BLE001 - housekeeping only
-                steps.warn(f"could not delete the old export {old} of {label}: {e}")
-
-    async def _exports(self, steps: _Steps) -> None:
-        if not self.cfg.backup_max_instance_gb:
-            steps.say("Instance exports are off (backup_max_instance_gb is 0)")
-            return
-        instances = [
-            i for i in await self._instances()
-            if i["name"] not in self.cfg.exclude
-            and f"{i.get('project', 'default')}/{i['name']}" not in self.cfg.exclude
-        ]  # fmt: skip
-        if not instances:
-            steps.say("No instances")
-        failed = []
-        for inst in instances:
-            try:
-                await self._export(steps, inst)
-            except Exception as e:  # noqa: BLE001 - go on with the other instances
-                failed.append(inst["name"])
-                steps.warn(f"{inst['name']} failed: {e or type(e).__name__}")
-        if failed:
-            raise RuntimeError(f"could not export {', '.join(failed)}")
-        steps.say(
-            "The exports are kept by Incus on the Incus host itself, so they don't survive losing it: "
-            "copy them off with `incus export`, or back that host up too"
-        )
-
-    async def run(self, on_line: LineCallback) -> None:
+    async def run(self, on_line: LineCallback, destination: str | None = None) -> None:
         steps = _Steps(on_line)
-        await steps.step("Saving the Incus settings", lambda: self._dump(steps))
-        await steps.step("Exporting the instances", lambda: self._exports(steps))
+        await steps.step("Saving the Incus settings", lambda: self._dump(steps, destination))
         if self.ssh is not None:
+            # The host's own backup: entry is not used when the user named a folder for this run.
             await steps.step(
                 "Archiving the host's config",
-                lambda: _config_step(self.ssh, self.cfg.ssh.backup if self.cfg.ssh else None, steps),  # type: ignore[arg-type]
+                lambda: _config_step(
+                    self.ssh,  # type: ignore[arg-type]
+                    self.cfg.ssh.backup if self.cfg.ssh else None,
+                    steps,
+                    destination,
+                ),
             )
         steps.finish()

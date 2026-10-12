@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 
 import httpx
 
-from ..backup_runs import BackupRun, PveHostBackup
+from ..backup_runs import BackupRun, SshHostBackup
 from ..config import ProxmoxConfig, SSHConfig
 from ..executors import DEFAULT_TIMEOUT, LineCallback, PctExecutor, PveAgentExecutor, SSHExecutor
 from ..host_backups import HostBackups
@@ -349,12 +349,13 @@ class ProxmoxProvider:
                 if online
                 else "offline",
                 backup=node_backup,
-                can_backup=online,
+                can_backup=online and ssh is not None,
             )
             found.append((host, PveNodeExecutor(self.client, nname, ssh)))
             if not online:
                 continue
-            backup_runs[prefix] = PveHostBackup(self.client, nname, self.cfg, ssh)
+            if ssh is not None:
+                backup_runs[prefix] = SshHostBackup(ssh, ssh_cfg.backup, proxmox=True)
             # Rebooting the node would take down the protected guest, i.e. this dashboard.
             protected_here: list[str] = []
 
