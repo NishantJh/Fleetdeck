@@ -8,6 +8,7 @@ from collections import OrderedDict
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
+from . import detached
 from .inventory import Inventory
 from .models import CheckResult, Job, JobAction, Target
 from .snapshots import Snapshots, prune, snapshot_name, unsupported
@@ -32,6 +33,11 @@ REBOOT_POLL = 5.0
 # A machine can answer before all its services are up (a Proxmox node's API starts after sshd);
 # the re-check after a reboot is retried this many times before it is reported as failed.
 RECHECK_TRIES = 6
+# An upgrade running detached on its target gets this long before the dashboard stops waiting.
+UPGRADE_TIMEOUT = 3600.0
+# After a restart, how long to wait for a job's machine to show up in the inventory again.
+RESUME_WAIT = 600.0
+RESUME_POLL = 15.0
 
 
 def _now() -> datetime:
@@ -117,15 +123,32 @@ class JobManager:
             log.exception("could not save state")
 
     async def shutdown(self) -> None:
-        """Stop running jobs and record them as interrupted, before the store is closed."""
+        """Stop running jobs and record them as interrupted, before the store is closed.
+
+        Jobs that can be picked up again (see :meth:`resume`) stay running.
+        """
         tasks = list(self._tasks)
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
         for job in self.jobs.values():
-            if job.status in ("queued", "running"):
+            if job.resumable:
+                job.log.append("== Dashboard stopping; it picks this job up again when it starts")
+                self._save_job(job)
+            elif job.status in ("queued", "running"):
                 mark_interrupted(job)
                 self._save_job(job)
+
+    def resume(self) -> None:
+        """Pick up the jobs a restart cut off that are still going on their machines."""
+        for job in self.jobs.values():
+            if job.resumable and not any(t.get_name() == job.id for t in self._tasks):
+                self._start(job, resume=True)
+
+    def _start(self, job: Job, resume: bool = False) -> None:
+        task = asyncio.create_task(self._run(job, resume), name=job.id)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     def active_job(self, target_id: str) -> Job | None:
         for job in reversed(self.jobs.values()):
@@ -170,9 +193,7 @@ class JobManager:
         self.jobs[job.id] = job
         self._save_job(job)
         self._evict()
-        task = asyncio.create_task(self._run(job))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self._start(job)
         return job
 
     def _evict(self) -> None:
@@ -186,11 +207,12 @@ class JobManager:
         if self.store is not None:
             self._persist(self.store.delete_jobs, done[:excess])
 
-    async def _run(self, job: Job) -> None:
+    async def _run(self, job: Job, resume: bool = False) -> None:
         lock = self._target_locks.setdefault(job.target_id, asyncio.Lock())
         async with lock, _Slot(self.sem) as slot:
-            job.status, job.started_at = "running", _now()
-            self._save_job(job)
+            if not resume:
+                job.status, job.started_at = "running", _now()
+                self._save_job(job)
 
             def on_line(stream: str, line: str) -> None:
                 # Stop recording (rather than trim, which would shift the offsets the UI pages by). The
@@ -201,6 +223,13 @@ class JobManager:
                     job.log.append(line if stream == "stdout" else f"! {line}")
 
             try:
+                if resume:
+                    job.log.append("== Dashboard restarted; picking this job up again")
+                    async with slot.released():
+                        target, executor = await self._find_again(job)
+                    await self._continue(job, target, executor, on_line, slot)
+                    job.status = "succeeded"
+                    return
                 # Look the target up again: the inventory may have changed while the job was queued
                 # (guest stopped, protected, or removed).
                 try:
@@ -237,31 +266,8 @@ class JobManager:
                     if job.snapshot_first:
                         await self._snapshot(job)
                     job.log.append("== Running OS upgrade")
-                    res = await executor.run(UPGRADE_SCRIPT, on_line)
-                    if res.rc != 0:
-                        raise RuntimeError(f"upgrade exited with code {res.rc}")
-                    reboot = parse_reboot(res.stdout)
-                    job.log.append("== Upgrade finished" + ("; reboot required" if reboot else ""))
-                    job.log.append("== Re-checking for remaining updates")
-                    # The upgrade itself worked; a failed re-check is reported but doesn't fail the job.
-                    try:
-                        check = await _check(executor)
-                    except Exception as e:  # noqa: BLE001
-                        check = CheckResult(checked_at=_now(), error=str(e) or type(e).__name__)
-                    self._set_check(job.target_id, check)
-                    if check.error:
-                        job.log.append(f"! re-check failed: {check.error}")
-                    else:
-                        job.log.append(f"== {len(check.packages)} update(s) still available")
-                    if job.reboot_if_required:
-                        # Trust the re-check when it worked; it also sees reboots pending from before.
-                        pending = check.reboot_required if not check.error else reboot
-                        if not pending:
-                            job.log.append("== No reboot needed")
-                        elif target.no_reboot:
-                            job.log.append(f"! Not rebooting: {target.no_reboot}")
-                        else:
-                            await self._reboot(job, target, executor, on_line, slot)
+                    stdout = await self._upgrade(job, executor, on_line)
+                    await self._after_upgrade(job, target, executor, on_line, slot, parse_reboot(stdout))
                 job.status = "succeeded"
             except Exception as e:  # noqa: BLE001 - surface every failure in the UI
                 log.exception("job %s failed", job.id)
@@ -270,8 +276,96 @@ class JobManager:
                 if job.action == "check":
                     self._record_check_error(job.target_id, job.error)
             finally:
-                job.finished_at = _now()
+                # A cancelled job is still "running": shutdown() records it, as interrupted or to resume.
+                if job.status in ("succeeded", "failed"):
+                    job.finished_at = _now()
+                    self._save_job(job)
+
+    async def _find_again(self, job: Job) -> tuple[Target, object]:
+        """The job's target after a restart, once discovery has found it (and it can run commands)."""
+        deadline = time.monotonic() + RESUME_WAIT
+        while True:
+            found = self.inventory.targets.get(job.target_id)
+            if found is None or found[1] is None:
+                await self.inventory.refresh(force=True)
+                found = self.inventory.targets.get(job.target_id)
+            if found is not None and found[1] is not None:
+                return found
+            if time.monotonic() > deadline:
+                what = "is no longer in the inventory" if found is None else "can't run commands"
+                raise RuntimeError(f"after the dashboard restarted, this machine {what}")
+            await asyncio.sleep(RESUME_POLL)
+
+    async def _continue(self, job: Job, target: Target, executor, on_line, slot: _Slot) -> None:
+        """Carry on with a job from where a restart cut it off."""
+        if job.remote is not None:
+            stdout = await self._upgrade(job, executor, on_line)
+            await self._after_upgrade(job, target, executor, on_line, slot, parse_reboot(stdout))
+        else:  # waiting for a reboot, on its own or after an upgrade
+            await self._reboot(job, target, executor, on_line, slot)
+
+    async def _upgrade(self, job: Job, executor, on_line) -> str:
+        """Runs the upgrade and returns its output. Detached on the target where the executor allows,
+        so the upgrade goes on if the dashboard restarts, and :meth:`resume` follows it again."""
+        if not getattr(executor, "detached", False):
+            return await _attached(executor, on_line)
+        if job.remote is None:
+            # Saved before starting, so a restart right after it still finds the run.
+            job.remote, job.remote_offset = job.id, 0
+            self._save_job(job)
+            try:
+                how = await detached.start(executor, job.remote, UPGRADE_SCRIPT)
+            except detached.NotStarted as e:
+                job.remote = None
                 self._save_job(job)
+                job.log.append(f"! can't run it detached ({e}), so a dashboard restart would stop it")
+                return await _attached(executor, on_line)
+            job.log.append(f"== Running on the machine ({how}): a dashboard restart won't stop it")
+        out: list[str] = []
+        carry = ""
+
+        def on_output(text: str, offset: int) -> None:
+            nonlocal carry
+            out.append(text)
+            *lines, carry = (carry + text).split("\n")
+            for line in lines:
+                on_line("stdout", line.rstrip("\r"))
+            # What was shown so far; a partial last line is read again after a restart.
+            job.remote_offset = max(job.remote_offset, offset - len(carry.encode()))
+            self._save_job(job)
+
+        rc = await detached.follow(executor, job.remote, job.remote_offset, on_output, UPGRADE_TIMEOUT)
+        if carry:
+            on_line("stdout", carry.rstrip("\r"))
+        run_id, job.remote = job.remote, None
+        self._save_job(job)
+        await detached.cleanup(executor, run_id)
+        if rc != 0:
+            raise RuntimeError(f"upgrade exited with code {rc}")
+        return "".join(out)
+
+    async def _after_upgrade(self, job: Job, target: Target, executor, on_line, slot: _Slot, reboot) -> None:
+        job.log.append("== Upgrade finished" + ("; reboot required" if reboot else ""))
+        job.log.append("== Re-checking for remaining updates")
+        # The upgrade itself worked; a failed re-check is reported but doesn't fail the job.
+        try:
+            check = await _check(executor)
+        except Exception as e:  # noqa: BLE001
+            check = CheckResult(checked_at=_now(), error=str(e) or type(e).__name__)
+        self._set_check(job.target_id, check)
+        if check.error:
+            job.log.append(f"! re-check failed: {check.error}")
+        else:
+            job.log.append(f"== {len(check.packages)} update(s) still available")
+        if job.reboot_if_required:
+            # Trust the re-check when it worked; it also sees reboots pending from before.
+            pending = check.reboot_required if not check.error else reboot
+            if not pending:
+                job.log.append("== No reboot needed")
+            elif target.no_reboot:
+                job.log.append(f"! Not rebooting: {target.no_reboot}")
+            else:
+                await self._reboot(job, target, executor, on_line, slot)
 
     def _host_id(self, target: Target) -> str | None:
         """The id of the host a guest runs on, if it is in the inventory."""
@@ -303,20 +397,18 @@ class JobManager:
         finally:
             self._rebooting.discard(target.id)
 
+    def _other_jobs(self, job: Job) -> list[Job]:
+        """Active jobs besides ``job``, except hosts waiting for their guests to reboot (``job`` may be one)."""
+        return [
+            j
+            for j in self.jobs.values()
+            if j is not job and j.status in ("queued", "running") and j.target_id not in self._rebooting
+        ]
+
     async def _reboot_now(self, job: Job, target: Target, executor, on_line, slot: _Slot) -> None:
-        if target.kind == "host" and (waiting := self._guest_jobs(target)):
-            job.log.append(f"== Waiting for {len(waiting)} guest job(s) to finish")
-            async with slot.released():
-                while self._guest_jobs(target):
-                    await asyncio.sleep(1)
-        before = parse_boot_id((await executor.run(BOOT_ID_SCRIPT, timeout=60)).stdout)
-        if before is None:
-            raise RuntimeError("could not read the boot id, so a reboot could not be confirmed")
-        job.log.append("== Rebooting")
-        res = await executor.run(REBOOT_NOW_SCRIPT, on_line, timeout=60)
-        if res.rc != 0:
-            raise RuntimeError(f"reboot command exited with code {res.rc}")
-        job.log.append("== Waiting for it to come back")
+        if job.reboot_from is None:
+            await self._start_reboot(job, target, executor, on_line, slot)
+        before = job.reboot_from
         deadline = time.monotonic() + REBOOT_TIMEOUT
         # Waiting doesn't need a slot; other machines can be checked and updated meanwhile.
         async with slot.released():
@@ -331,6 +423,8 @@ class JobManager:
                     break
                 if time.monotonic() > deadline:
                     raise TimeoutError(f"not back after {REBOOT_TIMEOUT / 60:.0f} min")
+        job.reboot_from = None
+        self._save_job(job)
         job.log.append("== Back up; re-checking")
         for attempt in range(RECHECK_TRIES):
             if attempt:
@@ -348,6 +442,35 @@ class JobManager:
             job.log.append("! still reports a pending reboot")
         else:
             job.log.append("== Reboot finished")
+
+    async def _start_reboot(self, job: Job, target: Target, executor, on_line, slot: _Slot) -> None:
+        if target.kind == "host" and (waiting := self._guest_jobs(target)):
+            job.log.append(f"== Waiting for {len(waiting)} guest job(s) to finish")
+            async with slot.released():
+                while self._guest_jobs(target):
+                    await asyncio.sleep(1)
+        check = self.checks.get(target.id)
+        if check is not None and check.runs_dashboard and (waiting := self._other_jobs(job)):
+            # The dashboard goes down with this machine; let everything else finish first.
+            job.log.append(f"== This machine runs the dashboard: waiting for {len(waiting)} other job(s) first")
+            async with slot.released():
+                while self._other_jobs(job):
+                    await asyncio.sleep(1)
+        before = parse_boot_id((await executor.run(BOOT_ID_SCRIPT, timeout=60)).stdout)
+        if before is None:
+            raise RuntimeError("could not read the boot id, so a reboot could not be confirmed")
+        job.log.append("== Rebooting")
+        # Saved first: if this machine runs the dashboard, the wait below is picked up after it is back.
+        job.reboot_from = before
+        self._save_job(job)
+        try:
+            res = await executor.run(REBOOT_NOW_SCRIPT, on_line, timeout=60)
+            if res.rc != 0:
+                raise RuntimeError(f"reboot command exited with code {res.rc}")
+        except Exception:
+            job.reboot_from = None
+            raise
+        job.log.append("== Waiting for it to come back")
 
     async def _snapshot(self, job: Job) -> None:
         snaps = self.inventory.snapshots.get(job.target_id)
@@ -405,6 +528,13 @@ def _ensure_can_roll_back(target: Target, snaps: Snapshots | None) -> None:
     # Proxmox/Incus API, and a guest that won't boot after an upgrade is exactly when it's needed.
     if snaps is None:
         raise ValueError(f"{target.name}: snapshots are only supported for Proxmox and Incus guests")
+
+
+async def _attached(executor, on_line) -> str:
+    res = await executor.run(UPGRADE_SCRIPT, on_line)
+    if res.rc != 0:
+        raise RuntimeError(f"upgrade exited with code {res.rc}")
+    return res.stdout
 
 
 async def _check(executor, on_line=None) -> CheckResult:

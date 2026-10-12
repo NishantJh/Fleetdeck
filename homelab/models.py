@@ -95,3 +95,14 @@ class Job(BaseModel):
     finished_at: datetime | None = None
     log: list[str] = Field(default_factory=list)
     error: str | None = None
+    # While an upgrade runs detached on the target (see detached.py): its folder there, and how many
+    # bytes of its log are already in ``log``.
+    remote: str | None = None
+    remote_offset: int = 0
+    # While waiting for a reboot to finish: the boot id from before it.
+    reboot_from: str | None = None
+
+    @property
+    def resumable(self) -> bool:
+        """Still running and can be picked up again after the dashboard restarts."""
+        return self.status == "running" and (self.remote is not None or self.reboot_from is not None)

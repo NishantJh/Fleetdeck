@@ -123,6 +123,7 @@ def create_app(
         await asyncio.to_thread(tunnels.sync, wanted)
         watchdog = asyncio.create_task(_keep_tunnels(tunnels, wanted)) if wanted else None
         scheduler.start()
+        jobs.resume()  # upgrades and reboots a restart cut off, still going on their machines
         yield
         if watchdog is not None:
             watchdog.cancel()
