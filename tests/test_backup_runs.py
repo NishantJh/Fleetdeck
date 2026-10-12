@@ -181,6 +181,9 @@ async def test_ssh_host_run_reports_a_missing_tool_and_a_failed_script():
     with pytest.raises(RuntimeError, match="exited with code 4"):
         await SshHostBackup(Fixed(4), None).run(cb)
     await SshHostBackup(Fixed(0), None).run(cb)
+    # A named folder that is not on the machine says where it is looked up.
+    with pytest.raises(RuntimeError, match="/app/backups is missing or not writable on the machine itself"):
+        await SshHostBackup(Fixed(5), None).run(cb, "/app/backups")
 
 
 # ---- Incus ----
