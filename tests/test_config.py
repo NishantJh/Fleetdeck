@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from fleetdeck.config import AppConfig, AuthConfig, IncusConfig, load_config
+from fleetdeck.config import AppConfig, AuthConfig, IncusConfig, load_config, validate_raw
 
 
 def test_env_vars_expand_into_values_not_yaml(tmp_path, monkeypatch):
@@ -99,7 +99,7 @@ def test_tls_fingerprint_and_warning(tmp_path, caplog):
 def test_example_config_is_valid(monkeypatch):
     from pathlib import Path
 
-    monkeypatch.setenv("HOMELAB_PASSWORD", "x")
+    monkeypatch.setenv("FLEETDECK_PASSWORD", "x")
     monkeypatch.setenv("PVE_TOKEN_SECRET", "y")
     cfg = load_config(str(Path(__file__).parent.parent / "config.example.yaml"))
     assert [h.name for h in cfg.hosts] == ["pi4", "vps"]
@@ -133,3 +133,10 @@ def test_unreadable_files_are_reported(tmp_path, monkeypatch, caplog):
     monkeypatch.setattr(fleetdeck.config.os, "access", lambda p, m: False)
     with pytest.raises(ValueError, match="can't read"):
         load_config(str(cfg_file))
+
+
+def test_old_homelab_variable_name_still_expands(monkeypatch):
+    monkeypatch.delenv("FLEETDECK_PASSWORD", raising=False)
+    monkeypatch.setenv("HOMELAB_PASSWORD", "x")
+    cfg = validate_raw({"auth": {"password": "${FLEETDECK_PASSWORD}"}})
+    assert cfg.auth.password == "x"
