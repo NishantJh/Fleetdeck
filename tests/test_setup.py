@@ -395,6 +395,29 @@ def test_drop_privileges_ownership(tmp_path, monkeypatch, owner, env, expected):
     assert oct(data.stat().st_mode & 0o777) == "0o755"  # the folder's mode is left alone
 
 
+@pytest.mark.skipif(not hasattr(os, "getuid") or os.getuid() != 0, reason="needs root")
+def test_drop_privileges_gives_the_backup_folder_to_the_app_user_but_not_its_contents(tmp_path, monkeypatch):
+    data, nas = tmp_path / "data", tmp_path / "nas"
+    data.mkdir()
+    (nas / "old").mkdir(parents=True)
+    os.chown(data, 0, 0)
+    os.chown(nas, 0, 0)
+    monkeypatch.setenv("HOMELAB_DATA", str(data))
+    monkeypatch.setenv("FLEETDECK_BACKUP_FOLDER", str(nas))
+    for name in ("PUID", "PGID"):
+        monkeypatch.delenv(name, raising=False)
+    for fn in ("setgroups", "setgid", "setuid"):
+        monkeypatch.setattr(os, fn, lambda *_: None)
+    monkeypatch.setitem(os.environ, "HOME", "/root")
+    drop_privileges()
+    assert (nas.stat().st_uid, nas.stat().st_gid) == (10001, 10001)
+    assert (nas / "old").stat().st_uid == 0
+    # A folder that is not there (an unmounted share) is not made.
+    monkeypatch.setenv("FLEETDECK_BACKUP_FOLDER", str(tmp_path / "missing"))
+    drop_privileges()
+    assert not (tmp_path / "missing").exists()
+
+
 def test_reconnecting_keeps_a_hand_added_backup():
     data = {"hosts": [{"name": "pi", "host": "a", "backup": {"type": "path", "path": "/b"}}]}
     ob.upsert(data, "host", {"name": "pi", "host": "b"})

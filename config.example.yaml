@@ -59,7 +59,7 @@ notify: []
 
 # Where "Back up" saves a machine's config when you choose "On the dashboard": one subfolder per machine.
 # Default: host-backups/ next to the state file. To use a NAS or other folder, mount it into the container
-# and set it here (or FLEETDECK_BACKUP_FOLDER). It must exist and be writable by the dashboard.
+# and set it here (or FLEETDECK_BACKUP_FOLDER). It must exist; the container gives that folder to its app user at start.
 # backup_folder: /backups
 
 # SSH host keys of every machine (`ssh-keyscan host1 host2 ... > config/known_hosts`). Every SSH entry

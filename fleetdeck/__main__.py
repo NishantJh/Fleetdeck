@@ -31,6 +31,27 @@ def server_options(cfg: AppConfig) -> dict:
     return opts
 
 
+def own_backup_folder(uid: int, gid: int) -> None:
+    """Give the folder for backups saved on the dashboard to the app user, so mounting one needs no chown on the
+    host. Only the folder itself, not what is in it, and only if it is already there (a share that is not
+    mounted must stay an error). A share that refuses (NFS root squash) is left to its own permissions."""
+    folder = env("BACKUP_FOLDER")
+    if not folder:
+        try:
+            folder = load_config(config_path()).backup_folder
+        except Exception:  # noqa: BLE001 - a bad config is reported later, with the setup page
+            return
+    if not folder or not os.path.isdir(folder):
+        return
+    try:
+        st = os.stat(folder)
+        if (st.st_uid, st.st_gid) != (uid, gid):
+            os.chown(folder, uid, gid)
+            log.info("Gave the backup folder %s to uid %s, gid %s.", folder, uid, gid)
+    except OSError as e:
+        log.warning("Can't change the owner of the backup folder %s: %s", folder, e)
+
+
 def drop_privileges() -> None:
     """In the container: run as the owner of the data folder, never as root.
 
@@ -64,6 +85,7 @@ def drop_privileges() -> None:
                     os.lchown(path, uid, gid)
             except OSError as e:  # e.g. rootless Docker can't map the uid; the app reports what it can't read
                 log.warning("Can't change the owner of %s: %s", path, e)
+    own_backup_folder(uid, gid)
     os.setgroups([])
     os.setgid(gid)
     os.setuid(uid)
