@@ -11,7 +11,20 @@
   const saved = read();
   if (saved === "light" || saved === "dark") root.dataset.theme = saved;
 
+  // The login is HTTP Basic: over plain HTTP from another machine the password crosses the network in clear text.
+  const local = /^(localhost|127\.0\.0\.1|\[::1\]|.*\.localhost)$/.test(location.hostname);
+  const plainHttp = location.protocol === "http:" && !local;
+
   addEventListener("DOMContentLoaded", () => {
+    const main = document.querySelector("main");
+    if (plainHttp && main) {
+      const warn = document.createElement("div");
+      warn.className = "warn-banner";
+      warn.setAttribute("role", "alert");
+      warn.textContent = "This page is open over plain HTTP, so the password and everything on it can be read on the network. " +
+        "Put the dashboard behind HTTPS (see \"Put it behind HTTPS\" in the README).";
+      main.prepend(warn);
+    }
     const h1 = document.querySelector("header h1");
     if (h1) {
       const brand = document.createElement("div");
