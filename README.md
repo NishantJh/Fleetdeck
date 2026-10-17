@@ -98,7 +98,8 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   modprobe/GRUB settings and the node's SSH host keys. The archive form also has `/usr/local/etc`,
   `/usr/local/bin`, `/var/spool/cron` and the installed package list; the PBS form is `/etc` only.
   It does **not** contain guests or their disks, `/root`, `/home`, `/var/lib/vz`, ZFS pool layout or
-  anything else outside those folders. Because it holds secrets, keep it where you keep other secrets:
+  anything else outside those folders. **The archive is not encrypted** and holds secrets (`/etc/shadow`,
+  the node's SSH host keys, and on Proxmox `/etc/pve/priv`), so keep it where you keep other secrets:
   turn on client-side encryption for the PBS storage, or use a folder only you can read (archives are
   written readable by root only). To rebuild a node: reinstall Proxmox, restore `/etc/network`, then
   `/etc/pve` (or re-add storage and restore the guests from their own backups).
@@ -409,6 +410,8 @@ pveum aclmod / -user homelab@pve -role HomelabManager
 pveum user token add homelab@pve dashboard --privsep 0
 ```
 
+This is not a read-only token: with `Sys.Modify` and `VM.GuestAgent.Unrestricted` (and no privilege
+separation) it can run commands as root inside any VM with the guest agent and change node settings.
 The dashboard also has root SSH to the node, so this mainly limits the damage if the token alone
 leaks. `Sys.Modify` is only needed for refreshing package lists through the API, `Datastore.Audit`, `Datastore.AllocateSpace` and `VM.Backup` for the
 backup column (the dashboard never makes backups of guests; Proxmox just won't list them otherwise) and `VM.Snapshot`/`VM.Snapshot.Rollback` for snapshots before upgrades.

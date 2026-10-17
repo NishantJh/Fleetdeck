@@ -223,7 +223,7 @@ archive() {{
         return (
             head + local
             + f'if [ -d {dest} ]; then archive {dest} "$@"; '
-            + f'else echo "{cfg.path} is not a folder, so the archive goes to {local_dir}" >&2; '
+            + f'else echo {shlex.quote(f"{cfg.path} is not a folder, so the archive goes to ") + local_dir} >&2; '
             + f"archive {local_dir} \"$@\"; fi\n"
         )  # fmt: skip
     if proxmox:

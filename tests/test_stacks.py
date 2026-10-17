@@ -336,3 +336,12 @@ def test_demo_docker_check_and_update_through_the_api():
         assert not next(s for s in stacks["stacks"] if s["name"] == "media")["update_available"]
         bad = client.post("/api/actions", json={"action": "stack-update", "target_ids": [vm], "stack": "zzz"}).json()
         assert "check Docker" in bad["rejected"][vm]
+
+
+def test_a_hostile_working_dir_is_never_expanded_by_the_shell():
+    from fleetdeck.stacks import _in_dir
+
+    stack = Stack(name="x", working_dir="/x$(id>/tmp/p)`id`", services=[])
+    script = _in_dir(stack)
+    assert '"' not in script  # no double quotes, where $( ) and backticks would still run
+    assert "echo 'its folder /x$(id>/tmp/p)`id` is gone'" in script
