@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import time
 from datetime import UTC, datetime, timedelta
@@ -11,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 from .inventory import Inventory
 from .jobs import JobManager
 from .notify import Notifier
+from .store import Store
 
 log = logging.getLogger(__name__)
 # Give the dashboard a moment after start-up before the first automatic check.
@@ -23,7 +25,15 @@ Fingerprint = frozenset[tuple[str, ...]]
 
 
 class Scheduler:
-    def __init__(self, interval: int | None, inventory: Inventory, jobs: JobManager, notifier: Notifier | None):
+    def __init__(
+        self,
+        interval: int | None,
+        inventory: Inventory,
+        jobs: JobManager,
+        notifier: Notifier | None,
+        store: Store | None = None,
+    ):
+        self.store = store
         self.interval = interval
         self.inventory = inventory
         self.jobs = jobs
@@ -31,9 +41,10 @@ class Scheduler:
         self.next_run: datetime | None = None
         self.last_run: datetime | None = None
         self.last_notified: datetime | None = None
-        # What the last round found. Kept in memory only: after a restart the first round notifies
-        # about everything that is pending, which doubles as a "still needs attention" reminder.
+        # What the last round found. Kept in the store, so a restart (a settings change, an image update,
+        # a reboot) neither moves the schedule nor repeats a notification that was already sent.
         self._last_seen: Fingerprint = frozenset()
+        self._load()
         self._task: asyncio.Task | None = None
 
     def start(self) -> None:
@@ -47,9 +58,45 @@ class Scheduler:
                 await self._task
             self._task = None
 
+    def _load(self) -> None:
+        if self.store is None:
+            return
+        try:
+            for attr in ("last_run", "last_notified"):
+                raw = self.store.get_value(attr)
+                if raw:
+                    setattr(self, attr, datetime.fromisoformat(raw))
+            raw = self.store.get_value("last_seen")
+            if raw:
+                self._last_seen = frozenset(tuple(item) for item in json.loads(raw))
+        except (ValueError, TypeError):
+            log.warning("ignoring unreadable scheduler state")
+
+    def _save(self) -> None:
+        if self.store is None:
+            return
+        try:
+            for attr in ("last_run", "last_notified"):
+                value = getattr(self, attr)
+                if value:
+                    self.store.set_value(attr, value.isoformat())
+            self.store.set_value("last_seen", json.dumps(sorted(self._last_seen)))
+        except Exception:  # noqa: BLE001 - a full disk must not stop the checks
+            log.exception("could not save the scheduler state")
+
+    def _delay(self) -> float:
+        """Seconds until the next round: ``interval`` after the last one started, or a minute after start-up
+        when there is none yet or it is overdue."""
+        if self.last_run is None or not self.interval:
+            return FIRST_RUN_DELAY
+        due = (self.last_run - datetime.now(UTC)).total_seconds() + self.interval
+        if due > self.interval:  # the clock went backwards
+            due = float(self.interval)
+        return max(due, FIRST_RUN_DELAY)
+
     async def _loop(self) -> None:
-        delay = FIRST_RUN_DELAY
         while True:
+            delay = self._delay()
             self.next_run = datetime.now(UTC) + timedelta(seconds=delay)
             await asyncio.sleep(delay)
             self.next_run = None
@@ -57,11 +104,11 @@ class Scheduler:
                 await self.run_once()
             except Exception:  # noqa: BLE001 - keep the schedule alive whatever happens
                 log.exception("scheduled check failed")
-            delay = float(self.interval or 0)
 
     async def run_once(self) -> None:
         """Check every machine that can be checked and isn't hidden, wait for the results, then notify if needed."""
         self.last_run = datetime.now(UTC)
+        self._save()
         await self.inventory.refresh(force=True)
         submitted = []
         for target, executor in list(self.inventory.targets.values()):
@@ -126,8 +173,8 @@ class Scheduler:
         # since drop out, so they notify again if they come back.
         new = seen - self._last_seen
         self._last_seen = seen
-        if not new or self.notifier is None:
-            return
-        errors = await self.notifier.send(title, body)
-        if len(errors) < len(self.notifier.targets):
-            self.last_notified = datetime.now(UTC)
+        if new and self.notifier is not None:
+            errors = await self.notifier.send(title, body)
+            if len(errors) < len(self.notifier.targets):
+                self.last_notified = datetime.now(UTC)
+        self._save()

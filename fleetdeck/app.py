@@ -115,7 +115,7 @@ def create_app(
         inventory, cfg.max_parallel, store, cfg.snapshot_keep, cfg.community_scripts_update, backup_folder
     )
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
-    scheduler = Scheduler(cfg.schedule.check_every, inventory, jobs, notifier)
+    scheduler = Scheduler(cfg.schedule.check_every, inventory, jobs, notifier, store)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
