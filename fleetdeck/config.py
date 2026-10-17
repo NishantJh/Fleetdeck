@@ -269,9 +269,9 @@ class AppConfig(BaseModel):
     snapshot_keep: int = Field(3, ge=1)
     # After an OS upgrade, also run the app's own update in containers made by the Proxmox VE
     # Helper-Scripts (community-scripts), as typing `update` in them would. A plain OS upgrade can
-    # leave such an app broken until its own update runs. Off (the default): the job only warns. It runs
-    # the latest upstream script as root and can upgrade the app itself, hence opt-in.
-    community_scripts_update: bool = False
+    # leave such an app broken until its own update runs. On by default; set false and the job only warns.
+    # It runs the latest upstream script as root and can upgrade the app itself.
+    community_scripts_update: bool = True
     # An `age` public key (age1...). When set, the host config archives made by the "Back up" button are
     # encrypted to it (.tar.gz.age); only the matching private key, which the dashboard never has, opens them.
     backup_age_recipient: str | None = None

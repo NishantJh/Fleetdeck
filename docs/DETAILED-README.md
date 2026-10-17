@@ -30,7 +30,7 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
     with the reason, and the dashboard refuses those jobs too. Checks, backups and image checks are never blocked.
   * **Community-scripts apps:** a container made by a Proxmox VE Helper-Script (community-scripts) also runs
     its app's own update after the OS upgrade, the same as typing `update` inside it, in a pseudo-terminal.
-    Turn it off with `community_scripts_update: false` (the dashboard then only warns and you run `update` yourself).
+    On by default. Turn it off with `community_scripts_update: false` (the dashboard then only warns and you run `update` yourself).
 * Check results and the Activity history are saved to `data/state.db` (SQLite), so they survive a
   restart or an image update. A job that was running when the dashboard stopped shows as interrupted.
 * **Reboot** reboots a machine, waits until it is back (its boot id changes), then re-checks it.

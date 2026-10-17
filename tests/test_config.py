@@ -142,7 +142,7 @@ def test_old_homelab_variable_name_still_expands(monkeypatch):
     assert cfg.auth.password == "x"
 
 
-def test_community_scripts_update_is_opt_in():
+def test_community_scripts_update_is_on_by_default():
     from fleetdeck.config import AppConfig
 
-    assert AppConfig().community_scripts_update is False
+    assert AppConfig().community_scripts_update is True
