@@ -208,7 +208,8 @@ archive() {{
   echo "wrote $OUT ($(wc -c <"$OUT") bytes)"
   # Keep the newest {KEEP_FILES} of this host's archives (by their name), nothing else: the folder may be
   # shared with other machines. The stamp is spelled out so that host "pve" does not match host "pve-2".
-  ls -1t "$DEST"/{FILE_PREFIX}"$HOST"-{STAMP_GLOB}.tar.gz* 2>/dev/null | tail -n +{KEEP_FILES + 1} | while read -r old; do
+  ls -1t "$DEST"/{FILE_PREFIX}"$HOST"-{STAMP_GLOB}.tar.gz* 2>/dev/null |
+    tail -n +{KEEP_FILES + 1} | while read -r old; do
     rm -f -- "$old" && echo "removed old $old"
   done
 }}

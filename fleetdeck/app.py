@@ -112,7 +112,12 @@ def create_app(
         except OSError as e:
             log.warning("Could not create %s for backups saved on the dashboard: %s", backup_folder, e)
     jobs = JobManager(
-        inventory, cfg.max_parallel, store, cfg.snapshot_keep, cfg.community_scripts_update, backup_folder,
+        inventory,
+        cfg.max_parallel,
+        store,
+        cfg.snapshot_keep,
+        cfg.community_scripts_update,
+        backup_folder,
         cfg.backup_age_recipient,
     )
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None

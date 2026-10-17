@@ -281,6 +281,7 @@ class AppConfig(BaseModel):
         if v and not re.fullmatch(r"age1[a-z0-9]{50,}", v.strip()):
             raise ValueError("backup_age_recipient must be an age public key (it starts with age1)")
         return v.strip() if v else None
+
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     notify: list[NotifyConfig] = Field(default_factory=list)
     # The dashboard's address, linked from notifications (e.g. http://192.168.1.50:8080).

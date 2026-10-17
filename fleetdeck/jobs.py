@@ -308,7 +308,8 @@ class JobManager:
                     )
                     if not self.age_recipient:
                         job.log.append(
-                            "! The archive is not encrypted and holds secrets (set backup_age_recipient to a public age key)"
+                            "! The archive is not encrypted and holds secrets "
+                            "(set backup_age_recipient to a public age key)"
                         )
                     await self.inventory.backup_runs[job.target_id].run(
                         on_line, job.destination, dashboard_folder=self.backup_folder, age_recipient=self.age_recipient
