@@ -134,44 +134,14 @@ def test_other_update_command_is_not_a_community_script(tmp_path):
     assert parse_check(ExecResult(rc=0, stdout="__PM__=apt\n")).community_script is None
 
 
-def test_helper_update_runs_unattended_and_stops_when_download_fails(tmp_path):
-    f = tmp_path / "update"
-    f.write_text(_CS_UPDATE)
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    log = tmp_path / "calls"
-    # Fake curl and bash that record how they were called; curl fails when FAIL exists.
-    (bin_dir / "curl").write_text(f'#!/bin/sh\necho "curl $*" >> {log}\n[ ! -e {tmp_path}/FAIL ]\n')
-    (bin_dir / "bash").write_text(f'#!/bin/sh\necho "bash PHS_SILENT=$PHS_SILENT" >> {log}\n')
-    for p in bin_dir.iterdir():
-        p.chmod(0o755)
-    r = _sh(COMMUNITY_UPDATE_SCRIPT, f, bin_dir)
-    assert r.returncode == 0, r.stderr
-    calls = log.read_text().splitlines()
-    assert (
-        calls[0]
-        == "curl -fsS -o /dev/null https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/ct/plex.sh"
-    )
-    assert "bash PHS_SILENT=1" in calls
-
-    (tmp_path / "FAIL").touch()
-    log.unlink()
-    r = _sh(COMMUNITY_UPDATE_SCRIPT, f, bin_dir)
-    assert r.returncode == 4 and "can't download" in r.stderr
-    assert not any(c.startswith("bash") for c in log.read_text().splitlines())
-
-
 def test_other_update_file_layouts(tmp_path):
     f = tmp_path / "update"
     f.write_text(
         'bash -c "$(curl -fsSL https://raw.githubusercontent.com/community-scripts/ProxmoxVE/main/x/plex.sh)"\n'
     )
     assert _sh(COMMUNITY_SCRIPT_DETECT, f).stdout.strip() == "__CSAPP__=plex"
-    # Nothing that looks like an address: detected, but the update refuses with a distinct code.
     f.write_text("# community-scripts/ProxmoxVE\nupdate_app\n")
     assert _sh(COMMUNITY_SCRIPT_DETECT, f).stdout.strip() == "__CSAPP__=unknown"
-    r = _sh(COMMUNITY_UPDATE_SCRIPT, f)
-    assert r.returncode == 5 and "starts with" in r.stderr and "update_app" in r.stderr
 
 
 _CS_UPDATE_NEW = """#!/usr/bin/env bash
@@ -184,20 +154,42 @@ if [[ -n "$_cs_helper" ]]; then bash -c "$_cs_helper"; fi
 """
 
 
-def test_newer_generated_update_file(tmp_path):
+def test_newer_generated_update_file_is_detected(tmp_path):
     f = tmp_path / "update"
     f.write_text(_CS_UPDATE_NEW)
     assert _sh(COMMUNITY_SCRIPT_DETECT, f).stdout.strip() == "__CSAPP__=plex"
+
+
+def _run_update(tmp_path, with_script: bool):
     bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+    bin_dir.mkdir(exist_ok=True)
     log = tmp_path / "calls"
-    (bin_dir / "curl").write_text(f'#!/bin/sh\necho "curl $*" >> {log}\n')
+    (bin_dir / "update").write_text(f'#!/bin/sh\necho "update TERM=$TERM PHS_SILENT=$PHS_SILENT" >> {log}\nexit 7\n')
+    if with_script:
+        # Fake util-linux script: `script -qec CMD /dev/null` runs CMD.
+        (bin_dir / "script").write_text(f'#!/bin/sh\necho "script $*" >> {log}\nexec sh -c "$2"\n')
     for p in bin_dir.iterdir():
         p.chmod(0o755)
-    # Real bash runs the file (it uses [[ ]], which plain sh may not); curl is the fake.
-    r = _sh(COMMUNITY_UPDATE_SCRIPT, f, bin_dir)
-    assert r.returncode == 0, r.stderr
-    assert log.read_text().splitlines()[0].endswith("/community-scripts/ProxmoxVE/main/ct/plex.sh")
+    script = COMMUNITY_UPDATE_SCRIPT.replace(
+        "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH", ""
+    )
+    r = subprocess.run(
+        ["sh", "-c", script], capture_output=True, text=True, env={"PATH": f"{bin_dir}:/usr/bin:/bin"}, timeout=30
+    )
+    return r, (log.read_text().splitlines() if log.exists() else [])
+
+
+def test_helper_update_runs_in_a_terminal(tmp_path):
+    r, calls = _run_update(tmp_path, with_script=True)
+    assert r.returncode == 7  # update's own exit code comes through
+    assert calls[0] == "script -qec update /dev/null"
+    assert calls[1] == "update TERM=xterm-256color PHS_SILENT=1"
+
+
+def test_helper_update_without_script_command(tmp_path):
+    r, calls = _run_update(tmp_path, with_script=False)
+    assert r.returncode == 7
+    assert calls == ["update TERM=xterm-256color PHS_SILENT=1"]
 
 
 def test_clean_line_drops_colours_and_spinner_frames():

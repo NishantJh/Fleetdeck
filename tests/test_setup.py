@@ -542,10 +542,17 @@ def test_bootstrap_accepts_usual_sshd_settings(tmp_path):
     assert "sshd" not in r.stderr and (r.returncode == 99 or "sudo" in r.stderr), r.stderr
 
 
+def _can_be_root() -> bool:
+    """Root, or sudo that works without a password (self-hosted runners usually have neither)."""
+    if os.getuid() == 0:
+        return True
+    return bool(shutil.which("sudo")) and subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0
+
+
 def test_wrapper_runs_from_any_shell():
     line = ob.wrap('echo "ran as $(id -u)"')
     for shell in ("sh", "bash", "zsh", "fish", "csh", "tcsh"):
-        if shutil.which(shell) and (os.getuid() == 0 or shutil.which("sudo")):
+        if shutil.which(shell) and _can_be_root():
             r = subprocess.run([shell, "-c", line], capture_output=True, text=True, timeout=30)
             assert r.stdout.strip() == "ran as 0", (shell, r.stderr)
 
@@ -634,7 +641,7 @@ def test_script_download_link(configured):
 def test_downloaded_script_runs_and_removes_itself(tmp_path):
     f = tmp_path / "homelab-setup.sh"
     f.write_text(ob.download('echo "ran as $(id -u)"'))
-    if os.getuid() != 0 and not shutil.which("sudo"):
+    if not _can_be_root():
         pytest.skip("needs root or sudo")
     r = subprocess.run(["sh", str(f)], capture_output=True, text=True, timeout=30)
     assert r.stdout.strip() == "ran as 0" and not f.exists()

@@ -20,7 +20,6 @@ from .updates import (
     BOOT_ID_SCRIPT,
     CHECK_SCRIPT,
     COMMUNITY_UPDATE_SCRIPT,
-    COMMUNITY_UPDATE_UNPARSED,
     REBOOT_NOW_SCRIPT,
     UPGRADE_SCRIPT,
     clean_line,
@@ -636,13 +635,6 @@ class JobManager:
                 on_line(stream, line)
 
         res = await executor.run(COMMUNITY_UPDATE_SCRIPT, cleaned)
-        if res.rc == COMMUNITY_UPDATE_UNPARSED:
-            # The OS upgrade worked and we can't tell how to update the app: a warning, not a failure.
-            job.log.append(
-                f"! the OS upgrade worked, but Fleetdeck couldn't work out how to run {app}'s own update. "
-                "If it misbehaves, run `update` inside it."
-            )
-            return
         if res.rc != 0:
             raise RuntimeError(
                 f"the OS upgrade worked, but {app}'s own update exited with code {res.rc}. "
