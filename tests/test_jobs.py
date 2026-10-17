@@ -431,3 +431,17 @@ async def test_upgrade_script_runs_once():
     jobs.submit("t1", "upgrade")
     await _finish(jobs)
     assert ex.runs == 1
+
+
+@pytest.mark.parametrize("action", ["upgrade", "reboot", "rollback", "stack-update"])
+async def test_host_reboot_blocked_while_guest_runs_any_changing_job(action):
+    jobs = JobManager(_inventory((_target(), FakeExecutor()), (_guest("g1"), FakeExecutor())))
+    host = jobs.inventory.get("t1")[0]
+    jobs.jobs["g"] = Job(
+        id="g", target_id="g1", target_name="g1", action=action, status="running", created_at=datetime.now(UTC)
+    )
+    assert "waiting for g1" in jobs.update_blocked(host)
+    with pytest.raises(ValueError, match="waiting for g1 to finish updating"):
+        jobs.submit("t1", "reboot")
+    jobs.jobs["g"].status = "succeeded"
+    assert jobs.update_blocked(host) is None
