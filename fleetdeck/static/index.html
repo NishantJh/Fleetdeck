@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fleetdeck</title>
-  <link rel="stylesheet" href="/static/style.css?v=9">
+  <link rel="stylesheet" href="/static/style.css?v=10">
   <script src="/static/theme.js?v=8"></script>
 </head>
 <body>
@@ -51,7 +51,7 @@
   <main>
     <div id="errors"></div>
     <section id="summary" class="summary"></section>
-    <section id="groups"></section>
+    <section id="groups"><div class="loading" role="status"><span class="spin"></span> Loading machines…</div></section>
 
     <section class="activity">
       <div class="log-head">
@@ -71,10 +71,18 @@
     </section>
   </main>
 
-  <footer class="site-footer muted">
-    Fleetdeck is free software. Support it:
-    <a href="https://ko-fi.com/nishant19836" target="_blank" rel="noopener noreferrer">Ko-fi</a> &middot;
-    <a href="https://paypal.me/nishantjha1659" target="_blank" rel="noopener noreferrer">PayPal</a>
+  <footer class="site-footer">
+    <p>Fleetdeck is free and open source. If it saves you time, you can support it.</p>
+    <div class="support">
+      <a class="support-btn kofi" href="https://ko-fi.com/nishant19836" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17 8h1a4 4 0 0 1 0 8h-1"/><path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4z"/><path d="M7 2v2M11 2v2M15 2v2"/></svg>
+        Ko-fi
+      </a>
+      <a class="support-btn paypal" href="https://paypal.me/nishantjha1659" target="_blank" rel="noopener noreferrer">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7z"/></svg>
+        PayPal
+      </a>
+    </div>
   </footer>
 
   <dialog id="confirm">
@@ -99,6 +107,6 @@
     </form>
   </dialog>
 
-  <script src="/static/app.js?v=10"></script>
+  <script src="/static/app.js?v=11"></script>
 </body>
 </html>

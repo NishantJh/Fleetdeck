@@ -203,7 +203,7 @@ function render() {
   const staleBackups = withBackups.filter((v) => v.target.backup.stale || v.target.backup.verified === false).length;
   $("#summary").innerHTML = `
     <div class="stat"><b>${updatable.length}</b><span class="muted">machines</span></div>
-    <div class="stat"><b class="${pending.length ? "warn" : "ok"}">${pending.length}</b><span class="muted">need updates (${pkgCount} pkgs)</span></div>
+    <div class="stat"><b class="${pending.length ? "warn" : "ok"}">${pending.length}</b><span class="muted">need updates (${pkgCount} packages)</span></div>
     <div class="stat"><b class="${secMachines ? "bad" : ""}">${secMachines}</b><span class="muted">have security updates</span></div>
     <div class="stat"><b class="${reboot ? "warn" : ""}">${reboot}</b><span class="muted">need a reboot</span></div>
     <div class="stat"><b>${unchecked}</b><span class="muted">not checked yet</span></div>
@@ -226,7 +226,7 @@ function render() {
         <tbody>${g.rows.map((v) => rowHtml(v, withBackup)).join("")}</tbody>
       </table></div>
     </div>`;
-  }).join("") || `<p class="muted">No targets yet. Add Proxmox, Incus or SSH hosts to config.yaml.</p>`;
+  }).join("") || `<div class="empty"><h3>No machines yet</h3><p class="muted">Add a Proxmox node, an Incus server or any Linux host, and it shows up here with its updates, backups and state.</p><a class="button primary" href="/setup">Add machines</a></div>`;
 
   const btn = $("#update-selected");
   btn.disabled = state.selected.size === 0;
@@ -237,7 +237,7 @@ function render() {
     const icon = j.status === "running" || j.status === "queued" ? `<span class="spin"></span>` : "";
     return `<li data-job="${j.id}" class="${state.logJob === j.id ? "sel" : ""}">
       <span>${icon} ${esc(j.target_name)} · ${j.action}</span><span class="${cls}">${j.status}</span></li>`;
-  }).join("") || `<li class="muted">Nothing yet</li>`;
+  }).join("") || `<li class="muted">No jobs yet. Checks, updates, reboots and backups you start show up here.</li>`;
 }
 
 async function load(refresh = false) {
