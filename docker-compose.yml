@@ -18,6 +18,7 @@ services:
     environment:
       # Only so the setup link in the logs shows the right port.
       FLEETDECK_PORT: ${FLEETDECK_PORT:-8080}
+      # FLEETDECK_BACKUP_FOLDER: /backups
     volumes:
       # Config, the dashboard's own keys and its history: the whole install, so back it up.
       # A named volume works the same in every tool. To keep it in a folder instead, use e.g.
