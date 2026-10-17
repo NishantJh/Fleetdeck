@@ -443,6 +443,7 @@ and set `auth:` in the config.
 * Basic auth sends the password with every request, so use HTTPS: either set `TLS_CERT` and
   `TLS_KEY` (paths inside the container, e.g. `/data/tls.crt`) to serve HTTPS directly, or put
   Caddy, Traefik or `tailscale serve` in front.
+* The page shows a warning when it is opened over plain HTTP from anything but localhost.
 * Set `allowed_hosts` to the names/IPs you open the dashboard by, so other websites can't reach it
   through DNS rebinding.
 * Behind a reverse proxy, set `trusted_proxies` to its address (or the Docker network's range), so
@@ -450,6 +451,24 @@ and set `auth:` in the config.
   `Host` header, because `allowed_hosts` and the cross-site check compare against it. Caddy and
   Traefik do this by default; with nginx add `proxy_set_header Host $host;`.
 * Cross-site form posts are refused, and the page can't be framed by another site.
+
+### Put it behind HTTPS
+
+The login is HTTP Basic, so over plain HTTP the password crosses your network in clear text, and it is
+effectively root on every machine the dashboard manages. Most people already run a reverse proxy; put
+Fleetdeck behind it. With [Caddy](https://caddyserver.com) (a certificate is made for you):
+
+```
+fleetdeck.example.com {
+    reverse_proxy fleetdeck:8080
+}
+```
+
+Then, in the config, set `trusted_proxies` to the proxy's address (so the login lockout counts each visitor,
+not the proxy) and `allowed_hosts` to `fleetdeck.example.com`, and drop the `ports:` mapping from
+`docker-compose.yml` so only the proxy can reach the container. Traefik, Nginx Proxy Manager, Pangolin and
+`tailscale serve` work the same way. Without a proxy, `TLS_CERT` and `TLS_KEY` serve HTTPS from the
+container directly.
 
 ### Upgrading from a version without host key checks
 
