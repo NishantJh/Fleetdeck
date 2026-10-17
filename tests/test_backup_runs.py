@@ -61,20 +61,38 @@ async def test_plain_host_archives_config_and_keeps_the_newest_seven(tree):
     tmp, etc = tree
     out = tmp / "out"
     out.mkdir()
+    host = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
     for i in range(9):
-        (out / f"homelab-config-old-{i}.tar.gz").write_text("x")
-        os.utime(out / f"homelab-config-old-{i}.tar.gz", (1000 + i, 1000 + i))
+        (out / f"homelab-config-{host}-2020010{i + 1}_000000.tar.gz").write_text("x")
+        os.utime(out / f"homelab-config-{host}-2020010{i + 1}_000000.tar.gz", (1000 + i, 1000 + i))
     (out / "mine.txt").write_text("not ours")
     got, cb = lines()
     r = await LocalExecutor().run(script(None, tmp, etc), cb)
     assert r.rc == 0, got
     archives = sorted(out.glob("homelab-config-*.tar.gz"))
     assert len(archives) == 7 and (out / "mine.txt").exists()
-    new = next(a for a in archives if "old" not in a.name)
+    new = next(a for a in archives if "_000000" not in a.name)
     assert stat.S_IMODE(new.stat().st_mode) == 0o600
     names = subprocess.run(["tar", "-tzf", new], capture_output=True, text=True).stdout
     assert "hosts" in names and "packages.txt" in names
     assert not any("Removing leading" in line for line in got)
+
+
+async def test_pruning_leaves_other_hosts_archives_in_a_shared_folder(tree):
+    tmp, etc = tree
+    out = tmp / "out"
+    out.mkdir()
+    host = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
+    others = [f"homelab-config-nas-2020010{i}_000000.tar.gz" for i in range(1, 9)]
+    others.append(f"homelab-config-{host}-2-20200101_000000.tar.gz")  # a host named like ours plus a suffix
+    for i, name in enumerate(others):
+        (out / name).write_text("x")
+        os.utime(out / name, (1000 + i, 1000 + i))
+    got, cb = lines()
+    r = await LocalExecutor().run(script(None, tmp, etc), cb)
+    assert r.rc == 0, got
+    assert all((out / n).exists() for n in others)
+    assert len(list(out.glob("homelab-config-*.tar.gz"))) == len(others) + 1
 
 
 async def test_backup_folder_is_used_when_the_machine_has_one(tree):

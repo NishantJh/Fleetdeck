@@ -49,6 +49,7 @@ log = logging.getLogger(__name__)
 FILE_PREFIX = "homelab-config-"
 LOCAL_DIR = "/var/backups/homelab-manager"
 KEEP_FILES = 7
+STAMP_GLOB = "[0-9]" * 8 + "_" + "[0-9]" * 6  # matches the STAMP of the script, e.g. 20260101_030000
 # The place to choose for "save on the dashboard", in a run's destination and a machine's saved place.
 DASHBOARD = "dashboard"
 # Everything saved on the dashboard goes in this folder inside the backup folder; nothing else there is touched.
@@ -182,8 +183,9 @@ archive() {{
   grep -v 'Removing leading' "$W/err" >&2
   [ "$rc" -le 1 ] || {{ rm -f "$OUT"; echo "tar failed" >&2; exit 4; }}
   echo "wrote $OUT ($(wc -c <"$OUT") bytes)"
-  # Keep the newest {KEEP_FILES} of the archives made here (by their name), nothing else.
-  ls -1t "$DEST"/{FILE_PREFIX}*.tar.gz 2>/dev/null | tail -n +{KEEP_FILES + 1} | while read -r old; do
+  # Keep the newest {KEEP_FILES} of this host's archives (by their name), nothing else: the folder may be
+  # shared with other machines. The stamp is spelled out so that host "pve" does not match host "pve-2".
+  ls -1t "$DEST"/{FILE_PREFIX}"$HOST"-{STAMP_GLOB}.tar.gz 2>/dev/null | tail -n +{KEEP_FILES + 1} | while read -r old; do
     rm -f -- "$old" && echo "removed old $old"
   done
 }}
