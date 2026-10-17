@@ -25,7 +25,7 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   whether a reboot is needed. On apt machines, updates from a security repository
   (`bookworm-security`, `noble-security`, …) get a red *security* tag and are listed first
   (a Proxmox host needs its `ssh:` settings for this, as the PVE API doesn't say).
-* **Update** runs a full upgrade (`apt-get dist-upgrade`, `dnf upgrade`, `apk upgrade`,
+* **Update** runs a full upgrade (`apt-get dist-upgrade` on Proxmox and Raspberry Pi OS, `apt-get upgrade --with-new-pkgs` (never removes a package) elsewhere, `dnf upgrade`, `apk upgrade`,
   `pacman -Syu`), streams the output to the Activity panel, then re-checks. Nothing is rebooted unless you ask.
 * Check results and the Activity history are saved to `data/state.db` (SQLite), so they survive a
   restart or an image update. A job that was running when the dashboard stopped shows as interrupted.

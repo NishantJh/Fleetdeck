@@ -195,3 +195,10 @@ def test_helper_update_without_script_command(tmp_path):
 def test_clean_line_drops_colours_and_spinner_frames():
     assert clean_line("\x1b[33m⏳\x1b[m Updating\r\x1b[32m✔️\x1b[m Updated  ") == "✔️ Updated"
     assert clean_line("\x1b[?25l") == ""
+
+
+def test_apt_upgrade_never_removes_packages_except_on_proxmox_and_raspberry_pi_os():
+    from fleetdeck.updates import UPGRADE_SCRIPT
+
+    assert "UPG=dist-upgrade" in UPGRADE_SCRIPT and "pveversion" in UPGRADE_SCRIPT and "/etc/rpi-issue" in UPGRADE_SCRIPT
+    assert 'UPG="upgrade --with-new-pkgs"' in UPGRADE_SCRIPT and "$UPG" in UPGRADE_SCRIPT
