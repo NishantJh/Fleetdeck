@@ -42,6 +42,8 @@ class TargetView(BaseModel):
     check: CheckResult | None = None
     active_job: Job | None = None
     hidden: bool = False
+    # Why this host can't be updated or rebooted right now (a guest or Docker on it is updating).
+    blocked: str | None = None
     # What the last Docker check found (None: never checked).
     stacks: StacksResult | None = None
     # Looks like the machine this dashboard runs on: shown with a "dashboard" tag.
@@ -187,6 +189,7 @@ def create_app(
                 check=(check := jobs.checks.get(t.id)),
                 active_job=_light(jobs.active_job(t.id)),
                 hidden=t.id in jobs.hidden,
+                blocked=jobs.update_blocked(t),
                 stacks=jobs.stacks.get(t.id),
                 runs_dashboard=_runs_dashboard(t, check, hostname),
             )

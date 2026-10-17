@@ -225,6 +225,8 @@ class JobManager:
             if action == "upgrade" and reboot_if_required:
                 existing.reboot_if_required = True
             return existing
+        if action in ("upgrade", "reboot") and (why := self.update_blocked(target)):
+            raise ValueError(f"{target.name}: {why}")
         job = Job(
             id=uuid.uuid4().hex[:12],
             target_id=target_id,
@@ -519,6 +521,21 @@ class JobManager:
             if t.kind == "host" and t.source == target.source and t.name == target.parent:
                 return t.id
         return None
+
+    def update_blocked(self, target: Target) -> str | None:
+        """Why a machine can't be updated or rebooted right now, if it can't.
+
+        Docker stacks on it are updating, or (for a host) a guest on it is updating.
+        """
+        busy = [j for j in self.jobs.values() if j.target_id == target.id and j.action == "stack-update"]
+        if target.kind == "host":
+            busy += [j for j in self._guest_jobs(target) if j.action in ("upgrade", "stack-update")]
+        busy = [j for j in busy if j.status in ("queued", "running")]
+        if not busy:
+            return None
+        names = {t.id: t.name for t, _ in self.inventory.targets.values()}
+        who = ", ".join(sorted({names.get(j.target_id, j.target_name) for j in busy}))
+        return f"waiting for {who} to finish updating"
 
     def _guest_jobs(self, host: Target) -> list[Job]:
         guests = {

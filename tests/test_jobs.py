@@ -1,10 +1,11 @@
 import asyncio
+from datetime import UTC, datetime
 
 import pytest
 
 from fleetdeck.inventory import Inventory
 from fleetdeck.jobs import JobManager
-from fleetdeck.models import ExecResult, Target
+from fleetdeck.models import ExecResult, Job, Target
 from fleetdeck.updates import CHECK_SCRIPT, COMMUNITY_UPDATE_SCRIPT, UPGRADE_SCRIPT
 
 
@@ -196,20 +197,54 @@ def _guest(tid, parent="t1", **kw) -> Target:
     return Target(id=tid, name=tid, platform="ssh", source="hosts", kind="lxc", parent=parent, **kw)
 
 
-async def test_host_reboot_waits_for_guest_jobs(fast_reboot):
+async def test_host_update_and_reboot_refused_while_guest_updates(fast_reboot):
     gate = asyncio.Event()
     host = RebootingExecutor()
     jobs = JobManager(_inventory((_target(), host), (_guest("g1"), FakeExecutor(gate=gate))), max_parallel=2)
     guest_job = jobs.submit("g1", "upgrade")
-    reboot = jobs.submit("t1", "reboot")
-    for _ in range(20):
-        await asyncio.sleep(0)
-    assert "== Waiting for 1 guest job(s) to finish" in reboot.log
-    assert host.reboots == 0 and guest_job.status == "running"
+    for action in ("reboot", "upgrade"):
+        with pytest.raises(ValueError, match="waiting for g1 to finish updating"):
+            jobs.submit("t1", action)
+    assert jobs.update_blocked(jobs.inventory.get("t1")[0])
+    jobs.submit("t1", "check")  # checking is harmless
     gate.set()
     await _finish(jobs)
-    assert reboot.status == "succeeded" and host.reboots == 1
-    assert guest_job.finished_at <= reboot.finished_at
+    assert guest_job.status == "succeeded" and jobs.update_blocked(jobs.inventory.get("t1")[0]) is None
+    jobs.submit("t1", "reboot")
+    await _finish(jobs)
+    assert host.reboots == 1
+
+
+async def test_host_refused_while_its_docker_stacks_update():
+    gate = asyncio.Event()
+    jobs = JobManager(_inventory((_target(), FakeExecutor(gate=gate)), (_guest("g1"), FakeExecutor())))
+    host = jobs.inventory.get("t1")[0]
+    # A stack-update job on the host itself, and on a guest of the host.
+    for tid in ("t1", "g1"):
+        jobs.jobs.clear()
+        job = Job(
+            id=tid,
+            target_id=tid,
+            target_name=tid,
+            action="stack-update",
+            status="running",
+            created_at=datetime.now(UTC),
+        )
+        jobs.jobs[job.id] = job
+        assert jobs.update_blocked(host)
+        with pytest.raises(ValueError, match="to finish updating"):
+            jobs.submit("t1", "reboot")
+    # A guest whose own Docker stacks are updating can't be updated or rebooted either.
+    jobs.jobs.clear()
+    job = Job(
+        id="s", target_id="g1", target_name="g1", action="stack-update", status="running", created_at=datetime.now(UTC)
+    )
+    jobs.jobs[job.id] = job
+    for action in ("upgrade", "reboot"):
+        with pytest.raises(ValueError, match="waiting for g1"):
+            jobs.submit("g1", action)
+    jobs.jobs.clear()
+    assert jobs.update_blocked(host) is None
 
 
 async def test_host_reboot_holds_slot_free_and_rejects_new_guest_jobs(fast_reboot, monkeypatch):
