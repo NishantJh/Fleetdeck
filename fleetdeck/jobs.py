@@ -371,6 +371,9 @@ class JobManager:
         """Carry on with a job from where a restart cut it off."""
         if job.action == "stack-update":
             await self._stack_update(job, executor, on_line)
+        elif job.remote is not None and job.app_update:
+            await self._community_update(job, executor, "the app", on_line)
+            await self._after_upgrade(job, target, executor, on_line, slot, "", app_updated=True)
         elif job.remote is not None:
             stdout = await self._upgrade(job, executor, on_line)
             await self._after_upgrade(job, target, executor, on_line, slot, stdout)
@@ -487,10 +490,12 @@ class JobManager:
         else:
             job.log.append("== Stack is running the newest images")
 
-    async def _after_upgrade(self, job: Job, target: Target, executor, on_line, slot: _Slot, stdout: str) -> None:
+    async def _after_upgrade(
+        self, job: Job, target: Target, executor, on_line, slot: _Slot, stdout: str, app_updated: bool = False
+    ) -> None:
         reboot = parse_reboot(stdout)
         job.log.append("== Upgrade finished" + ("; reboot required" if reboot else ""))
-        if app := parse_community_script(stdout):
+        if not app_updated and (app := parse_community_script(stdout)):
             await self._community_update(job, executor, app, on_line)
         job.log.append("== Re-checking for remaining updates")
         # The upgrade itself worked; a failed re-check is reported but doesn't fail the job.
@@ -651,12 +656,19 @@ class JobManager:
             if line := clean_line(line):
                 on_line(stream, line)
 
-        res = await executor.run(COMMUNITY_UPDATE_SCRIPT, cleaned)
-        if res.rc != 0:
-            raise RuntimeError(
-                f"the OS upgrade worked, but {app}'s own update exited with code {res.rc}. "
+        # Detached like the OS upgrade, so a dashboard restart halfway doesn't cut it off. The OS upgrade
+        # already worked, so a failure here is a warning: the re-check and the reboot still follow.
+        job.app_update = True
+        try:
+            await self._upgrade(job, executor, cleaned, COMMUNITY_UPDATE_SCRIPT, f"{app}'s own update")
+        except Exception as e:  # noqa: BLE001 - not a cancel: a shutdown must leave app_update set for the resume
+            job.app_update = False
+            job.log.append(
+                f"! the OS upgrade worked, but {app}'s own update failed ({e}). "
                 "Run `update` inside it to finish, or roll back to the snapshot."
             )
+            return
+        job.app_update = False
         job.log.append(f"== {app}'s own update finished")
 
     async def _snapshot(self, job: Job) -> None:

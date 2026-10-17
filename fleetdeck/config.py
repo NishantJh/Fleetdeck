@@ -269,8 +269,9 @@ class AppConfig(BaseModel):
     snapshot_keep: int = Field(3, ge=1)
     # After an OS upgrade, also run the app's own update in containers made by the Proxmox VE
     # Helper-Scripts (community-scripts), as typing `update` in them would. A plain OS upgrade can
-    # leave such an app broken until its own update runs. Off: the job only warns.
-    community_scripts_update: bool = True
+    # leave such an app broken until its own update runs. Off (the default): the job only warns. It runs
+    # the latest upstream script as root and can upgrade the app itself, hence opt-in.
+    community_scripts_update: bool = False
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     notify: list[NotifyConfig] = Field(default_factory=list)
     # The dashboard's address, linked from notifications (e.g. http://192.168.1.50:8080).
