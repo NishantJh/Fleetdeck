@@ -32,6 +32,8 @@ header {
 .logo svg { width: 18px; height: 18px; }
 h1 { font-size: 17px; margin: 0; font-weight: 650; letter-spacing: -.01em; }
 h2 { font-size: 15px; margin: 0 0 12px; font-weight: 650; }
+.site-footer { max-width: 1240px; margin: 0 auto; padding: 0 24px 24px; font-size: 12px; text-align: center; }
+.site-footer a { color: inherit; text-decoration: underline; }
 main { max-width: 1240px; margin: 0 auto; padding: 24px; }
 .toolbar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 button, a.button {
