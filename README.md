@@ -1,8 +1,6 @@
 # Fleetdeck
 
-> **Developed with Claude, tested on real homelab hardware.** Most of the code was written with
-> [Claude](https://claude.com/claude-code) (Claude Code), working under the owner's direction. It has
-> been run on a Proxmox VE host with Proxmox Backup Server, an Incus host, a Raspberry Pi 4 and an
+> **Built with help from Claude Code, tested on real homelab hardware.** It has been run on a Proxmox VE host with Proxmox Backup Server, an Incus host, a Raspberry Pi 4 and an
 > Ubuntu VPS. CI runs the linter and the test suite on every change, and the owner approves each
 > merge. It has **not** had an independent security audit, so read [Safety](#safety) before you point
 > it at machines you care about.
