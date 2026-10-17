@@ -201,3 +201,9 @@ def test_error_report_lists_errors_without_secrets():
         assert targets[0]["target"]["name"] in r.text
         assert "agent not running (sent [removed])" in r.text
         assert "tok-abc123" not in r.text
+
+
+def test_static_files_are_revalidated_so_a_stale_app_js_is_not_kept():
+    with TestClient(create_app(AppConfig(demo=True))) as client:
+        res = client.get("/static/app.js")
+    assert res.status_code == 200 and res.headers["cache-control"] == "no-cache"
