@@ -19,6 +19,7 @@ from .store import Store, mark_interrupted
 from .updates import (
     BOOT_ID_SCRIPT,
     CHECK_SCRIPT,
+    COMMUNITY_SCRIPT_DETECT,
     COMMUNITY_UPDATE_SCRIPT,
     REBOOT_NOW_SCRIPT,
     UPGRADE_SCRIPT,
@@ -353,9 +354,12 @@ class JobManager:
                 else:
                     if job.snapshot_first:
                         await self._snapshot(job)
-                    job.log.append("== Running OS upgrade")
-                    stdout = await self._upgrade(job, executor, on_line)
-                    await self._after_upgrade(job, target, executor, on_line, slot, stdout)
+                    if app := await self._community_app(executor):
+                        await self._app_first(job, target, executor, on_line, slot, app)
+                    else:
+                        job.log.append("== Running OS upgrade")
+                        stdout = await self._upgrade(job, executor, on_line)
+                        await self._after_upgrade(job, target, executor, on_line, slot, stdout)
                 job.status = "succeeded"
             except Exception as e:  # noqa: BLE001 - surface every failure in the UI
                 log.exception("job %s failed", job.id)
@@ -401,8 +405,7 @@ class JobManager:
         if job.action == "stack-update":
             await self._stack_update(job, executor, on_line)
         elif job.remote is not None and job.app_update:
-            await self._community_update(job, executor, "the app", on_line)
-            await self._after_upgrade(job, target, executor, on_line, slot, "", app_updated=True)
+            await self._app_first(job, target, executor, on_line, slot, "the app")
         elif job.remote is not None:
             stdout = await self._upgrade(job, executor, on_line)
             await self._after_upgrade(job, target, executor, on_line, slot, stdout)
@@ -523,7 +526,9 @@ class JobManager:
         self, job: Job, target: Target, executor, on_line, slot: _Slot, stdout: str, app_updated: bool = False
     ) -> None:
         reboot = parse_reboot(stdout)
-        job.log.append("== Upgrade finished" + ("; reboot required" if reboot else ""))
+        job.log.append(
+            ("== Upgrade finished" if stdout else "== Update finished") + ("; reboot required" if reboot else "")
+        )
         if not app_updated and (app := parse_community_script(stdout)):
             await self._community_update(job, executor, app, on_line)
         job.log.append("== Re-checking for remaining updates")
@@ -670,10 +675,30 @@ class JobManager:
             raise
         job.log.append("== Waiting for it to come back")
 
-    async def _community_update(self, job: Job, executor, app: str, on_line) -> None:
-        """Run the app's own helper-script update after the OS upgrade, as `update` in the container
-        would. A plain OS upgrade can leave such an app broken (e.g. Plex after its vendor moved
-        its apt repository); its own update script repairs and restarts it."""
+    async def _community_app(self, executor) -> str | None:
+        """The app's name when this machine is a community-scripts container whose own `update` is
+        to be used, else None (also when it can't be told, so the plain OS upgrade runs)."""
+        if not self.community_scripts_update:
+            return None
+        try:
+            return parse_community_script((await executor.run(COMMUNITY_SCRIPT_DETECT, timeout=60)).stdout)
+        except Exception:  # noqa: BLE001 - not worth failing the job; the OS upgrade is the fallback
+            return None
+
+    async def _app_first(self, job: Job, target: Target, executor, on_line, slot: _Slot, app: str) -> None:
+        """A community-scripts container is updated by its own `update`, as its authors recommend. Only if
+        that fails does the plain OS upgrade run instead."""
+        if await self._community_update(job, executor, app, on_line, fallback=True):
+            await self._after_upgrade(job, target, executor, on_line, slot, "", app_updated=True)
+            return
+        job.log.append("== Running OS upgrade instead")
+        stdout = await self._upgrade(job, executor, on_line)
+        await self._after_upgrade(job, target, executor, on_line, slot, stdout, app_updated=True)
+
+    async def _community_update(self, job: Job, executor, app: str, on_line, fallback: bool = False) -> bool:
+        """Run the app's own helper-script update, as `update` in the container would. A plain OS
+        upgrade can leave such an app broken (e.g. Plex after its vendor moved its apt repository); its
+        own update script repairs and restarts it. Returns whether it ran and succeeded."""
         if app == "unknown":
             app = "the app"  # its name couldn't be read from /usr/bin/update
         if not self.community_scripts_update:
@@ -681,7 +706,7 @@ class JobManager:
                 f"! {app} was installed by a community-scripts helper script and its own update was not run "
                 "(community_scripts_update is off). If it misbehaves, run `update` inside it."
             )
-            return
+            return False
         job.log.append(f"== Running {app}'s own update (community-scripts helper script, fetched from GitHub)")
 
         def cleaned(stream: str, line: str) -> None:
@@ -695,13 +720,17 @@ class JobManager:
             await self._upgrade(job, executor, cleaned, COMMUNITY_UPDATE_SCRIPT, f"{app}'s own update")
         except Exception as e:  # noqa: BLE001 - not a cancel: a shutdown must leave app_update set for the resume
             job.app_update = False
-            job.log.append(
-                f"! the OS upgrade worked, but {app}'s own update failed ({e}). "
-                "Run `update` inside it to finish, or roll back to the snapshot."
-            )
-            return
+            if fallback:
+                job.log.append(f"! {app}'s own update failed ({e})")
+            else:
+                job.log.append(
+                    f"! the OS upgrade worked, but {app}'s own update failed ({e}). "
+                    "Run `update` inside it to finish, or roll back to the snapshot."
+                )
+            return False
         job.app_update = False
         job.log.append(f"== {app}'s own update finished")
+        return True
 
     async def _snapshot(self, job: Job) -> None:
         snaps = self.inventory.snapshots.get(job.target_id)

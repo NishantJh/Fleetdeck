@@ -10,7 +10,13 @@ from datetime import UTC, datetime, timedelta
 from ..host_backups import NOT_SET_UP
 from ..models import BackupInfo, ExecResult, Target
 from ..stacks import SCAN_SCRIPT, US
-from ..updates import BOOT_ID_SCRIPT, CHECK_SCRIPT, COMMUNITY_UPDATE_SCRIPT, REBOOT_NOW_SCRIPT
+from ..updates import (
+    BOOT_ID_SCRIPT,
+    CHECK_SCRIPT,
+    COMMUNITY_SCRIPT_DETECT,
+    COMMUNITY_UPDATE_SCRIPT,
+    REBOOT_NOW_SCRIPT,
+)
 from . import Discovered
 
 _APT = [
@@ -121,6 +127,8 @@ class DemoExecutor:
         if script == REBOOT_NOW_SCRIPT:
             self.boot_id, self.reboot_pending = uuid.uuid4().hex, False
             return ExecResult(rc=0, stdout="== Reboot scheduled (demo)\n")
+        if script == COMMUNITY_SCRIPT_DETECT:
+            return ExecResult(rc=0, stdout=f"__CSAPP__={self.app}\n" if self.app else "")
         if script == COMMUNITY_UPDATE_SCRIPT:
             for line in (f"Updated {self.app}", f"Restarted {self.app}", "Updated successfully!"):
                 if on_line:

@@ -371,25 +371,29 @@ class CommunityExecutor:
         return ExecResult(rc=0, stdout="__PM__=apt\n__REBOOT__=no\n__CSAPP__=plex\n")
 
 
-async def test_upgrade_runs_helper_scripts_own_update_afterwards():
+async def test_helper_scripts_own_update_replaces_the_os_upgrade():
     ex = CommunityExecutor()
     jobs = JobManager(_inventory((_target(), ex)))
     job = jobs.submit("t1", "upgrade")
     await _finish(jobs)
     assert job.status == "succeeded", job.error
-    assert ex.scripts.index(COMMUNITY_UPDATE_SCRIPT) == ex.scripts.index(UPGRADE_SCRIPT) + 1
+    assert COMMUNITY_UPDATE_SCRIPT in ex.scripts and UPGRADE_SCRIPT not in ex.scripts
     assert "✔️ Updated Plex" in job.log  # colours and the spinner frame are dropped
+    assert "== Re-checking for remaining updates" in job.log
     assert jobs.checks["t1"].community_script == "plex"
 
 
-async def test_helper_script_update_failing_only_warns_and_the_job_goes_on():
+async def test_os_upgrade_runs_only_if_helper_scripts_update_fails():
     ex = CommunityExecutor(update_rc=1)
     jobs = JobManager(_inventory((_target(), ex)))
     job = jobs.submit("t1", "upgrade")
     await _finish(jobs)
     assert job.status == "succeeded", job.error
     assert any("plex's own update failed" in line and "code 1" in line for line in job.log)
-    assert "== Re-checking for remaining updates" in job.log  # the rest of the job still ran
+    assert "== Running OS upgrade instead" in job.log
+    assert ex.scripts.index(UPGRADE_SCRIPT) > ex.scripts.index(COMMUNITY_UPDATE_SCRIPT)
+    assert ex.scripts.count(COMMUNITY_UPDATE_SCRIPT) == 1  # not run again after the fallback
+    assert "== Re-checking for remaining updates" in job.log
 
 
 async def test_helper_script_update_off_only_warns():
