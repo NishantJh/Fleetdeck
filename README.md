@@ -7,15 +7,15 @@
 > merge. It has **not** had an independent security audit, so read [Safety](#safety) before you point
 > it at machines you care about.
 
-One dashboard for the whole homelab. The first feature is **OS updates**: see what's pending and
-upgrade, from a single page, across:
+One dashboard for the whole homelab: see what's pending and update it, keep Docker Compose stacks
+current, back up each machine's setup, and get notified when something needs attention. It works across:
 
 | Platform | Host | Guests | How it reaches the guest |
 | --- | --- | --- | --- |
 | Proxmox VE | PVE API to check (uses PVE's own repositories), SSH to upgrade | LXCs | `pct exec` over the node's SSH |
 | | | VMs | QEMU guest agent, via the Proxmox API |
 | Incus | SSH | containers and VMs | Incus REST API `exec` (VMs need `incus-agent`) |
-| Anything else (Raspberry Pi, etc.) | SSH | | |
+| Anything else (Raspberry Pi, VPS, etc.) | SSH | | |
 
 Guests are discovered automatically from the Proxmox and Incus APIs, so new LXCs/VMs show up without
 editing config. Each machine detects its own package manager: **apt** (Debian, Ubuntu, Proxmox,
@@ -25,8 +25,14 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   whether a reboot is needed. On apt machines, updates from a security repository
   (`bookworm-security`, `noble-security`, …) get a red *security* tag and are listed first
   (a Proxmox host needs its `ssh:` settings for this, as the PVE API doesn't say).
-* **Update** runs a full upgrade (`apt-get dist-upgrade` on Proxmox and Raspberry Pi OS, `apt-get upgrade --with-new-pkgs` (never removes a package) elsewhere, `dnf upgrade`, `apk upgrade`,
+* **Update** runs a full upgrade (`apt-get dist-upgrade`, `dnf upgrade`, `apk upgrade`,
   `pacman -Syu`), streams the output to the Activity panel, then re-checks. Nothing is rebooted unless you ask.
+  * **Bottom-up order:** host, then its LXCs/VMs, then the Docker stacks inside them. While anything below a
+    machine is updating, its own Update and Reboot buttons, and those of every level above it, are disabled
+    with the reason, and the dashboard refuses those jobs too. Checks, backups and image checks are never blocked.
+  * **Community-scripts apps:** a container made by a Proxmox VE Helper-Script (community-scripts) also runs
+    its app's own update after the OS upgrade, the same as typing `update` inside it, in a pseudo-terminal.
+    Turn it off with `community_scripts_update: false` (the dashboard then only warns and you run `update` yourself).
 * Check results and the Activity history are saved to `data/state.db` (SQLite), so they survive a
   restart or an image update. A job that was running when the dashboard stopped shows as interrupted.
 * **Reboot** reboots a machine, waits until it is back (its boot id changes), then re-checks it.
@@ -40,34 +46,34 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   Server), turns orange once that's older than `backup_max_age_hours` (48 by default), and is flagged
   *none*, *no job* (not in any scheduled backup job) or *verify failed*. This needs `Datastore.Audit`,
   `Datastore.AllocateSpace` and `VM.Backup` (Proxmox lists a guest's backups only to a user that could
-  make them); without them the column shows `?` and says why. **Upgrading:** a token
-  made by an older version lacks the last two, so every guest shows *none*: press *Connect* on that
-  machine in Setup again (it updates the role), or add them to your token's role by hand
-  (`pveum role modify HomelabManager -append 1 -privs "Datastore.AllocateSpace VM.Backup"`), or set
-  `backup_max_age_hours: 0` to turn the column off.
+  make them); without them the column shows `?` and says why. A token made by an older version lacks
+  the last two, so every guest shows *none*: press *Connect* on that machine again (it updates the role),
+  or set `backup_max_age_hours: 0` to turn the column off.
   Incus instances show their newest snapshot or export (the dashboard's own pre-upgrade snapshots
   don't count). Every other machine (Proxmox nodes, the Incus host, a Raspberry Pi, a VPS) shows
   *not set up* until you add a `backup:` entry to its SSH settings (under `ssh:` for Proxmox and Incus):
   the newest file in a folder (`type: path`), or the newest snapshot in a restic or borg repository
   (read with `--no-lock` / `--bypass-lock`, so it never gets in a running backup's way). See
   `config.example.yaml`.
-* **Back up a host:** the **Back up** button on a host row saves what you need to set that machine up
-  again quickly. It never backs up guests or instances (create those separately), and nothing is stopped
-  or changed on the machine. One job with a live log:
-  Where it goes is your choice per machine in the dialog; the default is the first of these:
-  * **Default place**, by machine: a Proxmox node's config goes to its Proxmox Backup Server storage
-    (with the credentials and encryption key Proxmox already keeps for it); with no PBS, or if the push
-    fails, to `/var/backups/homelab-manager` **on the node**. A Pi, VPS or other SSH machine writes an
-    archive to its `backup:` entry's folder, restic or borg repository, else to
-    `/var/backups/homelab-manager` **on that machine**. The Incus host's settings are a JSON file in the
-    data volume (`host-backups/`), plus `/etc` of the host when it has SSH settings.
-  * **On the dashboard** (any machine, recommended for one shared place): the archive is sent back over
-    the connection the dashboard already uses (SSH, through a tunnel too) and saved in the dashboard's
-    backup folder, in one folder per machine: `<backup folder>/fleetdeck/<machine name>/homelab-config-<date>_<time>.tar.gz`
-    (the Incus host also gets `incus-settings-<date>_<time>.json` there). Nothing is written on the machine and
-    nothing needs mounting on it. The dashboard creates the `fleetdeck/` folder inside your folder and only
-    ever writes in there; it changes nothing else in the mount, including owners and permissions. Each file is written under a temporary name and renamed when complete,
-    so a failed run leaves no half archive.
+* **Back up a host:** the **Back up** button on a host row saves the machine's settings, so you can set it
+  up again quickly. It never backs up guests or instances (create those separately), and nothing on the
+  machine is stopped or changed. Each run has a live log. The dialog asks where the archive goes, with three
+  choices:
+  * **The default place** (what you get if you change nothing):
+    * **Proxmox node:** its Proxmox Backup Server storage, with the credentials and encryption key Proxmox
+      already keeps for it. With no PBS, or if the push fails, a local archive in
+      `/var/backups/homelab-manager` **on the node**.
+    * **Raspberry Pi, VPS or other SSH machine:** an archive in the folder or restic/borg repository of its
+      `backup:` entry; without one, `/var/backups/homelab-manager` **on that machine**.
+    * **Incus host:** a settings file in `host-backups/` in the data volume, plus `/etc` of the host when it
+      has SSH settings.
+  * **On the dashboard** (recommended for one shared place for every machine): the archive is sent back over
+    the connection the dashboard already uses (SSH, through a tunnel too) and saved as
+    `<backup folder>/fleetdeck/<machine name>/homelab-config-<date>_<time>.tar.gz` (the Incus host also gets
+    `incus-settings-<date>_<time>.json` there). Nothing is written on the machine and nothing needs mounting
+    there. The dashboard only ever writes inside its `fleetdeck/` folder, and changes nothing else in the
+    mount, including owners and permissions. Each file is written under a temporary name and renamed when
+    complete, so a failed run leaves no half archive.
     **The backup folder** is `host-backups/` in the data volume unless you set `backup_folder:` in the
     config (or `FLEETDECK_BACKUP_FOLDER`). To keep them on a NAS or any other folder, mount it into the
     container and point the setting at it. With Docker Compose (full path on the Docker host, here
@@ -88,9 +94,10 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
     and names the uid: allow that user on the NAS, or map all users to one that can write (a share owned by
     `nobody` usually already does). A missing or unwritable folder is an error when you back up, never a
     silent write to the container's disk.
-  * **A folder on the machine itself**: a full path on that machine (for Proxmox, on the node), with any
-    network share already mounted there. For Incus it is a path inside the dashboard's container.
-    A folder that does not exist is an error.
+  * **A folder or network share on the machine:** a full path on that machine (for Proxmox, on the node),
+    with any share already mounted there. For Incus it is a path inside the dashboard's container. A folder
+    that does not exist is an error.
+
   **What a Proxmox node backup contains:** all of `/etc` on the node, which includes `/etc/pve` (the
   cluster filesystem: `storage.cfg`, every guest's config in `qemu-server/` and `lxc/`, users, ACLs and
   API tokens, firewall, backup jobs, certificates, and `priv/` with the storage passwords and keys),
@@ -98,14 +105,15 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   modprobe/GRUB settings and the node's SSH host keys. The archive form also has `/usr/local/etc`,
   `/usr/local/bin`, `/var/spool/cron` and the installed package list; the PBS form is `/etc` only.
   It does **not** contain guests or their disks, `/root`, `/home`, `/var/lib/vz`, ZFS pool layout or
-  anything else outside those folders. **The archive is not encrypted** and holds secrets (`/etc/shadow`,
-  the node's SSH host keys, and on Proxmox `/etc/pve/priv`), so keep it where you keep other secrets:
+  anything else outside those folders. Because it holds secrets, keep it where you keep other secrets:
   turn on client-side encryption for the PBS storage, or use a folder only you can read (archives are
   written readable by root only). To rebuild a node: reinstall Proxmox, restore `/etc/network`, then
   `/etc/pve` (or re-add storage and restore the guests from their own backups).
-  Tick *Always back up this machine here* to remember the choice for that machine (each machine has
-  its own); leave it unticked to choose every time. The newest 7 archives or settings files the dashboard made in a place are kept, and only those are
-  ever deleted. It is a manual button; schedule real backups on the hosts and let *Last backup* watch them.
+
+  The newest 7 archives (or settings files) per machine are kept in each folder; older ones this dashboard
+  made there are deleted, and nothing else. *Always back up this machine here* remembers the choice for
+  that machine (each machine has its own); leave it unticked to choose every time. Backup is a manual
+  button: schedule real backups on the hosts, and let *Last backup* watch them.
 * **Snapshot first:** the Update dialog can snapshot Proxmox LXCs/VMs and Incus instances before
   upgrading (on by default, `snapshot_before_upgrade`). A guest whose storage can't snapshot at all
   (a raw disk on dir/NFS storage) is upgraded without one and the log says so; any other snapshot
@@ -116,16 +124,16 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   and the job is still in Activity; roll back to anything older in Proxmox or Incus.
 * **Docker Compose stacks:** the **Docker** button on any machine (host, VM or LXC) lists the Compose
   stacks running on it, found through the labels Compose puts on its containers, so no paths to set up.
-  *Check for new images* downloads newer images for every running stack (nothing is restarted, but a later `docker compose up` you run
-  yourself on that machine will use them) and marks
-  the stacks that are behind; **Update** on a stack pulls and runs `docker compose up -d --no-deps` for the services
-  running now (their stopped `depends_on` services are not started). A service you stopped stays stopped, a stopped stack is not started, and a failed pull
+  *Check for new images* downloads newer images for every running stack (nothing is restarted) and marks
+  the stacks that are behind; **Update** on a stack pulls and runs `docker compose up -d` for the services
+  running now. A service you stopped stays stopped, a stopped stack is not started, and a failed pull
   leaves the stack as it was. Tick *remove old images after an update* to also run `docker image prune`
-  (all unused, untagged images on the machine, not only this stack's). Like OS upgrades, it keeps running on the machine if the dashboard
-  restarts. The stack that runs the dashboard itself is shown but not updated from here (it would stop
-  halfway); update it with `docker compose pull && docker compose up -d`. It needs nothing new on machines
-  you already set up: the dashboard's sudo rule already allows `docker`. Docker must be reachable as root
-  (rootless Docker for a normal user isn't supported).
+  (unused, untagged images only). Like OS upgrades, it keeps running on the machine if the dashboard
+  restarts, and while it runs the machine and its host are not updated or rebooted. The stack that runs
+  the dashboard itself is shown but not updated from here (it would stop halfway); update it with
+  `docker compose pull && docker compose up -d`. It needs nothing new on machines you already set up: the
+  dashboard's sudo rule already allows `docker`. Docker must be reachable as root (rootless Docker for a
+  normal user isn't supported).
 * Select several rows and **Update selected** to do them in one go (`max_parallel` at a time,
   never two jobs on the same machine at once).
 
@@ -232,8 +240,6 @@ machine's SSH host key fingerprints. Running it twice is harmless.
   you entered when that is an IP (on every interface for a host name), trusts the dashboard's own client
   certificate for the projects that exist (press *Reconnect* after adding one), and pins the server
   certificate. If that fails, it turns the API off again when it was the one that turned it on.
-  Add the machine by IP to keep the API off your other networks: with a host name it listens on every
-  interface (the setup log says so), protected by the client certificate (mutual TLS) and a pinned server certificate.
 * If the machine is the one the dashboard runs on (or its Proxmox node), it says so: put the
   dashboard's container under `protect:`, so an upgrade or reboot can't stop it mid-job.
 
@@ -307,40 +313,23 @@ OS can still be managed).
 The image is public, so `docker pull` needs no login. To pin a version instead of `latest`, use a release tag such as
 `ghcr.io/nishantjh/fleetdeck:1.2.3` (see [Install](#install)).
 
-### Upgrading from the `config/` folder install
+### Upgrading from an older install
 
-An install that mounts `./config:/config:ro` keeps working unchanged: the dashboard uses
-`/config/config.yaml` when `/data` has no config, and the setup page shows it as read-only. To
-switch, remove the `config` volume and `user:` from the compose file, deploy, and set the
-machines up again from the setup page.
+* **Config folder:** an install that mounts `./config:/config:ro` keeps working unchanged: the dashboard
+  uses `/config/config.yaml` when `/data` has no config, and the setup page shows it as read-only. To switch,
+  remove the `config` volume and `user:` from the compose file, deploy, and set the machines up again from
+  the setup page.
+* **Data volume:** the compose file uses the named volume `fleetdeck-data`. If you ran the older
+  `homelab-data` volume, copy it before you deploy (Docker can't rename a volume). With the stack stopped:
 
-The compose file now uses a named volume (`fleetdeck-data`). If yours mounts `./data:/data`, keep
-that line instead, or the check history in it is left behind.
+  ```
+  docker volume create STACK_fleetdeck-data
+  docker run --rm -v STACK_homelab-data:/from:ro -v STACK_fleetdeck-data:/to alpine sh -c 'cp -a /from/. /to/'
+  ```
 
-#### Moving an older `homelab-data` volume to `fleetdeck-data`
-
-Docker can't rename a volume, so copy it. Your machines, keys and history come along, and nothing
-needs re-running on any machine. Do this on the machine running the dashboard (for Arcane, the
-LXC's console); **STACK** is your stack's name in Arcane.
-
-1. In Arcane, **stop** the stack (don't delete it).
-2. Find the exact volume name; Docker puts the stack name in front:
-   `docker volume ls | grep homelab-data` (e.g. `STACK_homelab-data`).
-3. Copy it into a new one (the old one is left untouched):
-   ```
-   docker volume create STACK_fleetdeck-data
-   docker run --rm -v STACK_homelab-data:/from:ro -v STACK_fleetdeck-data:/to alpine sh -c 'cp -a /from/. /to/'
-   ```
-4. Put the new compose file in the stack (it uses `fleetdeck-data`) and deploy. Compose may warn
-   that the volume "was not created by Compose"; that is harmless.
-5. Open the dashboard: your machines should be there with no setup. Once happy, remove the old
-   volume with `docker volume rm STACK_homelab-data` (or keep it as a spare backup).
-
-The older `HOMELAB_PORT` setting is no longer read; use `FLEETDECK_PORT`.
-
-Removing a machine on the setup page leaves the machine itself as it is: delete the `homelab`
-user and `/etc/sudoers.d/homelab-manager` there, and on Proxmox the `homelab@pve` token (or on
-Incus the `homelab-manager` trust entry), if you no longer want them.
+  `STACK` is your stack's name (`docker volume ls | grep homelab-data` shows the exact name). The old volume
+  is left untouched; remove it once the new one works. If you had `./data:/data` in the compose file, keep it.
+* **Port:** `HOMELAB_PORT` is no longer read; set `FLEETDECK_PORT` instead.
 
 ## Configuring by hand
 
@@ -354,88 +343,37 @@ The setup page writes an ordinary `config.yaml`, and everything below can also b
   `VM.Snapshot` and `VM.Snapshot.Rollback` for snapshots, `Sys.Modify` on `/nodes` so the host check can refresh package lists, and
   guest-agent exec rights to update VMs (`VM.GuestAgent.Unrestricted` on PVE 9, `VM.Monitor` on
   PVE 8). VMs need the *QEMU Guest Agent* option on and `qemu-guest-agent` installed inside.
+  Connect creates a `homelab@pve` user with a `HomelabManager` role holding these privileges.
 * **Proxmox host updates** are checked through PVE itself, the same as *Updates → Refresh* in the
   web UI, so they come from whatever is enabled under *Updates → Repositories*. The dashboard shows
   which repositories were used and warns if the Enterprise repo is on without a subscription.
   PVE's API has no non-interactive upgrade call (its Upgrade button opens a shell), so the upgrade
   runs `apt-get dist-upgrade` over SSH, against those same repositories. SSH is also used for LXCs.
-* **Incus:** expose the API (`incus config set core.https_address :8443`) and trust a client
-  certificate restricted to the projects you use
-  (`incus config trust add-certificate client.crt --restricted --projects default`), or run the
-  dashboard on the Incus host and point `socket:` at `/var/lib/incus/unix.socket`. An unrestricted
-  certificate is a full Incus admin, which is root on the Incus host. SSH is used for the host itself; if root login is disabled there, use a normal user with passwordless sudo and `sudo: true` in the `ssh:` block (the app runs `sudo -n sh -c ...`, so the sudoers rule must allow `sh`, e.g. `NOPASSWD: ALL`).
+* **Incus:** expose the HTTPS API and trust a client certificate restricted to the projects you use
+  (`incus config set core.https_address :8443`, then `incus config trust add-certificate client.crt --restricted --projects default`),
+  or run the dashboard on the Incus host and point `socket:` at `/var/lib/incus/unix.socket`. An unrestricted
+  certificate is a full Incus admin, which is root on the Incus host. Connect does this for you.
 * **Raspberry Pi, VPS and other hosts:** SSH. Non-root users need passwordless sudo and `sudo: true`.
-
-### Giving the dashboard its own SSH key
-
-The dashboard runs in Docker, so it can't use the key on your own PC. Give it a key of its own;
-that way you can revoke it without touching yours. Inside the `config/` folder on the Docker host:
-
-```bash
-ssh-keygen -t ed25519 -f id_ed25519 -N "" -C homelab-manager
-ssh-copy-id -i id_ed25519.pub user@my-vps.example.com   # repeat for each machine
-```
-
-`ssh-copy-id` asks you to log in once (password, or a key this host already has). If only your
-Windows PC can log in, copy `id_ed25519.pub` to the PC first, then run this in PowerShell:
-
-```powershell
-type id_ed25519.pub | ssh user@my-vps.example.com "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
-```
-
-Then record each machine's host key, so the dashboard refuses to connect if it ever changes. Use
-`-p <port>` if SSH isn't on port 22:
-
-```bash
-ssh-keyscan my-vps.example.com 192.168.1.10 >> known_hosts
-ssh-keygen -lf known_hosts   # shows the fingerprints you just trusted
-```
-
-`ssh-keyscan` trusts whatever answers the first time it runs. For a machine on the internet, check
-that the fingerprint matches the one shown by `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`
-on the VPS itself, using your provider's web console.
-
-For a VPS:
-- Use a non-root user with passwordless sudo (`sudo: true`) and always set `known_hosts`.
-- This key plus passwordless sudo is root on the VPS, so restrict where it can be used. Either
-  reach the VPS only over Tailscale/WireGuard, or prefix its line in `~/.ssh/authorized_keys`
-  with your home IP: `from="203.0.113.7" ssh-ed25519 AAAA... homelab-manager`.
 
 ### Security
 
-**Least privilege for the Proxmox token.** Instead of a token under `root@pam`, create a user that
-has only what the dashboard needs:
-
-```bash
-pveum user add homelab@pve
-pveum role add HomelabManager -privs "VM.Audit Sys.Audit Sys.Modify VM.GuestAgent.Unrestricted Datastore.Audit Datastore.AllocateSpace VM.Backup VM.Snapshot VM.Snapshot.Rollback"  # PVE 8: VM.Monitor
-pveum aclmod / -user homelab@pve -role HomelabManager
-pveum user token add homelab@pve dashboard --privsep 0
-```
-
-This is not a read-only token: with `Sys.Modify` and `VM.GuestAgent.Unrestricted` (and no privilege
-separation) it can run commands as root inside any VM with the guest agent and change node settings.
-The dashboard also has root SSH to the node, so this mainly limits the damage if the token alone
-leaks. `Sys.Modify` is only needed for refreshing package lists through the API, `Datastore.Audit`, `Datastore.AllocateSpace` and `VM.Backup` for the
-backup column (the dashboard never makes backups of guests; Proxmox just won't list them otherwise) and `VM.Snapshot`/`VM.Snapshot.Rollback` for snapshots before upgrades.
-
-**Restrict the SSH key** on every machine, not just the VPS: in `~/.ssh/authorized_keys`, prefix the
-dashboard's key with `from="<dashboard IP>",restrict` (`restrict` turns off port, agent and X11
-forwarding and the PTY, none of which the dashboard uses). A stolen key then only works from the
-dashboard's address.
-
-**The Docker host:** keep the LXC that runs Docker unprivileged (`unprivileged: 1`, `nesting=1`), and
-if it has several network interfaces, bind the port to the LAN one in the compose file.
-
-This app can run commands as root on everything it manages. Keep it on your LAN or behind a VPN,
-and set `auth:` in the config.
-
-* **SSH host keys are always checked.** Put every machine's key in `config/known_hosts`
-  (`ssh-keyscan`, see below) and set the top-level `known_hosts:`. A machine without one is refused
-  with a message saying so; `insecure_skip_host_key_check: true` on that entry opts out.
+* **SSH host keys are always checked.** Every machine's key goes in `known_hosts:` (the setup page pins them
+  for you). A machine without one is refused with a message saying so; `insecure_skip_host_key_check: true`
+  on that entry opts out.
 * **Proxmox and Incus certificates:** set `tls_fingerprint` (shown in the example config) rather than
   `verify_ssl: false`. It pins the exact certificate, works with the self-signed ones both ship and
   with IP addresses, and the dashboard warns at start-up about any API with checking off.
+* **Restrict the SSH key** on every machine: prefix the dashboard's key line in `~/.ssh/authorized_keys`
+  with `from="<dashboard IP>",restrict` (`restrict` turns off port, agent and X11 forwarding and the PTY,
+  none of which the dashboard uses). A stolen key then only works from the dashboard's address. On a VPS,
+  use a non-root user with passwordless sudo (`sudo: true`), since that key plus sudo is root on the VPS.
+* **Least privilege for the Proxmox token:** use the `homelab@pve` user and `HomelabManager` role that
+  Connect makes, rather than a token under `root@pam`. The dashboard also has root SSH to the node, so this
+  mainly limits the damage if the token alone leaks.
+* **The Docker host:** keep the LXC that runs Docker unprivileged (`unprivileged: 1`, `nesting=1`), and
+  if it has several network interfaces, bind the port to the LAN one in the compose file.
+* This app can run commands as root on everything it manages. Keep it on your LAN or behind a VPN,
+  and set `auth:` in the config.
 * `auth:` is required. Without it, nothing but the setup page is served, and that page only
   works through the one-time link in the logs until it has created a login (`allow_no_auth: true`
   skips this when a proxy in front does the login). The setup page stores only a scrypt hash of
@@ -450,22 +388,6 @@ and set `auth:` in the config.
   `Host` header, because `allowed_hosts` and the cross-site check compare against it. Caddy and
   Traefik do this by default; with nginx add `proxy_set_header Host $host;`.
 * Cross-site form posts are refused, and the page can't be framed by another site.
-
-### Upgrading from a version without host key checks
-
-SSH connections are now refused unless the machine's host key is known, so before updating the
-image (or right after; affected machines show "SSH host key unknown" and can't be updated until
-then):
-
-```bash
-# Every machine in config.yaml, and for a Proxmox cluster every node's cluster IP too.
-ssh-keyscan 192.168.1.10 192.168.1.11 192.168.1.20 192.168.1.30 my-vps.example.com > config/known_hosts
-ssh-keygen -lf config/known_hosts   # compare with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on each
-```
-
-Then add `known_hosts: /config/known_hosts` at the top of `config.yaml`. Optionally add
-`tls_fingerprint` to each Proxmox/Incus entry (see the example config) so the API certificate is
-pinned too.
 
 ## Development
 
