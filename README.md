@@ -471,6 +471,10 @@ ruff check . && ruff format --check .
 
 See [docs/PLAN.md](docs/PLAN.md) for the roadmap.
 
+## Support
+
+Fleetdeck is free. If it saves you time, you can support it on [Ko-fi](https://ko-fi.com/nishant19836) or [PayPal](https://paypal.me/nishantjha1659).
+
 ## License
 
 GNU General Public License v3.0. See [LICENSE](LICENSE).
