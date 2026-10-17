@@ -52,7 +52,7 @@ def fast(monkeypatch):
 
 
 async def test_upgrade_runs_detached_and_streams_output(tmp_path):
-    ex = LocalExecutor(str(tmp_path / "jobs"))
+    ex = LocalExecutor((tmp_path / "jobs").as_posix())
     jobs = _jobs(ex)
     job = jobs.submit("t1", "upgrade")
     await asyncio.gather(*jobs._tasks)
@@ -64,14 +64,14 @@ async def test_upgrade_runs_detached_and_streams_output(tmp_path):
 
 
 async def test_failing_upgrade_reports_exit_code(tmp_path):
-    jobs = _jobs(LocalExecutor(str(tmp_path / "jobs"), upgrade="echo boom; exit 4"))
+    jobs = _jobs(LocalExecutor((tmp_path / "jobs").as_posix(), upgrade="echo boom; exit 4"))
     job = jobs.submit("t1", "upgrade")
     await asyncio.gather(*jobs._tasks)
     assert job.status == "failed" and "code 4" in job.error and "boom" in job.log
 
 
 async def test_dashboard_restart_keeps_upgrade_and_resumes(tmp_path):
-    base = str(tmp_path / "jobs")
+    base = (tmp_path / "jobs").as_posix()
     store = Store(tmp_path / "state.db")
     jobs = _jobs(LocalExecutor(base, upgrade="echo first; sleep 3; echo second"), store)
     job = jobs.submit("t1", "upgrade")
@@ -92,7 +92,7 @@ async def test_dashboard_restart_keeps_upgrade_and_resumes(tmp_path):
 
 
 async def test_upgrade_killed_with_the_machine_is_reported(tmp_path):
-    base = str(tmp_path / "jobs")
+    base = (tmp_path / "jobs").as_posix()
     jobs = _jobs(LocalExecutor(base, upgrade="sleep 60"))
     job = jobs.submit("t1", "upgrade")
     await asyncio.sleep(1)
@@ -109,7 +109,7 @@ async def test_waiting_for_reboot_is_resumed(tmp_path):
             return await super().run(script, on_line, timeout)
 
     store = Store(tmp_path / "state.db")
-    jobs = _jobs(Rebooted(str(tmp_path)), store)
+    jobs = _jobs(Rebooted(tmp_path.as_posix()), store)
     job = jobs.submit("t1", "check")
     await asyncio.gather(*jobs._tasks)
     from fleetdeck.models import Job
@@ -149,7 +149,7 @@ async def test_restart_during_the_app_update_resumes_only_that_step(tmp_path, mo
 
     monkeypatch.setattr(detached, "follow", follow)
     monkeypatch.setattr(detached, "cleanup", cleanup)
-    jobs = _jobs(Ex(str(tmp_path / "jobs")))
+    jobs = _jobs(Ex((tmp_path / "jobs").as_posix()))
     cut = Job(
         id="u1",
         target_id="t1",

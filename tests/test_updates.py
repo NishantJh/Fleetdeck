@@ -164,17 +164,23 @@ def _run_update(tmp_path, with_script: bool):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir(exist_ok=True)
     log = tmp_path / "calls"
-    (bin_dir / "update").write_text(f'#!/bin/sh\necho "update TERM=$TERM PHS_SILENT=$PHS_SILENT" >> {log}\nexit 7\n')
+    (bin_dir / "update").write_text(
+        f'#!/bin/sh\necho "update TERM=$TERM PHS_SILENT=$PHS_SILENT" >> {log.as_posix()}\nexit 7\n'
+    )
     if with_script:
         # Fake util-linux script: `script -qec CMD /dev/null` runs CMD.
-        (bin_dir / "script").write_text(f'#!/bin/sh\necho "script $*" >> {log}\nexec sh -c "$2"\n')
+        (bin_dir / "script").write_text(f'#!/bin/sh\necho "script $*" >> {log.as_posix()}\nexec sh -c "$2"\n')
     for p in bin_dir.iterdir():
         p.chmod(0o755)
     script = COMMUNITY_UPDATE_SCRIPT.replace(
         "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH", ""
     )
     r = subprocess.run(
-        ["sh", "-c", script], capture_output=True, text=True, env={"PATH": f"{bin_dir}:/usr/bin:/bin"}, timeout=30
+        ["sh", "-c", script],
+        capture_output=True,
+        text=True,
+        env={"PATH": f"{bin_dir.as_posix()}:/usr/bin:/bin"},
+        timeout=30,
     )
     return r, (log.read_text().splitlines() if log.exists() else [])
 

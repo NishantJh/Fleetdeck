@@ -1,7 +1,0 @@
-d=$(dirname "$0")
-b=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
-s=$(sed 's/.*) //' /proc/1/stat 2>/dev/null | cut -d' ' -f20)
-echo "$b-$s" > "$d/boot"
-echo $$ > "$d/pid"
-sh "$d/script" > "$d/log" 2>&1 </dev/null
-echo $? > "$d/rc.tmp" && mv "$d/rc.tmp" "$d/rc"
