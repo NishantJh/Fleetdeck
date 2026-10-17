@@ -116,11 +116,12 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   and the job is still in Activity; roll back to anything older in Proxmox or Incus.
 * **Docker Compose stacks:** the **Docker** button on any machine (host, VM or LXC) lists the Compose
   stacks running on it, found through the labels Compose puts on its containers, so no paths to set up.
-  *Check for new images* downloads newer images for every running stack (nothing is restarted) and marks
-  the stacks that are behind; **Update** on a stack pulls and runs `docker compose up -d` for the services
-  running now. A service you stopped stays stopped, a stopped stack is not started, and a failed pull
+  *Check for new images* downloads newer images for every running stack (nothing is restarted, but a later `docker compose up` you run
+  yourself on that machine will use them) and marks
+  the stacks that are behind; **Update** on a stack pulls and runs `docker compose up -d --no-deps` for the services
+  running now (their stopped `depends_on` services are not started). A service you stopped stays stopped, a stopped stack is not started, and a failed pull
   leaves the stack as it was. Tick *remove old images after an update* to also run `docker image prune`
-  (unused, untagged images only). Like OS upgrades, it keeps running on the machine if the dashboard
+  (all unused, untagged images on the machine, not only this stack's). Like OS upgrades, it keeps running on the machine if the dashboard
   restarts. The stack that runs the dashboard itself is shown but not updated from here (it would stop
   halfway); update it with `docker compose pull && docker compose up -d`. It needs nothing new on machines
   you already set up: the dashboard's sudo rule already allows `docker`. Docker must be reachable as root

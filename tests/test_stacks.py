@@ -122,7 +122,7 @@ def test_update_script_quotes_and_only_touches_running_services():
         ]
     )
     script = update_script(stack, prune=False)
-    assert "pull app\n" in script and "up -d app\n" in script and "off" not in script
+    assert "pull app\n" in script and "up -d --no-deps app\n" in script and "off" not in script
     assert "prune" not in script and "prune" in update_script(stack, prune=True)
     tricky = Stack(
         name="web", working_dir="/srv/my dir", config_files=["/srv/a b.yml"],
@@ -204,7 +204,7 @@ async def test_check_pulls_then_reports_and_update_recreates(tmp_path):
     ex.set_rows(_row(wd=str(tmp_path), files=str(tmp_path / "compose.yml"), image_id="sha256:new"))
     up = await _run(jobs, "stack-update", stack="web", prune=True)
     assert up.status == "succeeded", up.error
-    assert any(c.startswith(f"compose {tmp_path} ") and " up -d app" in c for c in ex.calls)
+    assert any(c.startswith(f"compose {tmp_path} ") and " up -d --no-deps app" in c for c in ex.calls)
     assert any(c.startswith("prune") for c in ex.calls)
     assert not jobs.stacks["t1"].stacks[0].update_available
     assert "== Stack is running the newest images" in up.log
