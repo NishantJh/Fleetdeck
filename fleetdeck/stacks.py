@@ -149,7 +149,8 @@ def _in_dir(stack: Stack) -> str:
     if not stack.working_dir:
         return ":"
     wd = shlex.quote(stack.working_dir)
-    return f'[ -d {wd} ] || {{ echo "its folder {stack.working_dir} is gone" >&2; exit 4; }}; cd {wd}'
+    gone = shlex.quote(f"its folder {stack.working_dir} is gone")
+    return f"[ -d {wd} ] || {{ echo {gone} >&2; exit 4; }}; cd {wd}"
 
 
 def pull_script(stacks: list[Stack]) -> str:
