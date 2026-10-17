@@ -10,3 +10,7 @@ config/
 .env
 keys/
 data/
+
+# Stray folders made when a Windows temp path loses its backslashes
+/C?Users*
+/C:*
