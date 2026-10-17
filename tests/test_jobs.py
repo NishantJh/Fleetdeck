@@ -215,6 +215,45 @@ async def test_host_update_and_reboot_refused_while_guest_updates(fast_reboot):
     assert host.reboots == 1
 
 
+async def test_guest_is_refused_while_its_host_updates():
+    gate = asyncio.Event()
+    jobs = JobManager(_inventory((_target(), FakeExecutor(gate=gate)), (_guest("g1"), FakeExecutor())), max_parallel=2)
+    host_job = jobs.submit("t1", "upgrade")
+    await asyncio.sleep(0.05)  # the host job has started
+    guest = jobs.inventory.get("g1")[0]
+    assert "waiting for t1" in jobs.update_blocked(guest)
+    for action in ("upgrade", "reboot"):
+        with pytest.raises(ValueError, match="waiting for t1 to finish updating"):
+            jobs.submit("g1", action)
+    jobs.submit("g1", "check")  # checking is harmless
+    gate.set()
+    await _finish(jobs)
+    assert host_job.status == "succeeded" and jobs.update_blocked(guest) is None
+    assert jobs.submit("g1", "upgrade")
+
+
+async def test_queued_job_waits_at_start_for_a_guest_that_began_updating(monkeypatch):
+    import fleetdeck.jobs
+
+    real_sleep = asyncio.sleep
+    monkeypatch.setattr(fleetdeck.jobs.asyncio, "sleep", lambda d: real_sleep(0.01))
+    gate = asyncio.Event()
+    # One slot: the host job is queued behind the guest's check, then the guest starts an upgrade.
+    jobs = JobManager(_inventory((_target(), FakeExecutor()), (_guest("g1"), FakeExecutor(gate=gate))), max_parallel=1)
+    blocker = jobs.submit("g1", "check")
+    host_job = jobs.submit("t1", "upgrade")  # accepted: nothing is updating yet
+    jobs.jobs["x"] = Job(
+        id="x", target_id="g1", target_name="g1", action="upgrade", status="queued", created_at=datetime.now(UTC)
+    )  # the guest's update is queued before the host job gets to start
+    gate.set()
+    await asyncio.sleep(0.2)
+    assert blocker.status == "succeeded"
+    assert host_job.status == "running" and any("Not starting yet" in line for line in host_job.log)
+    jobs.jobs["x"].status = "succeeded"
+    await asyncio.sleep(1.2)
+    assert host_job.status == "succeeded"
+
+
 async def test_host_refused_while_its_docker_stacks_update():
     gate = asyncio.Event()
     jobs = JobManager(_inventory((_target(), FakeExecutor(gate=gate)), (_guest("g1"), FakeExecutor())))
