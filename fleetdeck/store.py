@@ -44,6 +44,7 @@ class Store:
         self.db.execute("CREATE TABLE IF NOT EXISTS stacks (target_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS hidden (target_id TEXT PRIMARY KEY)")
         self.db.execute("CREATE TABLE IF NOT EXISTS backup_places (target_id TEXT PRIMARY KEY, path TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
 
     def close(self) -> None:
         self.db.close()
@@ -101,6 +102,16 @@ class Store:
         else:
             sql = "DELETE FROM hidden WHERE target_id = ?"
         self.db.executemany(sql, [(t,) for t in target_ids])
+
+    def get_value(self, key: str) -> str | None:
+        row = self.db.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def set_value(self, key: str, value: str) -> None:
+        self.db.execute(
+            "INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value),
+        )
 
     def load_backup_places(self) -> dict[str, str]:
         return dict(self.db.execute("SELECT target_id, path FROM backup_places"))
