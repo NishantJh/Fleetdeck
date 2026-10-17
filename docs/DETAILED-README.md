@@ -201,8 +201,8 @@ Installing takes one compose file and a web page:
    each time the container starts. The log also prints a link with the code already in it
    (`http://<this machine>:8080/setup#token=...`). Enter the code and create the admin login.
    The code is only printed until the login exists. After that the log says
-   `Setup is done: open http://<this machine>:8080 and log in`, and the dashboard's Setup button
-   takes you back to the setup page.
+   `Setup is done: open http://<this machine>:8080 and log in`, and the dashboard's **+ Add machines**
+   button takes you back to the setup page.
 3. Add each machine: pick its type (Proxmox VE, Incus, or a Linux host such as a Raspberry Pi or
    a VPS), give it a name, and enter its IP address and SSH port.
 4. The page shows a short command for each machine, which downloads its script from the dashboard
@@ -249,7 +249,7 @@ machine's SSH host key fingerprints. Running it twice is harmless.
 * If the machine is the one the dashboard runs on (or its Proxmox node), it says so: put the
   dashboard's container under `protect:`, so an upgrade or reboot can't stop it mid-job.
 
-The same page (the **Setup** button on the dashboard) adds and removes machines later. Removing
+The same page (the **+ Add machines** button on the dashboard) adds and removes machines later. Removing
 one shows a script that undoes the setup on it: the `homelab` user and its sudo rule, its Proxmox
 token (and the `homelab@pve` user and role with the last one), the Incus trust, the tunnel. It also
 has an editor for `config.yaml` (schedule, notifications, `protect:`, everything in
