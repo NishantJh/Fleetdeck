@@ -231,6 +231,8 @@ machine's SSH host key fingerprints. Running it twice is harmless.
   you entered when that is an IP (on every interface for a host name), trusts the dashboard's own client
   certificate for the projects that exist (press *Reconnect* after adding one), and pins the server
   certificate. If that fails, it turns the API off again when it was the one that turned it on.
+  Add the machine by IP to keep the API off your other networks: with a host name it listens on every
+  interface (the setup log says so), protected by the client certificate (mutual TLS) and a pinned server certificate.
 * If the machine is the one the dashboard runs on (or its Proxmox node), it says so: put the
   dashboard's container under `protect:`, so an upgrade or reboot can't stop it mid-job.
 
