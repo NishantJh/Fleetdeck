@@ -343,8 +343,21 @@ def create_app(
     async def index():
         return FileResponse(STATIC / "index.html")
 
-    app.mount("/static", StaticFiles(directory=STATIC), name="static")
+    app.mount("/static", _RevalidatedStatic(directory=STATIC), name="static")
     return app
+
+
+class _RevalidatedStatic(StaticFiles):
+    """Static files the browser re-checks (cheap 304 via ETag) on every load.
+
+    Without a Cache-Control header browsers cache app.js heuristically, so after an update a page can keep
+    running the old script (e.g. without the "blocked" buttons) until a hard refresh.
+    """
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
 
 
 def _when_idle(restart: Callable[[], None], busy: Callable[[], list[str]]) -> Callable[[], None]:
