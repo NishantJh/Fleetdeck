@@ -200,5 +200,6 @@ def test_clean_line_drops_colours_and_spinner_frames():
 def test_apt_upgrade_never_removes_packages_except_on_proxmox_and_raspberry_pi_os():
     from fleetdeck.updates import UPGRADE_SCRIPT
 
-    assert "UPG=dist-upgrade" in UPGRADE_SCRIPT and "pveversion" in UPGRADE_SCRIPT and "/etc/rpi-issue" in UPGRADE_SCRIPT
+    assert "UPG=dist-upgrade" in UPGRADE_SCRIPT
+    assert "pveversion" in UPGRADE_SCRIPT and "/etc/rpi-issue" in UPGRADE_SCRIPT
     assert 'UPG="upgrade --with-new-pkgs"' in UPGRADE_SCRIPT and "$UPG" in UPGRADE_SCRIPT
