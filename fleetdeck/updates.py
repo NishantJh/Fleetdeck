@@ -81,32 +81,19 @@ if [ -f /usr/bin/update ] && grep -q 'community-scripts/' /usr/bin/update 2>/dev
 fi
 """
 
-# Runs the helper script's own update, unattended (PHS_SILENT=1 skips its menus and prompts and
-# makes it abort instead of asking). The script is fetched from GitHub on every run, exactly as when
-# you type `update` in the container. Newer files are bash scripts (with [[ ]]) and older ones have
-# no #! line, so it is run with bash. It runs
-# `bash -c "$(curl ...)"`, which succeeds doing nothing when the download fails, so check the
-# download first.
-COMMUNITY_UPDATE_UNPARSED = 5  # exit code: /usr/bin/update has a layout we don't know
-
+# Runs the container's own `update` the way you would by hand. The helper scripts call `clear` and
+# draw spinners, which fail without a terminal ("Operation not permitted" from `clear`), so it runs in
+# a pseudo-terminal with TERM set. PHS_SILENT=1 skips its menus and prompts. Without `script`
+# (util-linux) it runs `update` directly. The helper script fetches itself from GitHub, as it does
+# when you type `update`.
 COMMUNITY_UPDATE_SCRIPT = r"""
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
-export DEBIAN_FRONTEND=noninteractive PHS_SILENT=1 TERM=dumb
-for c in bash curl; do
-  command -v $c >/dev/null 2>&1 || { echo "$c is not installed, so the helper script can't run" >&2; exit 3; }
-done
-slug=$(sed -n 's/^export SCRIPT_SLUG="\([A-Za-z0-9._-]*\)".*/\1/p' /usr/bin/update | head -n 1)
-base=$(sed -n 's/^export COMMUNITY_SCRIPTS_URL="\(https:[^"]*\)".*/\1/p' /usr/bin/update | head -n 1)
-[ -n "$slug" ] && [ -n "$base" ] && url="$base/ct/$slug.sh"
-[ -n "$url" ] || url=$(grep -o 'https://[^)"]*ct/[A-Za-z0-9._-]*[.]sh' /usr/bin/update | head -n 1)
-[ -n "$url" ] || url=$(grep -o 'https://[^)"'"'"' ]*[.]sh' /usr/bin/update | head -n 1)
-if [ -z "$url" ]; then
-  echo "can't find the helper script's address in /usr/bin/update; it starts with:" >&2
-  head -c 300 /usr/bin/update 2>/dev/null | tr -c '[:print:]\n' '?' >&2; echo >&2
-  exit 5
+export DEBIAN_FRONTEND=noninteractive PHS_SILENT=1 TERM=xterm-256color
+if ! command -v update >/dev/null 2>&1; then echo "update is not installed" >&2; exit 3; fi
+if command -v script >/dev/null 2>&1; then
+  exec script -qec update /dev/null </dev/null
 fi
-curl -fsS -o /dev/null "$url" || { echo "can't download $url" >&2; exit 4; }
-bash /usr/bin/update </dev/null
+exec update </dev/null
 """
 
 _ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b[()][A-Za-z0-9]")
