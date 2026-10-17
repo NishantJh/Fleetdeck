@@ -32,6 +32,7 @@ import logging
 import os
 import re
 import shlex
+import subprocess
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -49,6 +50,8 @@ log = logging.getLogger(__name__)
 FILE_PREFIX = "homelab-config-"
 LOCAL_DIR = "/var/backups/homelab-manager"
 KEEP_FILES = 7
+AGE_SUFFIX = ".age"
+AGE_RECIPIENT = re.compile(r"^age1[a-z0-9]{50,}$")
 STAMP_GLOB = "[0-9]" * 8 + "_" + "[0-9]" * 6  # matches the STAMP of the script, e.g. 20260101_030000
 # The place to choose for "save on the dashboard", in a run's destination and a machine's saved place.
 DASHBOARD = "dashboard"
@@ -140,6 +143,22 @@ class _Steps:
 DEFAULT_PATHS = ("/etc", "/usr/local/etc", "/usr/local/bin", "/var/spool/cron")
 
 
+_ARCHIVE_PLAIN = """\
+  tar -czf "$OUT" "$@" "$W/packages.txt" 2>"$W/err"
+  rc=$?
+"""
+# The plain archive only exists in the script's private temp folder (removed on exit), never next to the
+# encrypted one. 127 is the exit code _config_step turns into "not installed".
+_ARCHIVE_AGE = """\
+  command -v age >/dev/null 2>&1 || {{ echo "age is not installed on this machine (apt install age)" >&2; exit 127; }}
+  tar -czf "$W/archive.tgz" "$@" "$W/packages.txt" 2>"$W/err"
+  rc=$?
+  if [ "$rc" -le 1 ]; then
+    age -r {key} -o "$OUT" "$W/archive.tgz" 2>>"$W/err" || rc=4
+  fi
+"""
+
+
 def config_script(
     cfg: HostBackupConfig | None,
     *,
@@ -148,13 +167,19 @@ def config_script(
     local_dir: str = LOCAL_DIR,
     destination: str | None = None,
     stream: bool = False,
+    age_recipient: str | None = None,
 ) -> str:
     """A POSIX sh script that backs up the machine's config where its ``backup:`` entry says.
 
     It only reads the machine's files and writes the archive. Where ``cfg`` is None: on a Proxmox node
     to its Proxmox Backup Server storage (the credentials are the ones Proxmox keeps for that storage),
     else to /var/backups/homelab-manager. With ``destination``, to that folder instead, which must exist.
-    With ``stream`` the tar.gz goes to stdout and nothing is written here (see SshHostBackup)."""
+    With ``stream`` the tar.gz goes to stdout and nothing is written here (see SshHostBackup).
+    With ``age_recipient`` the archives written on the machine are encrypted to that public key with `age`
+    (it must be installed there; nothing is written unencrypted instead). Backups pushed to Proxmox Backup
+    Server, restic or borg keep their own encryption."""
+    if age_recipient is not None and not AGE_RECIPIENT.match(age_recipient):
+        raise ValueError("backup_age_recipient is not an age public key (it starts with age1)")
     local_dir = shlex.quote(local_dir)
     extra = " ".join(shlex.quote(p) for p in (*(paths or DEFAULT_PATHS), *(cfg.include if cfg else [])))
     head = f"""\
@@ -176,16 +201,14 @@ archive() {{
   # $1: the folder to put it in; the rest is what to archive. tar exit 1 only means a file changed
   # while it was read.
   DEST="$1"; shift
-  OUT="$DEST/{FILE_PREFIX}$HOST-$STAMP.tar.gz"
+  OUT="$DEST/{FILE_PREFIX}$HOST-$STAMP.tar.gz{AGE_SUFFIX if age_recipient else ""}"
   mkdir -p "$DEST" && chmod 700 "$DEST" 2>/dev/null
-  tar -czf "$OUT" "$@" "$W/packages.txt" 2>"$W/err"
-  rc=$?
-  grep -v 'Removing leading' "$W/err" >&2
+{_ARCHIVE_AGE.format(key=age_recipient) if age_recipient else _ARCHIVE_PLAIN}  grep -v 'Removing leading' "$W/err" >&2
   [ "$rc" -le 1 ] || {{ rm -f "$OUT"; echo "tar failed" >&2; exit 4; }}
   echo "wrote $OUT ($(wc -c <"$OUT") bytes)"
   # Keep the newest {KEEP_FILES} of this host's archives (by their name), nothing else: the folder may be
   # shared with other machines. The stamp is spelled out so that host "pve" does not match host "pve-2".
-  ls -1t "$DEST"/{FILE_PREFIX}"$HOST"-{STAMP_GLOB}.tar.gz 2>/dev/null |
+  ls -1t "$DEST"/{FILE_PREFIX}"$HOST"-{STAMP_GLOB}.tar.gz* 2>/dev/null |
     tail -n +{KEEP_FILES + 1} | while read -r old; do
     rm -f -- "$old" && echo "removed old $old"
   done
@@ -273,11 +296,18 @@ EOF
 
 
 async def _config_step(
-    ssh: SSHExecutor, cfg: HostBackupConfig | None, steps: _Steps, destination: str | None, *, proxmox: bool = False
+    ssh: SSHExecutor,
+    cfg: HostBackupConfig | None,
+    steps: _Steps,
+    destination: str | None,
+    *,
+    proxmox: bool = False,
+    age_recipient: str | None = None,
 ) -> None:
-    res = await ssh.run(config_script(cfg, proxmox=proxmox, destination=destination), steps.on_line, timeout=3600)
+    script = config_script(cfg, proxmox=proxmox, destination=destination, age_recipient=age_recipient)
+    res = await ssh.run(script, steps.on_line, timeout=3600)
     if res.rc == 127:
-        what = cfg.type if cfg and cfg.type != "path" else "a command it needs"
+        what = cfg.type if cfg and cfg.type != "path" else "a command it needs (for encrypted backups: age)"
         raise RuntimeError(f"{what} is not installed on this machine")
     if res.rc == 5 and destination:
         raise RuntimeError(
@@ -295,13 +325,29 @@ def _check_gzip(path: Path) -> None:
             pass
 
 
+def _encrypt(plain: Path, out: Path, recipient: str) -> None:
+    """Encrypt ``plain`` to the age public key with the `age` program, writing ``out``."""
+    try:
+        p = subprocess.run(["age", "-r", recipient, "-o", str(out), str(plain)], capture_output=True, text=True)
+    except FileNotFoundError:
+        raise RuntimeError("age is not installed in the dashboard's container") from None
+    if p.returncode != 0:
+        out.unlink(missing_ok=True)
+        raise RuntimeError(f"age failed: {p.stderr.strip()[:200]}")
+
+
 async def _stream_step(
-    ssh: SSHExecutor, cfg: HostBackupConfig | None, steps: _Steps, folder: Path | None, name: str
+    ssh: SSHExecutor,
+    cfg: HostBackupConfig | None,
+    steps: _Steps,
+    folder: Path | None,
+    name: str,
+    age_recipient: str | None = None,
 ) -> None:
     """The machine's config as a tar.gz streamed back over SSH into ``<folder>/<name>/``. It is written under a
     temporary name and renamed once complete, so a failed run leaves nothing that looks like a backup."""
     sub = machine_folder(folder, name)
-    final = sub / f"{FILE_PREFIX}{_stamp()}.tar.gz"
+    final = sub / f"{FILE_PREFIX}{_stamp()}.tar.gz{AGE_SUFFIX if age_recipient else ''}"
     part = sub / f".{final.name}.part"
     try:
         with open(os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as out:
@@ -313,12 +359,22 @@ async def _stream_step(
         if rc != 0:
             raise RuntimeError(f"exited with code {rc}")
         await asyncio.to_thread(_check_gzip, part)
-        os.replace(part, final)
+        if age_recipient:
+            sealed = sub / f".{final.name}.sealed"
+            try:
+                os.close(os.open(sealed, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600))
+                await asyncio.to_thread(_encrypt, part, sealed, age_recipient)
+                os.replace(sealed, final)
+            finally:
+                sealed.unlink(missing_ok=True)
+            part.unlink(missing_ok=True)  # the plain archive never stays
+        else:
+            os.replace(part, final)
     except BaseException:
         part.unlink(missing_ok=True)
         raise
     steps.say(f"wrote {final} ({final.stat().st_size} bytes)")
-    _prune(sub, f"{FILE_PREFIX}*.tar.gz", steps)
+    _prune(sub, f"{FILE_PREFIX}*.tar.gz*", steps)
 
 
 class SshHostBackup:
@@ -334,14 +390,25 @@ class SshHostBackup:
         )
 
     async def run(
-        self, on_line: LineCallback, destination: str | None = None, dashboard_folder: Path | None = None
+        self,
+        on_line: LineCallback,
+        destination: str | None = None,
+        dashboard_folder: Path | None = None,
+        age_recipient: str | None = None,
     ) -> None:
         steps = _Steps(on_line)
         title = "Backing up the node's config" if self.proxmox else "Archiving the machine's config"
         if destination == DASHBOARD:
-            await steps.step(title, lambda: _stream_step(self.ssh, self.cfg, steps, dashboard_folder, self.name))
+            await steps.step(
+                title, lambda: _stream_step(self.ssh, self.cfg, steps, dashboard_folder, self.name, age_recipient)
+            )
         else:
-            await steps.step(title, lambda: _config_step(self.ssh, self.cfg, steps, destination, proxmox=self.proxmox))
+            await steps.step(
+                title,
+                lambda: _config_step(
+                    self.ssh, self.cfg, steps, destination, proxmox=self.proxmox, age_recipient=age_recipient
+                ),
+            )
         steps.finish()
 
 
@@ -405,7 +472,11 @@ class IncusHostBackup:
         _prune(folder, f"{prefix}*.json", steps)
 
     async def run(
-        self, on_line: LineCallback, destination: str | None = None, dashboard_folder: Path | None = None
+        self,
+        on_line: LineCallback,
+        destination: str | None = None,
+        dashboard_folder: Path | None = None,
+        age_recipient: str | None = None,
     ) -> None:
         steps = _Steps(on_line)
         await steps.step("Saving the Incus settings", lambda: self._dump(steps, destination, dashboard_folder))
@@ -415,8 +486,11 @@ class IncusHostBackup:
             if destination == DASHBOARD:
                 await steps.step(
                     "Archiving the host's config",
-                    lambda: _stream_step(ssh, cfg, steps, dashboard_folder, self.cfg.name),
+                    lambda: _stream_step(ssh, cfg, steps, dashboard_folder, self.cfg.name, age_recipient),
                 )
             else:
-                await steps.step("Archiving the host's config", lambda: _config_step(ssh, cfg, steps, destination))
+                await steps.step(
+                    "Archiving the host's config",
+                    lambda: _config_step(ssh, cfg, steps, destination, age_recipient=age_recipient),
+                )
         steps.finish()

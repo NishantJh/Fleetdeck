@@ -293,11 +293,16 @@ async def test_incus_without_a_data_folder_says_so(tmp_path):
 # ---- through the job manager ----
 
 
+def _steps(job):
+    """The job log without the note that the archive is not encrypted (no age key set in these tests)."""
+    return [line for line in job.log if not line.startswith("! The archive is not encrypted")]
+
+
 class Runs:
     def __init__(self, fail=False):
         self.fail = fail
 
-    async def run(self, on_line, destination=None, dashboard_folder=None):
+    async def run(self, on_line, destination=None, dashboard_folder=None, age_recipient=None):
         self.folder = dashboard_folder
         on_line("stdout", f"step one {destination or ''}".strip())
         if self.fail:
@@ -321,14 +326,14 @@ async def test_backup_job_runs_without_an_executor_and_logs_the_steps():
     jobs = manager(Runs())
     job = jobs.submit("h", "backup")
     await finish(jobs)
-    assert job.status == "succeeded" and job.log == ["== Backing up h", "step one", "== Backup finished"]
+    assert job.status == "succeeded" and _steps(job) == ["== Backing up h", "step one", "== Backup finished"]
 
 
 async def test_backup_job_passes_the_folder_on():
     jobs = manager(Runs())
     job = jobs.submit("h", "backup", destination="/mnt/nas")
     await finish(jobs)
-    assert job.log == ["== Backing up h to /mnt/nas", "step one /mnt/nas", "== Backup finished"]
+    assert _steps(job) == ["== Backing up h to /mnt/nas", "step one /mnt/nas", "== Backup finished"]
 
 
 def test_backup_place_is_remembered_per_host_and_survives_a_restart(tmp_path):
@@ -501,3 +506,61 @@ async def test_backup_job_hands_the_dashboard_folder_to_the_run(tmp_path):
     job = jobs.submit("h", "backup", destination="dashboard")
     await finish(jobs)
     assert job.status == "succeeded" and runs.folder == tmp_path and job.log[0] == f"== Backing up h to {tmp_path}/"
+
+
+KEY = "age1" + "q" * 58
+
+
+def _fake_age(tmp_path):
+    """An `age` that marks its output, so the tests don't need the real program."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "age"
+    exe.write_text('#!/bin/sh\nprintf "AGE-ENCRYPTED\n" > "$4"\ncat "$5" >> "$4"\n')
+    exe.chmod(0o755)
+    return {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+
+
+def test_age_recipient_must_be_an_age_public_key():
+    with pytest.raises(ValueError, match="age public key"):
+        config_script(None, age_recipient="not-a-key")
+    assert f"age -r {KEY}" in config_script(None, age_recipient=KEY)
+    assert "age -r" not in config_script(None)
+    from fleetdeck.config import AppConfig
+
+    with pytest.raises(ValueError, match="age1"):
+        AppConfig(backup_age_recipient="oops")
+
+
+async def test_archive_on_the_machine_is_encrypted_and_pruned_by_name(tree):
+    tmp, etc = tree
+    out = tmp / "out"
+    out.mkdir()
+    got, cb = lines()
+    r = await LocalExecutor(_fake_age(tmp)).run(script(None, tmp, etc, age_recipient=KEY), cb)
+    assert r.rc == 0, got
+    (archive,) = out.glob("homelab-config-*.tar.gz.age")
+    assert archive.read_bytes().startswith(b"AGE-ENCRYPTED\n")
+    assert not list(out.glob("*.tar.gz"))  # no plain archive left next to it
+
+
+async def test_no_age_on_the_machine_writes_nothing_unencrypted(tree):
+    tmp, etc = tree
+    out = tmp / "out"
+    out.mkdir()
+    if subprocess.run(["sh", "-c", "command -v age"], capture_output=True).returncode == 0:
+        pytest.skip("age is installed here")
+    r = await LocalExecutor().run(script(None, tmp, etc, age_recipient=KEY), lines()[1])
+    assert r.rc == 127 and not list(out.glob("homelab-config-*"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="needs a POSIX shell")
+def test_dashboard_side_encrypt_runs_age(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", _fake_age(tmp_path)["PATH"])
+    plain, out = tmp_path / "a.tar.gz", tmp_path / "a.tar.gz.age"
+    plain.write_bytes(b"data")
+    backup_runs._encrypt(plain, out, KEY)
+    assert out.read_bytes() == b"AGE-ENCRYPTED\ndata"
+    monkeypatch.setenv("PATH", str(tmp_path / "nowhere"))
+    with pytest.raises(RuntimeError, match="age is not installed"):
+        backup_runs._encrypt(plain, out, KEY)

@@ -10,6 +10,9 @@ RUN CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" github.com/windtf/wirepr
 
 FROM ${BASE_REGISTRY}/python:3.12-slim
 COPY --from=wireproxy /go/bin/wireproxy /usr/local/bin/wireproxy
+# age: encrypts host config backups saved on the dashboard (backup_age_recipient).
+RUN apt-get update && apt-get install -y --no-install-recommends age \
+ && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 # Exact, hash-checked dependencies (regenerate with the command at the top of requirements.txt).
 COPY requirements.txt ./
