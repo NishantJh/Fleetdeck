@@ -146,8 +146,8 @@ function stackPanel(v) {
   return `<tr class="pkgs"><td></td><td colspan="8">
     <div class="docker-head"><b>Docker Compose stacks</b>
       <span class="muted">${r ? `checked ${ago(r.checked_at)}` : ""}</span>
-      <button class="small" data-act="stacks" data-id="${id}" ${busy ? "disabled" : ""} title="Downloads newer images for every running stack. Nothing is restarted.">Check for new images</button>
-      <label class="muted"><input type="checkbox" data-prune ${prune ? "checked" : ""}> remove old images after an update</label></div>
+      <button class="small" data-act="stacks" data-id="${id}" ${busy ? "disabled" : ""} title="Downloads newer images for every running stack. Nothing is restarted, but a later docker compose up on this machine will use them.">Check for new images</button>
+      <label class="muted" title="Runs docker image prune: removes all unused, untagged images on this machine, not only this stack's"><input type="checkbox" data-prune ${prune ? "checked" : ""}> remove old images after an update (all unused ones on this machine)</label></div>
     ${body}</td></tr>`;
 }
 

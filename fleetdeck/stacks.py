@@ -195,6 +195,6 @@ def update_script(stack: Stack, prune: bool) -> str:
         + f'echo "== Pulling {stack.name}"\n'
         + f"$DC {args} pull {names}\n"
         + f'echo "== Restarting what changed in {stack.name}"\n'
-        + f"$DC {args} up -d {names}\n"
+        + f"$DC {args} up -d --no-deps {names}\n"
         + ('echo "== Removing unused old images"\ndocker image prune -f\n' if prune else "")
     )
