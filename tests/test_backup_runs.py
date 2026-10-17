@@ -501,3 +501,61 @@ async def test_backup_job_hands_the_dashboard_folder_to_the_run(tmp_path):
     job = jobs.submit("h", "backup", destination="dashboard")
     await finish(jobs)
     assert job.status == "succeeded" and runs.folder == tmp_path and job.log[0] == f"== Backing up h to {tmp_path}/"
+
+
+KEY = "age1" + "q" * 58
+
+
+def _fake_age(tmp_path):
+    """An `age` that marks its output, so the tests don't need the real program."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    exe = bin_dir / "age"
+    exe.write_text('#!/bin/sh\nprintf "AGE-ENCRYPTED\n" > "$4"\ncat "$5" >> "$4"\n')
+    exe.chmod(0o755)
+    return {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+
+
+def test_age_recipient_must_be_an_age_public_key():
+    with pytest.raises(ValueError, match="age public key"):
+        config_script(None, age_recipient="not-a-key")
+    assert f"age -r {KEY}" in config_script(None, age_recipient=KEY)
+    assert "age -r" not in config_script(None)
+    from fleetdeck.config import AppConfig
+
+    with pytest.raises(ValueError, match="age1"):
+        AppConfig(backup_age_recipient="oops")
+
+
+async def test_archive_on_the_machine_is_encrypted_and_pruned_by_name(tree):
+    tmp, etc = tree
+    out = tmp / "out"
+    out.mkdir()
+    got, cb = lines()
+    r = await LocalExecutor(_fake_age(tmp)).run(script(None, tmp, etc, age_recipient=KEY), cb)
+    assert r.rc == 0, got
+    (archive,) = out.glob("homelab-config-*.tar.gz.age")
+    assert archive.read_bytes().startswith(b"AGE-ENCRYPTED\n")
+    assert not list(out.glob("*.tar.gz"))  # no plain archive left next to it
+
+
+async def test_no_age_on_the_machine_writes_nothing_unencrypted(tree):
+    tmp, etc = tree
+    out = tmp / "out"
+    out.mkdir()
+    if subprocess.run(["sh", "-c", "command -v age"], capture_output=True).returncode == 0:
+        pytest.skip("age is installed here")
+    r = await LocalExecutor().run(script(None, tmp, etc, age_recipient=KEY), lines()[1])
+    assert r.rc == 127 and not list(out.glob("homelab-config-*"))
+
+
+@pytest.mark.skipif(os.name == "nt", reason="needs a POSIX shell")
+def test_dashboard_side_encrypt_runs_age(tmp_path, monkeypatch):
+    monkeypatch.setenv("PATH", _fake_age(tmp_path)["PATH"])
+    plain, out = tmp_path / "a.tar.gz", tmp_path / "a.tar.gz.age"
+    plain.write_bytes(b"data")
+    backup_runs._encrypt(plain, out, KEY)
+    assert out.read_bytes() == b"AGE-ENCRYPTED\ndata"
+    monkeypatch.setenv("PATH", str(tmp_path / "nowhere"))
+    with pytest.raises(RuntimeError, match="age is not installed"):
+        backup_runs._encrypt(plain, out, KEY)

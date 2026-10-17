@@ -271,6 +271,16 @@ class AppConfig(BaseModel):
     # Helper-Scripts (community-scripts), as typing `update` in them would. A plain OS upgrade can
     # leave such an app broken until its own update runs. Off: the job only warns.
     community_scripts_update: bool = True
+    # An `age` public key (age1...). When set, the host config archives made by the "Back up" button are
+    # encrypted to it (.tar.gz.age); only the matching private key, which the dashboard never has, opens them.
+    backup_age_recipient: str | None = None
+
+    @field_validator("backup_age_recipient")
+    @classmethod
+    def _age_key(cls, v: str | None) -> str | None:
+        if v and not re.fullmatch(r"age1[a-z0-9]{50,}", v.strip()):
+            raise ValueError("backup_age_recipient must be an age public key (it starts with age1)")
+        return v.strip() if v else None
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     notify: list[NotifyConfig] = Field(default_factory=list)
     # The dashboard's address, linked from notifications (e.g. http://192.168.1.50:8080).

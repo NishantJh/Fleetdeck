@@ -98,7 +98,11 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   modprobe/GRUB settings and the node's SSH host keys. The archive form also has `/usr/local/etc`,
   `/usr/local/bin`, `/var/spool/cron` and the installed package list; the PBS form is `/etc` only.
   It does **not** contain guests or their disks, `/root`, `/home`, `/var/lib/vz`, ZFS pool layout or
-  anything else outside those folders. Because it holds secrets, keep it where you keep other secrets:
+  anything else outside those folders. It holds secrets (`/etc/shadow`, SSH host keys, on Proxmox `/etc/pve/priv`). Set `backup_age_recipient` to an
+  [age](https://github.com/FiloSottile/age) public key (`age-keygen` makes the pair; keep the private key in your
+  password manager) and archives are written encrypted as `.tar.gz.age`, with no passphrase to type. Restore with
+  `age -d -i key.txt file.tar.gz.age | tar xz`. A machine that writes the archive itself needs `age` installed.
+  Without the setting the archive is not encrypted, so keep it where you keep other secrets:
   turn on client-side encryption for the PBS storage, or use a folder only you can read (archives are
   written readable by root only). To rebuild a node: reinstall Proxmox, restore `/etc/network`, then
   `/etc/pve` (or re-add storage and restore the guests from their own backups).
