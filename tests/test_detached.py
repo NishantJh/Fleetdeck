@@ -1,6 +1,7 @@
 import asyncio
 import os
 import signal
+from datetime import UTC, datetime
 
 import pytest
 
@@ -128,3 +129,39 @@ async def test_waiting_for_reboot_is_resumed(tmp_path):
     assert stuck.status == "succeeded", stuck.error
     assert stuck.reboot_from is None
     store.close()
+
+
+async def test_restart_during_the_app_update_resumes_only_that_step(tmp_path, monkeypatch):
+    from fleetdeck.models import Job
+    from fleetdeck.updates import COMMUNITY_UPDATE_SCRIPT
+
+    class Ex(LocalExecutor):
+        async def run(self, script, on_line=None, timeout=0):
+            assert script not in (UPGRADE_SCRIPT, COMMUNITY_UPDATE_SCRIPT)  # neither is started again
+            return await super().run(script, on_line, timeout)
+
+    async def follow(executor, run_id, offset, on_output, timeout, **kw):
+        on_output("app done\n", 9)
+        return 0
+
+    async def cleanup(executor, run_id):
+        return None
+
+    monkeypatch.setattr(detached, "follow", follow)
+    monkeypatch.setattr(detached, "cleanup", cleanup)
+    jobs = _jobs(Ex(str(tmp_path / "jobs")))
+    cut = Job(
+        id="u1",
+        target_id="t1",
+        target_name="t1",
+        action="upgrade",
+        status="running",
+        remote="u1",
+        app_update=True,
+        created_at=datetime.now(UTC),
+    )
+    jobs.jobs[cut.id] = cut
+    jobs.resume()
+    await asyncio.gather(*jobs._tasks)
+    assert cut.status == "succeeded", cut.error
+    assert "app done" in cut.log and not cut.app_update and cut.remote is None

@@ -343,12 +343,14 @@ async def test_upgrade_runs_helper_scripts_own_update_afterwards():
     assert jobs.checks["t1"].community_script == "plex"
 
 
-async def test_helper_script_update_failing_fails_the_job():
+async def test_helper_script_update_failing_only_warns_and_the_job_goes_on():
     ex = CommunityExecutor(update_rc=1)
     jobs = JobManager(_inventory((_target(), ex)))
     job = jobs.submit("t1", "upgrade")
     await _finish(jobs)
-    assert job.status == "failed" and "plex's own update exited with code 1" in job.error
+    assert job.status == "succeeded", job.error
+    assert any("plex's own update failed" in line and "code 1" in line for line in job.log)
+    assert "== Re-checking for remaining updates" in job.log  # the rest of the job still ran
 
 
 async def test_helper_script_update_off_only_warns():

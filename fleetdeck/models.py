@@ -159,6 +159,8 @@ class Job(BaseModel):
     # bytes of its log are already in ``log``.
     remote: str | None = None
     remote_offset: int = 0
+    # True while ``remote`` is a helper-script app update, not the OS upgrade, so a resume picks the right step.
+    app_update: bool = False
     # While waiting for a reboot to finish: the boot id from before it.
     reboot_from: str | None = None
 
