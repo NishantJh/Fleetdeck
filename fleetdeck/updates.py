@@ -202,8 +202,13 @@ set -e
 case "$PM" in
   apt)
     apt-get $APT_OPTS update -q
-    # dist-upgrade (a.k.a. full-upgrade) is what Proxmox and Raspberry Pi OS recommend.
-    apt-get $APT_OPTS -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold dist-upgrade ;;
+    # dist-upgrade (a.k.a. full-upgrade) is what Proxmox and Raspberry Pi OS recommend. Elsewhere it may
+    # remove packages to resolve a conflict, unattended; there, new dependencies are installed but nothing
+    # is removed, and an upgrade that needs a removal stays in the list for you to do by hand.
+    if command -v pveversion >/dev/null 2>&1 || command -v proxmox-backup-manager >/dev/null 2>&1 \
+      || command -v pmgversion >/dev/null 2>&1 || [ -e /etc/rpi-issue ]; then UPG=dist-upgrade
+    else UPG="upgrade --with-new-pkgs"; fi
+    apt-get $APT_OPTS -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold $UPG ;;
   dnf) dnf -y upgrade --refresh ;;
   yum) yum -y upgrade ;;
   apk) apk update && apk upgrade ;;
