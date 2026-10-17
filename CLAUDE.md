@@ -61,7 +61,7 @@ Other
 - `tests/`: one `test_<module>.py` per module. Pytest with `asyncio_mode = "auto"`.
 - `Dockerfile`: python:3.12-slim plus a pinned wireproxy build. Runs as uid 10001 (PUID/PGID to change). Data in `/data`.
 - `docker-compose.yml`: the example stack. `docs/PLAN.md`: roadmap. `docs/screenshots/`: README images (demo data only).
-- `.github/workflows/ci.yml`: ruff and pytest on every PR. `image.yml`: builds and pushes the image. `ghcr-cleanup.yml`: cleans up old image versions on main.
+- `.github/workflows/ci.yml`: ruff and pytest on every PR from this repo (pull requests from forks are skipped: jobs run on the owner's self-hosted runner). `image.yml`: builds and pushes the image. `ghcr-cleanup.yml`: cleans up old image versions on main.
 
 ## Run, test, lint
 
