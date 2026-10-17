@@ -121,7 +121,7 @@ def create_app(
         cfg.backup_age_recipient,
     )
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
-    scheduler = Scheduler(cfg.schedule.check_every, inventory, jobs, notifier)
+    scheduler = Scheduler(cfg.schedule.check_every, inventory, jobs, notifier, store)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):

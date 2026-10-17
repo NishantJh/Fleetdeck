@@ -25,7 +25,7 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   whether a reboot is needed. On apt machines, updates from a security repository
   (`bookworm-security`, `noble-security`, …) get a red *security* tag and are listed first
   (a Proxmox host needs its `ssh:` settings for this, as the PVE API doesn't say).
-* **Update** runs a full upgrade (`apt-get dist-upgrade`, `dnf upgrade`, `apk upgrade`,
+* **Update** runs a full upgrade (`apt-get dist-upgrade` on Proxmox and Raspberry Pi OS, `apt-get upgrade --with-new-pkgs` (never removes a package) elsewhere, `dnf upgrade`, `apk upgrade`,
   `pacman -Syu`), streams the output to the Activity panel, then re-checks. Nothing is rebooted unless you ask.
 * Check results and the Activity history are saved to `data/state.db` (SQLite), so they survive a
   restart or an image update. A job that was running when the dashboard stopped shows as interrupted.
@@ -98,8 +98,8 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   modprobe/GRUB settings and the node's SSH host keys. The archive form also has `/usr/local/etc`,
   `/usr/local/bin`, `/var/spool/cron` and the installed package list; the PBS form is `/etc` only.
   It does **not** contain guests or their disks, `/root`, `/home`, `/var/lib/vz`, ZFS pool layout or
-  anything else outside those folders. It holds secrets (`/etc/shadow`, SSH host keys, on Proxmox `/etc/pve/priv`). Set `backup_age_recipient` to an
-  [age](https://github.com/FiloSottile/age) public key (`age-keygen` makes the pair; keep the private key in your
+  anything else outside those folders. It holds secrets (`/etc/shadow`, SSH host keys, on Proxmox
+  `/etc/pve/priv`). Set `backup_age_recipient` to an [age](https://github.com/FiloSottile/age) public key (`age-keygen` makes the pair; keep the private key in your
   password manager) and archives are written encrypted as `.tar.gz.age`, with no passphrase to type. Restore with
   `age -d -i key.txt file.tar.gz.age | tar xz`. A machine that writes the archive itself needs `age` installed.
   Without the setting the archive is not encrypted, so keep it where you keep other secrets:
@@ -119,11 +119,12 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   and the job is still in Activity; roll back to anything older in Proxmox or Incus.
 * **Docker Compose stacks:** the **Docker** button on any machine (host, VM or LXC) lists the Compose
   stacks running on it, found through the labels Compose puts on its containers, so no paths to set up.
-  *Check for new images* downloads newer images for every running stack (nothing is restarted) and marks
-  the stacks that are behind; **Update** on a stack pulls and runs `docker compose up -d` for the services
-  running now. A service you stopped stays stopped, a stopped stack is not started, and a failed pull
+  *Check for new images* downloads newer images for every running stack (nothing is restarted, but a later `docker compose up` you run
+  yourself on that machine will use them) and marks
+  the stacks that are behind; **Update** on a stack pulls and runs `docker compose up -d --no-deps` for the services
+  running now (their stopped `depends_on` services are not started). A service you stopped stays stopped, a stopped stack is not started, and a failed pull
   leaves the stack as it was. Tick *remove old images after an update* to also run `docker image prune`
-  (unused, untagged images only). Like OS upgrades, it keeps running on the machine if the dashboard
+  (all unused, untagged images on the machine, not only this stack's). Like OS upgrades, it keeps running on the machine if the dashboard
   restarts. The stack that runs the dashboard itself is shown but not updated from here (it would stop
   halfway); update it with `docker compose pull && docker compose up -d`. It needs nothing new on machines
   you already set up: the dashboard's sudo rule already allows `docker`. Docker must be reachable as root
@@ -234,6 +235,8 @@ machine's SSH host key fingerprints. Running it twice is harmless.
   you entered when that is an IP (on every interface for a host name), trusts the dashboard's own client
   certificate for the projects that exist (press *Reconnect* after adding one), and pins the server
   certificate. If that fails, it turns the API off again when it was the one that turned it on.
+  Add the machine by IP to keep the API off your other networks: with a host name it listens on every
+  interface (the setup log says so), protected by the client certificate (mutual TLS) and a pinned server certificate.
 * If the machine is the one the dashboard runs on (or its Proxmox node), it says so: put the
   dashboard's container under `protect:`, so an upgrade or reboot can't stop it mid-job.
 
@@ -413,6 +416,8 @@ pveum aclmod / -user homelab@pve -role HomelabManager
 pveum user token add homelab@pve dashboard --privsep 0
 ```
 
+This is not a read-only token: with `Sys.Modify` and `VM.GuestAgent.Unrestricted` (and no privilege
+separation) it can run commands as root inside any VM with the guest agent and change node settings.
 The dashboard also has root SSH to the node, so this mainly limits the damage if the token alone
 leaks. `Sys.Modify` is only needed for refreshing package lists through the API, `Datastore.Audit`, `Datastore.AllocateSpace` and `VM.Backup` for the
 backup column (the dashboard never makes backups of guests; Proxmox just won't list them otherwise) and `VM.Snapshot`/`VM.Snapshot.Rollback` for snapshots before upgrades.
@@ -474,6 +479,10 @@ ruff check . && ruff format --check .
 ```
 
 See [docs/PLAN.md](docs/PLAN.md) for the roadmap.
+
+## Support
+
+Fleetdeck is free. If it saves you time, you can support it on [Ko-fi](https://ko-fi.com/nishant19836) or [PayPal](https://paypal.me/nishantjha1659).
 
 ## License
 

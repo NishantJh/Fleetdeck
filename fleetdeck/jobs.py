@@ -114,6 +114,8 @@ class JobManager:
         self._tasks: set[asyncio.Task] = set()
         # Hosts that are rebooting, or waiting for their guests' jobs so they can reboot.
         self._rebooting: set[str] = set()
+        # Hosts with an upgrade or reboot under way (past waiting for their guests): guests on them wait.
+        self._host_busy: set[str] = set()
         # Machines hidden from the dashboard: left out of scheduled checks and their notifications.
         self.hidden: set[str] = set()
         # Host id -> the folder its Back up button is set to use every time.
@@ -280,6 +282,8 @@ class JobManager:
                     job.log.append("== Dashboard restarted; picking this job up again")
                     async with slot.released():
                         target, executor = await self._find_again(job)
+                    if target.kind == "host" and job.action in ("upgrade", "reboot"):
+                        self._host_busy.add(target.id)
                     await self._continue(job, target, executor, on_line, slot)
                     job.status = "succeeded"
                     return
@@ -295,6 +299,8 @@ class JobManager:
                     _ensure_can_back_up(target, self.inventory.backup_runs.get(job.target_id))
                 else:
                     _ensure_runnable(target, executor, job.action)
+                if job.action in ("upgrade", "reboot"):
+                    await self._wait_unblocked(job, target, slot)
                 if job.action == "backup":
                     job.log.append(
                         f"== Backing up {target.name}"
@@ -355,10 +361,22 @@ class JobManager:
                 if job.action == "check":
                     self._record_check_error(job.target_id, job.error)
             finally:
+                self._host_busy.discard(job.target_id)
                 # A cancelled job is still "running": shutdown() records it, as interrupted or to resume.
                 if job.status in ("succeeded", "failed"):
                     job.finished_at = _now()
                     self._save_job(job)
+
+    async def _wait_unblocked(self, job: Job, target: Target, slot: _Slot) -> None:
+        """The check at submit is not enough: a job that was queued may start when a guest (or the host)
+        has begun updating since. Wait for it, without holding a slot, then mark a host as busy."""
+        if why := self.update_blocked(target):
+            job.log.append(f"== Not starting yet: {why}")
+            async with slot.released():
+                while self.update_blocked(target):
+                    await asyncio.sleep(1)
+        if target.kind == "host":
+            self._host_busy.add(target.id)
 
     async def _find_again(self, job: Job) -> tuple[Target, object]:
         """The job's target after a restart, once discovery has found it (and it can run commands)."""
@@ -379,6 +397,9 @@ class JobManager:
         """Carry on with a job from where a restart cut it off."""
         if job.action == "stack-update":
             await self._stack_update(job, executor, on_line)
+        elif job.remote is not None and job.app_update:
+            await self._community_update(job, executor, "the app", on_line)
+            await self._after_upgrade(job, target, executor, on_line, slot, "", app_updated=True)
         elif job.remote is not None:
             stdout = await self._upgrade(job, executor, on_line)
             await self._after_upgrade(job, target, executor, on_line, slot, stdout)
@@ -495,10 +516,12 @@ class JobManager:
         else:
             job.log.append("== Stack is running the newest images")
 
-    async def _after_upgrade(self, job: Job, target: Target, executor, on_line, slot: _Slot, stdout: str) -> None:
+    async def _after_upgrade(
+        self, job: Job, target: Target, executor, on_line, slot: _Slot, stdout: str, app_updated: bool = False
+    ) -> None:
         reboot = parse_reboot(stdout)
         job.log.append("== Upgrade finished" + ("; reboot required" if reboot else ""))
-        if app := parse_community_script(stdout):
+        if not app_updated and (app := parse_community_script(stdout)):
             await self._community_update(job, executor, app, on_line)
         job.log.append("== Re-checking for remaining updates")
         # The upgrade itself worked; a failed re-check is reported but doesn't fail the job.
@@ -533,8 +556,11 @@ class JobManager:
     def update_blocked(self, target: Target) -> str | None:
         """Why a machine can't be updated or rebooted right now, if it can't.
 
-        Docker stacks on it are updating, or (for a host) a guest on it is updating.
+        Docker stacks on it are updating, or (for a host) a guest on it is updating, or (for a guest) its
+        host is being updated.
         """
+        if (host_id := self._host_id(target)) in self._host_busy:
+            return f"waiting for {self.inventory.targets[host_id][0].name} to finish updating"
         busy = [j for j in self.jobs.values() if j.target_id == target.id and j.action == "stack-update"]
         if target.kind == "host":
             busy += [j for j in self._guest_jobs(target) if j.action in ("upgrade", "stack-update")]
@@ -659,12 +685,19 @@ class JobManager:
             if line := clean_line(line):
                 on_line(stream, line)
 
-        res = await executor.run(COMMUNITY_UPDATE_SCRIPT, cleaned)
-        if res.rc != 0:
-            raise RuntimeError(
-                f"the OS upgrade worked, but {app}'s own update exited with code {res.rc}. "
+        # Detached like the OS upgrade, so a dashboard restart halfway doesn't cut it off. The OS upgrade
+        # already worked, so a failure here is a warning: the re-check and the reboot still follow.
+        job.app_update = True
+        try:
+            await self._upgrade(job, executor, cleaned, COMMUNITY_UPDATE_SCRIPT, f"{app}'s own update")
+        except Exception as e:  # noqa: BLE001 - not a cancel: a shutdown must leave app_update set for the resume
+            job.app_update = False
+            job.log.append(
+                f"! the OS upgrade worked, but {app}'s own update failed ({e}). "
                 "Run `update` inside it to finish, or roll back to the snapshot."
             )
+            return
+        job.app_update = False
         job.log.append(f"== {app}'s own update finished")
 
     async def _snapshot(self, job: Job) -> None:

@@ -140,3 +140,9 @@ def test_old_homelab_variable_name_still_expands(monkeypatch):
     monkeypatch.setenv("HOMELAB_PASSWORD", "x")
     cfg = validate_raw({"auth": {"password": "${FLEETDECK_PASSWORD}"}})
     assert cfg.auth.password == "x"
+
+
+def test_community_scripts_update_is_opt_in():
+    from fleetdeck.config import AppConfig
+
+    assert AppConfig().community_scripts_update is False

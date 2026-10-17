@@ -64,8 +64,8 @@ cat > "$d/script" <<'{_EOF}' || exit 90
 {_EOF}
 cat > "$d/run" <<'{_EOF}' || exit 90
 d=$(dirname "$0")
-echo $$ > "$d/pid"
 {_BOOT.strip()} > "$d/boot"
+echo $$ > "$d/pid"
 sh "$d/script" > "$d/log" 2>&1 </dev/null
 echo $? > "$d/rc.tmp" && mv "$d/rc.tmp" "$d/rc"
 {_EOF}

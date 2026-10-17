@@ -6,7 +6,7 @@ services:
   fleetdeck:
     # Pin a release rather than :latest so an update is something you choose:
     # :1.2.3 = exactly that release, :1.2 = patch fixes only, :1 = any 1.x update.
-    image: ghcr.io/nishantjh/fleetdeck:latest
+    image: ghcr.io/nishantjh/fleetdeck:1
     # To build from source instead of pulling the image:
     # build: .
     container_name: fleetdeck

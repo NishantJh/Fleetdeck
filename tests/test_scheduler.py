@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import pytest
@@ -83,6 +84,30 @@ class RecordingNotifier:
     async def send(self, title, body):
         self.messages.append((title, body))
         return {}
+
+
+async def test_restart_keeps_the_schedule_and_does_not_repeat_a_notification(monkeypatch, tmp_path):
+    import fleetdeck.scheduler
+    from fleetdeck.store import Store
+
+    monkeypatch.setattr(fleetdeck.scheduler, "POLL", 0)
+    store = Store(tmp_path / "state.db")
+    inv = _inventory((_target("pi4"), PkgExecutor(["curl"])))
+    inv.refresh = _noop_refresh
+    notifier = RecordingNotifier()
+    first = Scheduler(3600, inv, JobManager(inv), notifier, store)
+    assert first._delay() == fleetdeck.scheduler.FIRST_RUN_DELAY  # never ran
+    await first.run_once()
+    assert len(notifier.messages) == 1
+
+    again = Scheduler(3600, inv, JobManager(inv), notifier, store)  # the dashboard restarted
+    assert again.last_run == first.last_run and again.last_notified == first.last_notified
+    assert 3500 < again._delay() <= 3600  # an hour after the last round, not a minute after start-up
+    await again.run_once()
+    assert len(notifier.messages) == 1  # already told about the curl update
+
+    again.last_run = datetime.now(UTC) - timedelta(hours=5)  # overdue: check soon after start
+    assert again._delay() == fleetdeck.scheduler.FIRST_RUN_DELAY
 
 
 async def test_scheduled_run_notifies_only_about_new_things(monkeypatch):

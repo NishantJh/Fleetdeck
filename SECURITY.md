@@ -10,7 +10,7 @@ and its numbered tags) and `main` get security fixes. Older tags do not.
 Please don't open a public issue for a security problem. Report it privately instead:
 
 1. Go to the repository's **Security** tab and choose **Report a vulnerability**, or open
-   <https://github.com/NishantJh/Homelab-Manager/security/advisories/new>.
+   <https://github.com/NishantJh/Fleetdeck/security/advisories/new>.
 2. Include the image tag or commit, the steps to reproduce, and what an attacker could do.
 
 The maintainer aims to reply within 7 days and will keep you updated until a fix is released.
