@@ -267,9 +267,9 @@ class AppConfig(BaseModel):
     # Update dialog), and how many of the dashboard's own snapshots to keep per guest.
     snapshot_before_upgrade: bool = True
     snapshot_keep: int = Field(3, ge=1)
-    # After an OS upgrade, also run the app's own update in containers made by the Proxmox VE
-    # Helper-Scripts (community-scripts), as typing `update` in them would. A plain OS upgrade can
-    # leave such an app broken until its own update runs. On by default; set false and the job only warns.
+    # Update containers made by the Proxmox VE Helper-Scripts (community-scripts) with the app's own
+    # update, as typing `update` in them would, instead of the OS upgrade; the OS upgrade only runs if
+    # that fails. A plain OS upgrade can leave such an app broken. On by default; set false and the job only warns.
     # It runs the latest upstream script as root and can upgrade the app itself.
     community_scripts_update: bool = True
     # An `age` public key (age1...). When set, the host config archives made by the "Back up" button are

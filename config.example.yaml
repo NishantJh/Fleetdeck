@@ -24,8 +24,8 @@ max_parallel: 4
 # (ZFS, LVM-thin, Ceph, qcow2) and VM.Snapshot + VM.Snapshot.Rollback on the token.
 snapshot_before_upgrade: true
 snapshot_keep: 3
-# true (the default): containers made by the Proxmox VE Helper-Scripts (community-scripts) also get their app's own
-# update after the OS upgrade, the same as typing `update` in them. It fetches the latest script from
+# true (the default): containers made by the Proxmox VE Helper-Scripts (community-scripts) are updated with their app's own
+# update, the same as typing `update` in them, instead of the OS upgrade (which only runs if it fails). It fetches the latest script from
 # GitHub, runs it as root, and can upgrade the app itself. Set false and the job only warns.
 community_scripts_update: true
 # Encrypt the host config archives of the "Back up" button to this age public key (age1...). Only
