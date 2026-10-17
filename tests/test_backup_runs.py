@@ -293,11 +293,16 @@ async def test_incus_without_a_data_folder_says_so(tmp_path):
 # ---- through the job manager ----
 
 
+def _steps(job):
+    """The job log without the note that the archive is not encrypted (no age key set in these tests)."""
+    return [line for line in job.log if not line.startswith("! The archive is not encrypted")]
+
+
 class Runs:
     def __init__(self, fail=False):
         self.fail = fail
 
-    async def run(self, on_line, destination=None, dashboard_folder=None):
+    async def run(self, on_line, destination=None, dashboard_folder=None, age_recipient=None):
         self.folder = dashboard_folder
         on_line("stdout", f"step one {destination or ''}".strip())
         if self.fail:
@@ -321,14 +326,14 @@ async def test_backup_job_runs_without_an_executor_and_logs_the_steps():
     jobs = manager(Runs())
     job = jobs.submit("h", "backup")
     await finish(jobs)
-    assert job.status == "succeeded" and job.log == ["== Backing up h", "step one", "== Backup finished"]
+    assert job.status == "succeeded" and _steps(job) == ["== Backing up h", "step one", "== Backup finished"]
 
 
 async def test_backup_job_passes_the_folder_on():
     jobs = manager(Runs())
     job = jobs.submit("h", "backup", destination="/mnt/nas")
     await finish(jobs)
-    assert job.log == ["== Backing up h to /mnt/nas", "step one /mnt/nas", "== Backup finished"]
+    assert _steps(job) == ["== Backing up h to /mnt/nas", "step one /mnt/nas", "== Backup finished"]
 
 
 def test_backup_place_is_remembered_per_host_and_survives_a_restart(tmp_path):
