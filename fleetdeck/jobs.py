@@ -39,6 +39,9 @@ REBOOT_POLL = 5.0
 # A machine can answer before all its services are up (a Proxmox node's API starts after sshd);
 # the re-check after a reboot is retried this many times before it is reported as failed.
 RECHECK_TRIES = 6
+# What a guest can be doing that stops its host from being updated or rebooted.
+GUEST_ACTIONS_BLOCKING_HOST = ("upgrade", "stack-update", "reboot", "rollback")
+
 # An upgrade running detached on its target gets this long before the dashboard stops waiting.
 UPGRADE_TIMEOUT = 3600.0
 # Pulling every stack's images on a machine.
@@ -556,14 +559,14 @@ class JobManager:
     def update_blocked(self, target: Target) -> str | None:
         """Why a machine can't be updated or rebooted right now, if it can't.
 
-        Docker stacks on it are updating, or (for a host) a guest on it is updating, or (for a guest) its
-        host is being updated.
+        Docker stacks on it are updating, or (for a host) a guest on it is updating, rebooting or rolling
+        back, or (for a guest) its host is being updated.
         """
         if (host_id := self._host_id(target)) in self._host_busy:
             return f"waiting for {self.inventory.targets[host_id][0].name} to finish updating"
         busy = [j for j in self.jobs.values() if j.target_id == target.id and j.action == "stack-update"]
         if target.kind == "host":
-            busy += [j for j in self._guest_jobs(target) if j.action in ("upgrade", "stack-update")]
+            busy += [j for j in self._guest_jobs(target) if j.action in GUEST_ACTIONS_BLOCKING_HOST]
         busy = [j for j in busy if j.status in ("queued", "running")]
         if not busy:
             return None
