@@ -45,9 +45,8 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   Server), turns orange once that's older than `backup_max_age_hours` (48 by default), and is flagged
   *none*, *no job* (not in any scheduled backup job) or *verify failed*. This needs `Datastore.Audit`,
   `Datastore.AllocateSpace` and `VM.Backup` (Proxmox lists a guest's backups only to a user that could
-  make them); without them the column shows `?` and says why. A token made by an older version lacks
-  the last two, so every guest shows *none*: press *Connect* on that machine again (it updates the role),
-  or set `backup_max_age_hours: 0` to turn the column off.
+  make them); without them the column shows `?` and says why. Press *Connect* on that machine to update
+  its role, or set `backup_max_age_hours: 0` to turn the column off.
   Incus instances show their newest snapshot or export (the dashboard's own pre-upgrade snapshots
   don't count). Every other machine (Proxmox nodes, the Incus host, a Raspberry Pi, a VPS) shows
   *not set up* until you add a `backup:` entry to its SSH settings (under `ssh:` for Proxmox and Incus):
@@ -318,24 +317,6 @@ OS can still be managed).
 
 The image is public, so `docker pull` needs no login. To pin a version instead of `latest`, use a release tag such as
 `ghcr.io/nishantjh/fleetdeck:1.2.3` (see [Install](#install)).
-
-### Upgrading from an older install
-
-* **Config folder:** an install that mounts `./config:/config:ro` keeps working unchanged: the dashboard
-  uses `/config/config.yaml` when `/data` has no config, and the setup page shows it as read-only. To switch,
-  remove the `config` volume and `user:` from the compose file, deploy, and set the machines up again from
-  the setup page.
-* **Data volume:** the compose file uses the named volume `fleetdeck-data`. If you ran the older
-  `homelab-data` volume, copy it before you deploy (Docker can't rename a volume). With the stack stopped:
-
-  ```
-  docker volume create STACK_fleetdeck-data
-  docker run --rm -v STACK_homelab-data:/from:ro -v STACK_fleetdeck-data:/to alpine sh -c 'cp -a /from/. /to/'
-  ```
-
-  `STACK` is your stack's name (`docker volume ls | grep homelab-data` shows the exact name). The old volume
-  is left untouched; remove it once the new one works. If you had `./data:/data` in the compose file, keep it.
-* **Port:** `HOMELAB_PORT` is no longer read; set `FLEETDECK_PORT` instead.
 
 ## Configuring by hand
 
