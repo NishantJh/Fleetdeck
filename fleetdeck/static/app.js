@@ -290,6 +290,11 @@ const CONFIRM = {
     text: "Saves what is needed to set the machine up again, not its guests or instances. Proxmox: the node's config (to Proxmox Backup Server if there is one). Incus: its settings. Other machines: an archive of /etc and a few more config folders. Nothing is stopped or changed.",
     ok: "Back up",
   },
+  stacks: {
+    title: "Check Docker on these machines?",
+    text: "Downloads (pulls) newer images for every running Docker Compose stack on each machine, which can use a lot of bandwidth and disk space. Nothing is restarted. Machines where Docker was found missing are left out.",
+    ok: "Check Docker",
+  },
   reboot: {
     title: "Reboot these machines?",
     text: "Reboots now and waits for each machine to come back, then re-checks it. Services on it will be down meanwhile.",
@@ -321,7 +326,7 @@ function confirmAction(action, ids) {
     const v = byId.get(id);
     const n = v?.check?.packages?.length;
     let detail = n != null ? `${n} package(s)` : "not checked";
-    if (action === "backup") detail = "";
+    if (action === "backup" || action === "stacks") detail = "";
     if (action === "reboot") {
       detail = v?.check?.reboot_required ? "reboot needed" : "";
       const t = v?.target;
@@ -579,6 +584,10 @@ $("#restore-go").onclick = async () => {
 };
 
 $("#check-all").onclick = () => act("check", active().filter((v) => v.target.updatable).map((v) => v.target.id));
+$("#check-docker").onclick = () => {
+  const ids = active().filter((v) => canUpgrade(v.target) && v.stacks?.docker !== "none").map((v) => v.target.id);
+  if (ids.length) confirmAction("stacks", ids);
+};
 $("#update-selected").onclick = () => confirmAction("upgrade", [...state.selected]);
 
 // Poll fast while anything is running, slowly otherwise.

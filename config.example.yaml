@@ -36,6 +36,9 @@ community_scripts_update: true
 # automatically; you get a notification when something new is pending.
 schedule:
   check_every: 6h
+  # Also look for newer Docker images on every machine with Docker. Off by default because it
+  # downloads (pulls) the images each time, which can use a lot of bandwidth and disk space.
+  # check_docker: true
 
 # Linked from notifications.
 # public_url: http://192.168.1.50:8080

@@ -217,6 +217,8 @@ def parse_duration(value: str | int) -> int:
 class ScheduleConfig(BaseModel):
     # Check every machine for updates this often (e.g. 6h, 1d). Unset: only when you click Check.
     check_every: int | None = None
+    # Also look for newer Docker images on every machine with Docker. Off by default: it pulls the images.
+    check_docker: bool = False
 
     @field_validator("check_every", mode="before")
     @classmethod

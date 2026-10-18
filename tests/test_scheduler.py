@@ -192,3 +192,26 @@ async def test_notification_tokens_stay_out_of_the_log(caplog):
     with caplog.at_level(logging.INFO):
         await n.send("t", "b")
     assert "secret" not in caplog.text
+
+
+async def test_scheduled_docker_check_is_opt_in_and_skips_machines_without_docker(monkeypatch):
+    import fleetdeck.scheduler
+    from fleetdeck.models import StacksResult
+
+    monkeypatch.setattr(fleetdeck.scheduler, "POLL", 0)
+
+    async def run(**kw):
+        inv = _inventory((_target("pi4"), PkgExecutor([])), (_target("vps"), PkgExecutor([])))
+        inv.refresh = _noop_refresh
+        jobs = JobManager(inv)
+        jobs.stacks["vps"] = StacksResult(docker="none", checked_at=datetime.now(UTC))
+        asked = []
+        real = jobs.submit
+        monkeypatch.setattr(
+            jobs, "submit", lambda tid, action, *a, **k: asked.append((tid, action)) or real(tid, action, *a, **k)
+        )
+        await Scheduler(3600, inv, jobs, RecordingNotifier(), **kw).run_once()
+        return sorted(asked)
+
+    assert await run() == [("pi4", "check"), ("vps", "check")]
+    assert await run(check_docker=True) == [("pi4", "check"), ("pi4", "stacks"), ("vps", "check")]

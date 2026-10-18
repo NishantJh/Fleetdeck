@@ -32,8 +32,10 @@ class Scheduler:
         jobs: JobManager,
         notifier: Notifier | None,
         store: Store | None = None,
+        check_docker: bool = False,
     ):
         self.store = store
+        self.check_docker = check_docker
         self.interval = interval
         self.inventory = inventory
         self.jobs = jobs
@@ -118,6 +120,14 @@ class Scheduler:
                 submitted.append(self.jobs.submit(target.id, "check"))
             except (KeyError, ValueError):
                 continue
+            # Opt-in: the Docker check pulls images. Skipped where the last look found no Docker.
+            if (
+                self.check_docker
+                and not target.check_only
+                and getattr(self.jobs.stacks.get(target.id), "docker", "") != "none"
+            ):
+                with contextlib.suppress(KeyError, ValueError):
+                    submitted.append(self.jobs.submit(target.id, "stacks"))
         deadline = time.monotonic() + RUN_TIMEOUT
         while any(j.status in ("queued", "running") for j in submitted):
             if time.monotonic() > deadline:
