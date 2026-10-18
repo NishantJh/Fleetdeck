@@ -67,7 +67,7 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
       has SSH settings.
   * **On the dashboard** (recommended for one shared place for every machine): the archive is sent back over
     the connection the dashboard already uses (SSH, through a tunnel too) and saved as
-    `<backup folder>/fleetdeck/<machine name>/homelab-config-<date>_<time>.tar.gz` (the Incus host also gets
+    `<backup folder>/fleetdeck/<machine name>/fleetdeck-config-<date>_<time>.tar.gz` (the Incus host also gets
     `incus-settings-<date>_<time>.json` there). Nothing is written on the machine and nothing needs mounting
     there. The dashboard only ever writes inside its `fleetdeck/` folder, and changes nothing else in the
     mount, including owners and permissions. Each file is written under a temporary name and renamed when
@@ -121,7 +121,7 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   (a raw disk on dir/NFS storage) is upgraded without one and the log says so; any other snapshot
   failure stops the upgrade. The job's log then has a **Roll back to snapshot** button, which also
   works when the guest no longer boots or its agent stopped answering. The dashboard keeps its last
-  `snapshot_keep` (3) snapshots per guest, named `homelab_<date>_<time>`, and never touches
+  `snapshot_keep` (3) snapshots per guest, named `fleetdeck_<date>_<time>`, and never touches
   snapshots it didn't make. The button only covers the job's own snapshot while it is still kept
   and the job is still in Activity; roll back to anything older in Proxmox or Incus.
 * **Docker Compose stacks:** the **Docker** button on any machine (host, VM or LXC) lists the Compose

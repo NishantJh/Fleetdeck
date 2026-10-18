@@ -47,7 +47,7 @@ Setup and security
 - `fleetdeck/security.py`: auth with brute-force throttling, CSRF, security headers.
 - `fleetdeck/config.py`: YAML config (`FLEETDECK_CONFIG`, default `config.yaml`), `${VAR}` expansion, the models
   for each machine type and tunnel. `config.example.yaml` documents the options.
-- `fleetdeck/envvars.py`: `env(name)` reads `FLEETDECK_<name>`, falls back to `HOMELAB_<name>`.
+- `fleetdeck/envvars.py`: `env(name)` reads `FLEETDECK_<name>`.
 - `fleetdeck/store.py`: SQLite for check results, job history and hidden machines.
 - `fleetdeck/notify.py`: ntfy, Gotify, Discord, Telegram, generic JSON webhook.
 - `fleetdeck/models.py`: pydantic models for API payloads and results.
@@ -96,10 +96,8 @@ Ruff: line length 120, rules E, F, W, I, UP, B. Run `ruff format .` before commi
   - WireGuard and SSH comments that start with `homelab-manager`.
   - Backup and state paths under `/var/backups/homelab-manager` and `/var/lib/homelab-manager`.
   Renaming any of them needs a migration that accepts both names.
-- Env vars: `FLEETDECK_*` is the current name. `HOMELAB_*` still works as a fallback (see `envvars.py`). The one
-  exception is the port: `HOMELAB_PORT` is no longer read. `FLEETDECK_PORT` is the host port that `docker-compose.yml`
-  maps to the container's `PORT` (8080). The Dockerfile sets its defaults under the `HOMELAB_*` names on purpose, so a
-  user's override still wins.
+- Env vars are all `FLEETDECK_*`; the old `HOMELAB_*` names are no longer read. `FLEETDECK_PORT` is the host port that
+  `docker-compose.yml` maps to the container's `PORT` (8080).
 - Screenshots in `docs/screenshots/` and README images use demo data only. Never put real hostnames, IPs or names in them.
 - Never copy, print or overwrite the app's SSH keys or the owner's keys. Keys stay on the server's `/data`.
 - Nothing merges to `main` without the owner's explicit go-ahead.

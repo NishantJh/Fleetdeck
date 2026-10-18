@@ -476,7 +476,7 @@ async def test_incus_backups_from_snapshots_and_exports():
         ],
         "/1.0/instances/web/backups": [{"name": "b0", "created_at": iso(50)}],
         # Only the dashboard's own pre-upgrade snapshot, which doesn't count, and an old export.
-        "/1.0/instances/old/snapshots": [{"name": "homelab_20261009_101010", "created_at": iso(1)}],
+        "/1.0/instances/old/snapshots": [{"name": "fleetdeck_20261009_101010", "created_at": iso(1)}],
         "/1.0/instances/old/backups": [{"name": "b0", "created_at": iso(100)}],
         "/1.0/instances/none/snapshots": [],
         "/1.0/instances/none/backups": [],

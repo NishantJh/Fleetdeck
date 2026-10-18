@@ -6,9 +6,9 @@ from fleetdeck.config import AppConfig, AuthConfig, IncusConfig, load_config, va
 
 def test_env_vars_expand_into_values_not_yaml(tmp_path, monkeypatch):
     # A secret with YAML-significant characters must survive intact.
-    monkeypatch.setenv("HOMELAB_PASSWORD", "abc #1: {x}")
+    monkeypatch.setenv("FLEETDECK_PASSWORD", "abc #1: {x}")
     cfg_file = tmp_path / "config.yaml"
-    cfg_file.write_text("auth:\n  password: ${HOMELAB_PASSWORD}\nhosts: []  # costs $5\n")
+    cfg_file.write_text("auth:\n  password: ${FLEETDECK_PASSWORD}\nhosts: []  # costs $5\n")
     cfg = load_config(str(cfg_file))
     assert cfg.auth.password == "abc #1: {x}"
 
@@ -22,7 +22,7 @@ def test_missing_env_var_is_an_error(tmp_path, monkeypatch):
 
 
 def test_missing_config_file_falls_back_to_empty(tmp_path, monkeypatch):
-    monkeypatch.setenv("HOMELAB_DEMO", "1")
+    monkeypatch.setenv("FLEETDECK_DEMO", "1")
     cfg = load_config(str(tmp_path / "absent.yaml"))
     assert cfg.demo and not cfg.proxmox
 
@@ -106,7 +106,7 @@ def test_example_config_is_valid(monkeypatch):
 
 
 def test_relative_state_file_is_next_to_config(tmp_path, monkeypatch):
-    monkeypatch.delenv("HOMELAB_STATE", raising=False)
+    monkeypatch.delenv("FLEETDECK_STATE", raising=False)
     cfg_file = tmp_path / "config.yaml"
     cfg_file.write_text("state_file: data/state.db\n")
     assert load_config(str(cfg_file)).state_file == str(tmp_path / "data" / "state.db")
@@ -137,7 +137,7 @@ def test_unreadable_files_are_reported(tmp_path, monkeypatch, caplog):
 
 def test_old_homelab_variable_name_still_expands(monkeypatch):
     monkeypatch.delenv("FLEETDECK_PASSWORD", raising=False)
-    monkeypatch.setenv("HOMELAB_PASSWORD", "x")
+    monkeypatch.setenv("FLEETDECK_PASSWORD", "x")
     cfg = validate_raw({"auth": {"password": "${FLEETDECK_PASSWORD}"}})
     assert cfg.auth.password == "x"
 

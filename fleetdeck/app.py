@@ -282,7 +282,7 @@ def create_app(
     @app.get("/api/report")
     async def error_report():
         """Everything that is failing, as a text file to attach when asking for help."""
-        name = f"homelab-errors-{datetime.now(UTC):%Y%m%d-%H%M}.txt"
+        name = f"fleetdeck-errors-{datetime.now(UTC):%Y%m%d-%H%M}.txt"
         return PlainTextResponse(
             build_report(cfg, inventory, jobs), headers={"Content-Disposition": f'attachment; filename="{name}"'}
         )
