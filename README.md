@@ -5,8 +5,10 @@
 > test suite on every change, and the owner approves each merge. It has **not** had an independent security
 > audit, so read [Safety](docs/DETAILED-README.md#safety) before you point it at machines you care about.
 
-One dashboard for the whole homelab: see what's pending and update it, keep Docker Compose stacks
-current, back up each machine's setup, and get notified when something needs attention.
+A self-hosted dashboard to update Proxmox, Incus, LXC, Docker and Linux servers from one place. Built for
+homelabs: it covers Proxmox VE hosts, LXCs and VMs, Incus, Docker Compose stacks, and plain Debian or Ubuntu
+machines such as a Raspberry Pi or VPS. See what's pending and update it, back up each machine's setup, and
+get notified when something needs attention.
 
 ![The dashboard (demo data)](docs/screenshots/dashboard-light.png#gh-light-mode-only)
 ![The dashboard (demo data)](docs/screenshots/dashboard-dark.png#gh-dark-mode-only)
