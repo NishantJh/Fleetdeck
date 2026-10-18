@@ -13,7 +13,7 @@ from typing import Protocol
 import httpx
 
 # Proxmox snapshot names: a letter first, then letters, digits, "-" and "_"; at most 40 characters.
-PREFIX = "homelab_"
+PREFIX = "fleetdeck_"
 
 
 def snapshot_name() -> str:

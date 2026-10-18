@@ -180,7 +180,7 @@ _DEMO_BACKUPS = {
         "sending the node's config to the Proxmox Backup Server storage pbs",
     ],
     "incus01": ["== Saving the Incus settings", "== Archiving the host's config"],
-    "pi4": ["== Archiving the machine's config", "wrote /var/backups/homelab-manager/homelab-config-pi4.tar.gz"],
+    "pi4": ["== Archiving the machine's config", "wrote /var/backups/homelab-manager/fleetdeck-config-pi4.tar.gz"],
 }
 
 

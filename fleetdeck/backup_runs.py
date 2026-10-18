@@ -47,7 +47,7 @@ from .host_backups import NO_PROMPTS, _env
 log = logging.getLogger(__name__)
 
 # Names of what this dashboard makes, so only those are ever pruned.
-FILE_PREFIX = "homelab-config-"
+FILE_PREFIX = "fleetdeck-config-"
 LOCAL_DIR = "/var/backups/homelab-manager"
 KEEP_FILES = 7
 AGE_SUFFIX = ".age"

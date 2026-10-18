@@ -105,18 +105,18 @@ async def test_pve_snapshot_api_calls():
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://pve/api2/json")
     s = PveSnapshots(client, "pve", "lxc", 101)
-    await s.create("homelab_x", "before")
-    await s.rollback("homelab_x")
+    await s.create("fleetdeck_x", "before")
+    await s.rollback("fleetdeck_x")
     assert await s.list_ours() == [f"{PREFIX}1"]
-    await s.delete("homelab_x")
+    await s.delete("fleetdeck_x")
     calls = [(m, p) for m, p, _ in seen if not p.endswith("/status")]
     assert calls == [
         ("POST", "/api2/json/nodes/pve/lxc/101/snapshot"),
-        ("POST", "/api2/json/nodes/pve/lxc/101/snapshot/homelab_x/rollback"),
+        ("POST", "/api2/json/nodes/pve/lxc/101/snapshot/fleetdeck_x/rollback"),
         ("GET", "/api2/json/nodes/pve/lxc/101/snapshot"),
-        ("DELETE", "/api2/json/nodes/pve/lxc/101/snapshot/homelab_x"),
+        ("DELETE", "/api2/json/nodes/pve/lxc/101/snapshot/fleetdeck_x"),
     ]
-    assert "snapname=homelab_x" in seen[0][2] and "start=1" in seen[2][2]
+    assert "snapname=fleetdeck_x" in seen[0][2] and "start=1" in seen[2][2]
 
 
 async def test_pve_snapshot_task_failure_is_reported():
@@ -129,7 +129,7 @@ async def test_pve_snapshot_task_failure_is_reported():
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://pve/api2/json")
     with pytest.raises(RuntimeError, match="feature is not available"):
-        await PveSnapshots(client, "pve", "qemu", 200).create("homelab_x", "d")
+        await PveSnapshots(client, "pve", "qemu", 200).create("fleetdeck_x", "d")
 
 
 async def test_incus_snapshot_api_calls():
@@ -153,11 +153,11 @@ async def test_incus_snapshot_api_calls():
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="http://incus")
     s = IncusSnapshots(client, "web", "lab")
-    await s.create("homelab_x", "d")
-    await s.rollback("homelab_x")
+    await s.create("fleetdeck_x", "d")
+    await s.rollback("fleetdeck_x")
     assert await s.list_ours() == [f"{PREFIX}1"]
     assert all(project == "lab" for _, _, project, _ in seen)
-    assert json.loads(seen[2][3]) == {"restore": "homelab_x"} and seen[2][0] == "PUT"
+    assert json.loads(seen[2][3]) == {"restore": "fleetdeck_x"} and seen[2][0] == "PUT"
 
 
 def test_demo_upgrade_with_snapshot_and_rollback():
@@ -228,5 +228,5 @@ async def test_pve_task_with_warnings_counts_as_done():
         return httpx.Response(200, json={"data": "UPID"})
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url="https://pve/api2/json")
-    warning = await PveSnapshots(client, "pve", "qemu", 200).create("homelab_x", "d")
+    warning = await PveSnapshots(client, "pve", "qemu", 200).create("fleetdeck_x", "d")
     assert "warnings: 1" in warning

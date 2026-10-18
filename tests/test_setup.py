@@ -352,7 +352,7 @@ def test_provisioning_scripts_are_valid_sh(tmp_path):
 
 
 def test_drop_privileges_only_in_the_image(monkeypatch):
-    monkeypatch.delenv("HOMELAB_DATA", raising=False)
+    monkeypatch.delenv("FLEETDECK_DATA", raising=False)
     calls = []
     monkeypatch.setattr(os, "setuid", lambda uid: calls.append(uid))
     drop_privileges()
@@ -375,7 +375,7 @@ def test_drop_privileges_ownership(tmp_path, monkeypatch, owner, env, expected):
     (data / "keys" / "f").write_text("x")
     os.chown(data, owner, owner)
     os.chmod(data, 0o755)
-    monkeypatch.setenv("HOMELAB_DATA", str(data))
+    monkeypatch.setenv("FLEETDECK_DATA", str(data))
     monkeypatch.delenv("PUID", raising=False)
     monkeypatch.delenv("PGID", raising=False)
     for k, v in env.items():

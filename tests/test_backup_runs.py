@@ -63,13 +63,13 @@ async def test_plain_host_archives_config_and_keeps_the_newest_seven(tree):
     out.mkdir()
     host = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
     for i in range(9):
-        (out / f"homelab-config-{host}-2020010{i + 1}_000000.tar.gz").write_text("x")
-        os.utime(out / f"homelab-config-{host}-2020010{i + 1}_000000.tar.gz", (1000 + i, 1000 + i))
+        (out / f"fleetdeck-config-{host}-2020010{i + 1}_000000.tar.gz").write_text("x")
+        os.utime(out / f"fleetdeck-config-{host}-2020010{i + 1}_000000.tar.gz", (1000 + i, 1000 + i))
     (out / "mine.txt").write_text("not ours")
     got, cb = lines()
     r = await LocalExecutor().run(script(None, tmp, etc), cb)
     assert r.rc == 0, got
-    archives = sorted(out.glob("homelab-config-*.tar.gz"))
+    archives = sorted(out.glob("fleetdeck-config-*.tar.gz"))
     assert len(archives) == 7 and (out / "mine.txt").exists()
     new = next(a for a in archives if "_000000" not in a.name)
     assert stat.S_IMODE(new.stat().st_mode) == 0o600
@@ -83,8 +83,8 @@ async def test_pruning_leaves_other_hosts_archives_in_a_shared_folder(tree):
     out = tmp / "out"
     out.mkdir()
     host = subprocess.run(["hostname"], capture_output=True, text=True).stdout.strip()
-    others = [f"homelab-config-nas-2020010{i}_000000.tar.gz" for i in range(1, 9)]
-    others.append(f"homelab-config-{host}-2-20200101_000000.tar.gz")  # a host named like ours plus a suffix
+    others = [f"fleetdeck-config-nas-2020010{i}_000000.tar.gz" for i in range(1, 9)]
+    others.append(f"fleetdeck-config-{host}-2-20200101_000000.tar.gz")  # a host named like ours plus a suffix
     for i, name in enumerate(others):
         (out / name).write_text("x")
         os.utime(out / name, (1000 + i, 1000 + i))
@@ -92,7 +92,7 @@ async def test_pruning_leaves_other_hosts_archives_in_a_shared_folder(tree):
     r = await LocalExecutor().run(script(None, tmp, etc), cb)
     assert r.rc == 0, got
     assert all((out / n).exists() for n in others)
-    assert len(list(out.glob("homelab-config-*.tar.gz"))) == len(others) + 1
+    assert len(list(out.glob("fleetdeck-config-*.tar.gz"))) == len(others) + 1
 
 
 async def test_backup_folder_is_used_when_the_machine_has_one(tree):
@@ -100,7 +100,7 @@ async def test_backup_folder_is_used_when_the_machine_has_one(tree):
     dest = tmp / "nas"
     dest.mkdir()
     r = await LocalExecutor().run(script(HostBackupConfig(type="path", path=str(dest)), tmp, etc))
-    assert r.rc == 0 and len(list(dest.glob("homelab-config-*.tar.gz"))) == 1
+    assert r.rc == 0 and len(list(dest.glob("fleetdeck-config-*.tar.gz"))) == 1
     assert not (tmp / "out").exists()
 
 
@@ -131,7 +131,7 @@ def test_restic_and_borg_get_the_config_and_never_prompt():
     assert r.startswith("exec </dev/null;") and "restic -r /mnt/r backup --tag homelab-manager" in r
     assert ". /root/r.env" in r
     b = config_script(HostBackupConfig(type="borg", repository="/mnt/b"))
-    assert "BORG_RELOCATED_REPO_ACCESS_IS_OK=no" in b and "borg create --stats /mnt/b::homelab-config-" in b
+    assert "BORG_RELOCATED_REPO_ACCESS_IS_OK=no" in b and "borg create --stats /mnt/b::fleetdeck-config-" in b
 
 
 def pbs_env(tmp_path, *, with_client=True, extra_cfg=""):
@@ -359,7 +359,7 @@ async def test_destination_script_refuses_a_missing_folder_and_quotes_it(tree):
     odd = tmp / "my $(touch pwned) share"
     odd.mkdir()
     r = await LocalExecutor().run(script(None, tmp, etc, destination=str(odd)))
-    assert r.rc == 0 and len(list(odd.glob("homelab-config-*.tar.gz"))) == 1 and not (tmp / "pwned").exists()
+    assert r.rc == 0 and len(list(odd.glob("fleetdeck-config-*.tar.gz"))) == 1 and not (tmp / "pwned").exists()
     assert not (tmp / "out").exists()
     # A folder asked for in this run also beats the PBS storage on a Proxmox node.
     env = pbs_env(tmp)
@@ -382,7 +382,7 @@ async def test_backup_is_refused_where_there_is_none():
 
 
 def test_module_names_only_its_own_backups_for_pruning():
-    assert backup_runs.FILE_PREFIX.startswith("homelab-config-")
+    assert backup_runs.FILE_PREFIX.startswith("fleetdeck-config-")
 
 
 # ---- save on the dashboard: the archive is streamed back over SSH ----
@@ -410,7 +410,7 @@ async def test_save_on_dashboard_streams_a_valid_archive_into_the_machine_folder
     folder = tmp / "backups"
     folder.mkdir()
     got = await run_stream(tmp, etc, folder, "my pi/4")
-    files = list((folder / "fleetdeck" / "my_pi_4").glob("homelab-config-*.tar.gz"))
+    files = list((folder / "fleetdeck" / "my_pi_4").glob("fleetdeck-config-*.tar.gz"))
     assert len(files) == 1 and f"wrote {files[0]}" in got[-1]
     assert not list((folder / "fleetdeck" / "my_pi_4").glob(".*.part")) and not (tmp / "out").exists()
     with tarfile.open(files[0]) as t:
@@ -425,10 +425,10 @@ async def test_save_on_dashboard_keeps_the_newest_seven_and_only_ours(tree):
     sub = tmp / "backups" / "fleetdeck" / "pi"
     sub.mkdir(parents=True)
     for i in range(9):
-        (sub / f"homelab-config-2020010{i}_000000.tar.gz").write_text("x")
+        (sub / f"fleetdeck-config-2020010{i}_000000.tar.gz").write_text("x")
     (sub / "mine.tar.gz").write_text("not ours")
     await run_stream(tmp, etc, tmp / "backups", "pi")
-    assert len(list(sub.glob("homelab-config-*.tar.gz"))) == 7 and (sub / "mine.tar.gz").exists()
+    assert len(list(sub.glob("fleetdeck-config-*.tar.gz"))) == 7 and (sub / "mine.tar.gz").exists()
 
 
 async def test_save_on_dashboard_needs_the_folder_to_be_there_and_writable(tree):
@@ -489,7 +489,7 @@ async def test_incus_saves_settings_and_etc_into_the_machine_folder(tmp_path):
     finally:
         backup_runs.DEFAULT_PATHS = old
     assert len(list((folder / "fleetdeck" / "skulls").glob("incus-settings-*.json"))) == 1
-    assert len(list((folder / "fleetdeck" / "skulls").glob("homelab-config-*.tar.gz"))) == 1
+    assert len(list((folder / "fleetdeck" / "skulls").glob("fleetdeck-config-*.tar.gz"))) == 1
     assert not (tmp_path / "data").exists()
 
 
@@ -539,7 +539,7 @@ async def test_archive_on_the_machine_is_encrypted_and_pruned_by_name(tree):
     got, cb = lines()
     r = await LocalExecutor(_fake_age(tmp)).run(script(None, tmp, etc, age_recipient=KEY), cb)
     assert r.rc == 0, got
-    (archive,) = out.glob("homelab-config-*.tar.gz.age")
+    (archive,) = out.glob("fleetdeck-config-*.tar.gz.age")
     assert archive.read_bytes().startswith(b"AGE-ENCRYPTED\n")
     assert not list(out.glob("*.tar.gz"))  # no plain archive left next to it
 
@@ -551,7 +551,7 @@ async def test_no_age_on_the_machine_writes_nothing_unencrypted(tree):
     if subprocess.run(["sh", "-c", "command -v age"], capture_output=True).returncode == 0:
         pytest.skip("age is installed here")
     r = await LocalExecutor().run(script(None, tmp, etc, age_recipient=KEY), lines()[1])
-    assert r.rc == 127 and not list(out.glob("homelab-config-*"))
+    assert r.rc == 127 and not list(out.glob("fleetdeck-config-*"))
 
 
 @pytest.mark.skipif(os.name == "nt", reason="needs a POSIX shell")

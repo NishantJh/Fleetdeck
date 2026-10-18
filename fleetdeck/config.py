@@ -347,11 +347,8 @@ def _expand(value, missing: set[str]):
 
         def sub(m: re.Match) -> str:
             name = m[1]
-            if name not in os.environ and name.startswith(("FLEETDECK_", "HOMELAB_")):
-                # The same variable under its other name (the project used to be called Homelab Manager).
-                name = ("HOMELAB_" if name.startswith("FLEETDECK_") else "FLEETDECK_") + name.split("_", 1)[1]
             if name not in os.environ:
-                missing.add(m[1])
+                missing.add(name)
                 return m[0]
             return os.environ[name]
 
