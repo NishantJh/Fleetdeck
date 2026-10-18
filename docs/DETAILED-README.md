@@ -40,7 +40,8 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
 * **Scheduled checks:** set `schedule.check_every` (e.g. `6h`) and the dashboard checks everything on
   its own, then notifies you through ntfy, Gotify, Discord, Telegram or a JSON webhook when something
   new is pending (a new update, a new pending reboot, or a check that started failing). It never
-  upgrades on its own. *Test notification* in the toolbar sends a test message.
+  upgrades on its own. Add `check_docker: true` under `schedule` to look for newer Docker images too;
+  that pulls the images on every machine with Docker each round, so it is off by default. *Test notification* in the toolbar sends a test message.
 * **Backups:** each Proxmox guest shows when it was last backed up (vzdump or Proxmox Backup
   Server), turns orange once that's older than `backup_max_age_hours` (48 by default), and is flagged
   *none*, *no job* (not in any scheduled backup job) or *verify failed*. This needs `Datastore.Audit`,
