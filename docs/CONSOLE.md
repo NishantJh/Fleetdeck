@@ -92,6 +92,7 @@ console:
     - 172.16.0.0/12
     - 192.168.0.0/16
     - fc00::/7
+    - 100.64.0.0/10       # Tailscale, Headscale, NetBird
   allow_plain_http: true  # works over http:// from the allowed networks, with a warning; false blocks it
   unlock_minutes: 15
   keep_days: 90           # audit log retention
@@ -99,6 +100,13 @@ console:
   exclude: []             # machine names or ids that never get it
 ```
 
+- **VPN.** A WireGuard VPN that hands out private addresses (10.x, 192.168.x) is covered as it is. Tailscale, Headscale
+  and NetBird use 100.64.0.0/10, which is in the default list. Any other VPN range is added to `allow_from`.
+- **Behind a reverse proxy or tunnel** (Caddy, Pangolin, Cloudflare Tunnel), every request arrives from the proxy's
+  own address, which is usually private, so internet visitors would look private too. The client address therefore
+  comes from `X-Forwarded-For` only when the proxy is listed in `trusted_proxies`. When a request arrives from a
+  private address but carries `X-Forwarded-For` from a proxy that isn't trusted, the console refuses it and says
+  to add the proxy to `trusted_proxies`.
 - Enabled only from the config file or the environment, both of which need access to the server. The setup page shows
   whether it is on and how to turn it on, but has no switch.
 - With `enabled: true` but no `auth`, the dashboard logs a warning and leaves it off.
@@ -222,6 +230,6 @@ the HTTP middleware's CSRF check doesn't cover a GET upgrade.
 
 ## Decisions (Nishant, 2026-10-19)
 
-1. Networks: private and loopback only by default.
+1. Networks: private and loopback only by default, plus 100.64.0.0/10 so a VPN (Tailscale and the like) works for debugging.
 2. Plain HTTP on the LAN: allowed, with a warning.
 3. Notifications when a terminal opens or a guarded command runs: on by default.
