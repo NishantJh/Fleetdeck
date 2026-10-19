@@ -11,9 +11,9 @@ an LXC or Incus container, a VM, or a Docker container on any of them.
    machine. Then an **interactive terminal** on the machines whose transport can give a real terminal.
 2. **Off by default, and only switched on from the server.** `console.enabled: true` in `config.yaml` or
    `FLEETDECK_CONSOLE=1`. There is no switch in the web page, so a stolen dashboard password alone can't turn it on.
-3. **It needs a login and a secure connection.** It refuses to start without `auth`, and refuses requests over plain
-   HTTP from anywhere but the machine itself, unless `console.allow_plain_http: true`. By default it only answers
-   private and loopback addresses.
+3. **It needs a login and a private network.** It refuses to start without `auth`, and only answers private and
+   loopback addresses. Over plain HTTP it still works, under a red warning that the password and every command cross
+   the network unencrypted; `console.allow_plain_http: false` blocks it there.
 4. **Unlock with the password again.** Opening it asks for the password, which gives a short-lived unlock (15 minutes
    idle, 1 hour at most) held only in the page's memory.
 5. **Commands run as root, and the page says so.** That is what every transport already gives. There is no pretend
@@ -44,7 +44,7 @@ browser to a root shell. The design is about guarding that path.
 | --- | --- |
 | Someone has the dashboard password | Off unless enabled on the server; private networks only by default; audit log and notifications show use. |
 | An unattended, logged-in browser | Password again to unlock; unlock lives in page memory, ends after 15 idle minutes and on reload. |
-| Password sniffed on plain HTTP | Basic auth on HTTP sends the password in the clear; the console refuses plain HTTP by default. |
+| Password sniffed on plain HTTP | Basic auth on HTTP sends the password in the clear; the console warns on every open over plain HTTP, and `allow_plain_http: false` blocks it. |
 | Another site drives the browser (CSRF) | Existing `cross_site` check covers POSTs. WebSockets are GET, so the terminal checks `Origin` itself. |
 | Command text breaks out of quoting | The command is one argument to `sh -c`, quoted with `shlex.quote`, as every script is today. Container names are checked against the list the machine returned and a name pattern. |
 | Output attacks the page (HTML, escape codes) | One-off output is shown as text (`textContent`), with control characters other than tab and newline stripped. The terminal renders through xterm.js, which handles escape codes. |
@@ -92,7 +92,7 @@ console:
     - 172.16.0.0/12
     - 192.168.0.0/16
     - fc00::/7
-  allow_plain_http: false # true lets it work over http:// from the allowed networks
+  allow_plain_http: true  # works over http:// from the allowed networks, with a warning; false blocks it
   unlock_minutes: 15
   keep_days: 90           # audit log retention
   notify: true            # notify when a terminal opens or a guarded command runs
@@ -111,8 +111,11 @@ console:
 
 - A request counts as secure when the dashboard serves HTTPS itself (`TLS_CERT`), when it comes through a trusted proxy
   that says `X-Forwarded-Proto: https` (uvicorn already honours `trusted_proxies`), or when it comes from loopback.
-- On plain HTTP from any other address the API answers 403 with "the console needs HTTPS; see docs (Caddy)" and the page
-  shows the same text in place of the dialog. This builds on the existing plain-HTTP banner.
+- On plain HTTP from any other address the dialog and the terminal show a red warning: "This connection isn't
+  encrypted. Your password and every command and its output can be read on the network. Put the dashboard behind
+  HTTPS (see docs, Caddy)." The audit log marks such runs as "http". This builds on the existing plain-HTTP banner.
+- With `allow_plain_http: false` the API answers 403 there instead, and the page shows the same text in place of the
+  dialog.
 
 ### Unlock (re-auth)
 
@@ -184,7 +187,8 @@ the HTTP middleware's CSRF check doesn't cover a GET upgrade.
 ## Audit log
 
 - A new SQLite table `console_log` in `store.py`: time, user, client address, user agent, machine id and name,
-  container, kind (`run`, `terminal`, `unlock`, `unlock-failed`), command text, guarded yes/no, exit code, duration,
+  container, kind (`run`, `terminal`, `unlock`, `unlock-failed`), command text, guarded yes/no, plain HTTP yes/no,
+  exit code, duration,
   and for one-off runs the last 4 KB of output.
 - For terminal sessions it records open and close with the duration, not the keystrokes: they would hold passwords
   typed into other programs. A `console.record_terminal: true` option can save full transcripts later if wanted.
@@ -216,8 +220,8 @@ the HTTP middleware's CSRF check doesn't cover a GET upgrade.
 - A terminal for Proxmox VMs without SSH (Proxmox's own serial console proxy).
 - Per-user permissions: the dashboard has one login today.
 
-## Questions for Nishant
+## Decisions (Nishant, 2026-10-19)
 
-1. Default networks: private and loopback only, as above, or any address once enabled?
-2. Plain HTTP on the LAN: blocked unless `allow_plain_http: true` (recommended), or allowed with a warning?
-3. Notifications when a terminal opens or a guarded command runs: on by default (recommended) or off?
+1. Networks: private and loopback only by default.
+2. Plain HTTP on the LAN: allowed, with a warning.
+3. Notifications when a terminal opens or a guarded command runs: on by default.
