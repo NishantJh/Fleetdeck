@@ -34,6 +34,7 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 ### 3. Toward the "ultimate" dashboard
 - [ ] Live resource view (CPU/RAM/disk) for nodes and guests
 - [ ] Start/stop/restart guests
+- [ ] Run commands on any machine or Docker container: a Run command box first, then an interactive terminal; off by default ([spec](CONSOLE.md))
 - [x] Docker/Compose stacks on any machine or guest: find them, check for newer images, update one stack (pull + `up -d`, optional image prune)
 - [ ] Docker: schedule image checks, notify, update all stacks at once, per-container actions
 - [x] Backup status: last backup per guest (vzdump/PBS), stale, not in a job, failed verification
