@@ -302,7 +302,7 @@ class Runs:
     def __init__(self, fail=False):
         self.fail = fail
 
-    async def run(self, on_line, destination=None, dashboard_folder=None, age_recipient=None):
+    async def run(self, on_line, destination=None, dashboard_folder=None, age_recipient=None, password=None):
         self.folder = dashboard_folder
         on_line("stdout", f"step one {destination or ''}".strip())
         if self.fail:
@@ -564,3 +564,101 @@ def test_dashboard_side_encrypt_runs_age(tmp_path, monkeypatch):
     monkeypatch.setenv("PATH", str(tmp_path / "nowhere"))
     with pytest.raises(RuntimeError, match="age is not installed"):
         backup_runs._encrypt(plain, out, KEY)
+
+
+def _no_hostname(tmp_path):
+    """A PATH where `hostname` and `uname` print nothing, like a machine without the hostname program."""
+    bin_dir = tmp_path / "nohost"
+    bin_dir.mkdir()
+    for name in ("hostname", "uname"):
+        (bin_dir / name).write_text("#!/bin/sh\nexit 127\n")
+        (bin_dir / name).chmod(0o755)
+    return {"PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+
+
+@pytest.mark.skipif(os.name == "nt", reason="needs a POSIX shell")
+async def test_archive_without_a_hostname_is_named_after_the_machine(tree):
+    tmp, etc = tree
+    (tmp / "out").mkdir()
+    got, cb = lines()
+    r = await LocalExecutor(_no_hostname(tmp)).run(script(None, tmp, etc, name="pve 2"), cb)
+    assert r.rc == 0, got
+    (archive,) = (tmp / "out").glob("fleetdeck-config-*.tar.gz")
+    assert archive.name.startswith("fleetdeck-config-pve_2-")
+
+
+async def test_save_on_dashboard_puts_the_machine_in_the_file_name(tree):
+    tmp, etc = tree
+    folder = tmp / "backups"
+    folder.mkdir()
+    await run_stream(tmp, etc, folder, "my pi/4")
+    (f,) = (folder / "fleetdeck" / "my_pi_4").glob("fleetdeck-config-*.tar.gz")
+    assert backup_runs.STAMP_RE.fullmatch(f.name.removeprefix("fleetdeck-config-my_pi_4-").removesuffix(".tar.gz"))
+
+
+async def test_pruning_goes_by_date_whatever_the_machine_is_called(tree):
+    tmp, etc = tree
+    sub = tmp / "backups" / "fleetdeck" / "10.0.0.5"
+    sub.mkdir(parents=True)
+    # Names from before the machine was in them sort after "10.0..." by name, but are older.
+    for i in range(7):
+        (sub / f"fleetdeck-config-2020010{i}_000000.tar.gz").write_text("x")
+    await run_stream(tmp, etc, tmp / "backups", "10.0.0.5")
+    names = sorted(p.name for p in sub.glob("fleetdeck-config-*.tar.gz"))
+    assert len(names) == 7 and "fleetdeck-config-20200100_000000.tar.gz" not in names
+    assert any(n.startswith("fleetdeck-config-10.0.0.5-") for n in names)
+
+
+async def test_save_on_dashboard_with_a_password_writes_an_age_file_it_opens(tree):
+    from test_agecrypt import decrypt
+
+    tmp, etc = tree
+    folder = tmp / "backups"
+    folder.mkdir()
+    run = SshHostBackup(FakeSSH(), None, name="pi")
+    old, backup_runs.DEFAULT_PATHS = backup_runs.DEFAULT_PATHS, (str(etc),)
+    old_n, backup_runs.agecrypt.WORK_FACTOR = backup_runs.agecrypt.WORK_FACTOR, 10
+    try:
+        # The password wins over a key on the dashboard: an age file can't have both.
+        await run.run(lines()[1], DASHBOARD, folder, age_recipient=KEY, password="correct horse")
+    finally:
+        backup_runs.DEFAULT_PATHS, backup_runs.agecrypt.WORK_FACTOR = old, old_n
+    sub = folder / "fleetdeck" / "pi"
+    (f,) = sub.glob("fleetdeck-config-pi-*.tar.gz.age")
+    assert [p.name for p in sub.iterdir()] == [f.name]  # no plain archive or temp file left
+    out = tmp / "back.tar.gz"
+    out.write_bytes(decrypt(f.read_bytes(), "correct horse"))
+    with tarfile.open(out) as t:
+        assert any(n.endswith("hosts") for n in t.getnames())
+
+
+@pytest.mark.skipif(os.name == "nt", reason="needs a POSIX shell")
+async def test_a_password_alone_writes_nothing_unencrypted_on_the_machine(tree):
+    tmp, etc = tree
+    out = tmp / "out"
+    run = SshHostBackup(LocalExecutor(), None, name="pi")
+    got, cb = lines()
+    old, backup_runs.DEFAULT_PATHS = backup_runs.DEFAULT_PATHS, (str(etc),)
+    try:
+        with pytest.raises(RuntimeError, match="only encrypts backups saved on the dashboard"):
+            await run.run(cb, str(tmp), password="correct horse")
+    finally:
+        backup_runs.DEFAULT_PATHS = old
+    assert not list(tmp.glob("fleetdeck-config-*")) and not out.exists()
+
+
+def test_with_a_key_too_the_machine_uses_the_key():
+    s = config_script(None, age_recipient=KEY, refuse_plain=True)
+    assert f"age -r {KEY}" in s and "exit 6" not in s
+    assert "exit 6" in config_script(None, refuse_plain=True)
+    # restic and borg keep their own encryption, so a password doesn't stop them.
+    assert "exit 6" not in config_script(HostBackupConfig(type="restic", repository="/r"), refuse_plain=True)
+
+
+def test_backup_password_is_checked():
+    from fleetdeck.config import AppConfig
+
+    with pytest.raises(ValueError, match="at least 8"):
+        AppConfig(backup_password="short")
+    assert AppConfig(backup_password="long enough").backup_password == "long enough"
+    assert AppConfig().backup_password is None
