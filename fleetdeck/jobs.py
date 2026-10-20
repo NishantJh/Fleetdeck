@@ -100,12 +100,15 @@ class JobManager:
         community_scripts_update: bool = True,
         backup_folder: Path | None = None,
         age_recipient: str | None = None,
+        backup_password: str | None = None,
     ):
         self.inventory = inventory
         # Where backups that are saved on the dashboard go (see backup_runs.DASHBOARD).
         self.backup_folder = backup_folder
         # Encrypt host config archives to this age public key (None: they are not encrypted).
         self.age_recipient = age_recipient
+        # Encrypt archives saved on the dashboard with this password instead (see config.backup_password).
+        self.backup_password = backup_password
         self.snapshot_keep = snapshot_keep
         self.community_scripts_update = community_scripts_update
         self.sem = asyncio.Semaphore(max_parallel)
@@ -312,13 +315,17 @@ class JobManager:
                             else ""
                         )
                     )
-                    if not self.age_recipient:
+                    if not self.age_recipient and not self.backup_password:
                         job.log.append(
                             "! The archive is not encrypted and holds secrets "
-                            "(set backup_age_recipient to a public age key)"
+                            "(set backup_password, or backup_age_recipient to a public age key)"
                         )
                     await self.inventory.backup_runs[job.target_id].run(
-                        on_line, job.destination, dashboard_folder=self.backup_folder, age_recipient=self.age_recipient
+                        on_line,
+                        job.destination,
+                        dashboard_folder=self.backup_folder,
+                        age_recipient=self.age_recipient,
+                        password=self.backup_password,
                     )
                     job.log.append("== Backup finished")
                 elif job.action == "check":

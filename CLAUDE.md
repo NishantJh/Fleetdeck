@@ -38,6 +38,8 @@ Backups
   key from a passphrase. Written encrypted, downloaded by the browser, never stored on the server.
 - `fleetdeck/backup_runs.py`: the "Back up" button on a host. Backs up host settings only, never guests.
   Proxmox: `/etc` (includes `/etc/pve`) over SSH, to Proxmox Backup Server storage or a local archive.
+- `fleetdeck/agecrypt.py`: writes age passphrase files (`backup_password`), since the `age` program only takes a passphrase
+  from a terminal. `age -d` opens them.
 - `fleetdeck/host_backups.py`: reads the newest backup of a plain machine from a folder or a restic/borg repo.
   Read-only: restic runs with `--no-lock`, borg with `--bypass-lock`.
 

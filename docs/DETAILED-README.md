@@ -68,7 +68,7 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
       has SSH settings.
   * **On the dashboard** (recommended for one shared place for every machine): the archive is sent back over
     the connection the dashboard already uses (SSH, through a tunnel too) and saved as
-    `<backup folder>/fleetdeck/<machine name>/fleetdeck-config-<date>_<time>.tar.gz` (the Incus host also gets
+    `<backup folder>/fleetdeck/<machine name>/fleetdeck-config-<machine name>-<date>_<time>.tar.gz` (the Incus host also gets
     `incus-settings-<date>_<time>.json` there). Nothing is written on the machine and nothing needs mounting
     there. The dashboard only ever writes inside its `fleetdeck/` folder, and changes nothing else in the
     mount, including owners and permissions. Each file is written under a temporary name and renamed when
@@ -108,7 +108,13 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   `/etc/pve/priv`). Set `backup_age_recipient` to an [age](https://github.com/FiloSottile/age) public key (`age-keygen` makes the pair; keep the private key in your
   password manager) and archives are written encrypted as `.tar.gz.age`, with no passphrase to type. Restore with
   `age -d -i key.txt file.tar.gz.age | tar xz`. A machine that writes the archive itself needs `age` installed.
-  Without the setting the archive is not encrypted, so keep it where you keep other secrets:
+  Or set one `backup_password` (8 characters or more; `${BACKUP_PASSWORD}` reads it from the environment) and
+  archives saved on the dashboard are written as `.tar.gz.age` files locked with it. Restore with
+  `age -d file.tar.gz.age | tar xz`, which asks for the password. `age` can only take a password from a terminal,
+  so it can't lock an archive written on the machine itself: with only a password set, those backups stop with an
+  error rather than write an unencrypted archive. Save those machines on the dashboard, or set
+  `backup_age_recipient` as well (then the machine uses the key and the dashboard uses the password).
+  Without either setting the archive is not encrypted, so keep it where you keep other secrets:
   turn on client-side encryption for the PBS storage, or use a folder only you can read (archives are
   written readable by root only). To rebuild a node: reinstall Proxmox, restore `/etc/network`, then
   `/etc/pve` (or re-add storage and restore the guests from their own backups).
