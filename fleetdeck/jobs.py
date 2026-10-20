@@ -100,12 +100,15 @@ class JobManager:
         community_scripts_update: bool = True,
         backup_folder: Path | None = None,
         age_recipient: str | None = None,
+        backup_password: str | None = None,
     ):
         self.inventory = inventory
         # Where backups that are saved on the dashboard go (see backup_runs.DASHBOARD).
         self.backup_folder = backup_folder
         # Encrypt host config archives to this age public key (None: they are not encrypted).
         self.age_recipient = age_recipient
+        # Encrypt archives saved on the dashboard with this password instead (see config.backup_password).
+        self.backup_password = backup_password
         self.snapshot_keep = snapshot_keep
         self.community_scripts_update = community_scripts_update
         self.sem = asyncio.Semaphore(max_parallel)
@@ -118,8 +121,6 @@ class JobManager:
         self._tasks: set[asyncio.Task] = set()
         # Hosts that are rebooting, or waiting for their guests' jobs so they can reboot.
         self._rebooting: set[str] = set()
-        # Hosts with an upgrade or reboot under way (past waiting for their guests): guests on them wait.
-        self._host_busy: set[str] = set()
         # Machines hidden from the dashboard: left out of scheduled checks and their notifications.
         self.hidden: set[str] = set()
         # Host id -> the folder its Back up button is set to use every time.
@@ -286,8 +287,6 @@ class JobManager:
                     job.log.append("== Dashboard restarted; picking this job up again")
                     async with slot.released():
                         target, executor = await self._find_again(job)
-                    if target.kind == "host" and job.action in ("upgrade", "reboot"):
-                        self._host_busy.add(target.id)
                     await self._continue(job, target, executor, on_line, slot)
                     job.status = "succeeded"
                     return
@@ -316,13 +315,17 @@ class JobManager:
                             else ""
                         )
                     )
-                    if not self.age_recipient:
+                    if not self.age_recipient and not self.backup_password:
                         job.log.append(
                             "! The archive is not encrypted and holds secrets "
-                            "(set backup_age_recipient to a public age key)"
+                            "(set backup_password, or backup_age_recipient to a public age key)"
                         )
                     await self.inventory.backup_runs[job.target_id].run(
-                        on_line, job.destination, dashboard_folder=self.backup_folder, age_recipient=self.age_recipient
+                        on_line,
+                        job.destination,
+                        dashboard_folder=self.backup_folder,
+                        age_recipient=self.age_recipient,
+                        password=self.backup_password,
                     )
                     job.log.append("== Backup finished")
                 elif job.action == "check":
@@ -368,22 +371,19 @@ class JobManager:
                 if job.action == "check":
                     self._record_check_error(job.target_id, job.error)
             finally:
-                self._host_busy.discard(job.target_id)
                 # A cancelled job is still "running": shutdown() records it, as interrupted or to resume.
                 if job.status in ("succeeded", "failed"):
                     job.finished_at = _now()
                     self._save_job(job)
 
     async def _wait_unblocked(self, job: Job, target: Target, slot: _Slot) -> None:
-        """The check at submit is not enough: a job that was queued may start when a guest (or the host)
-        has begun updating since. Wait for it, without holding a slot, then mark a host as busy."""
+        """The check at submit is not enough: a job that was queued may start when a guest has begun
+        updating since. Wait for it, without holding a slot."""
         if why := self.update_blocked(target):
             job.log.append(f"== Not starting yet: {why}")
             async with slot.released():
                 while self.update_blocked(target):
                     await asyncio.sleep(1)
-        if target.kind == "host":
-            self._host_busy.add(target.id)
 
     async def _find_again(self, job: Job) -> tuple[Target, object]:
         """The job's target after a restart, once discovery has found it (and it can run commands)."""
@@ -564,11 +564,9 @@ class JobManager:
     def update_blocked(self, target: Target) -> str | None:
         """Why a machine can't be updated or rebooted right now, if it can't.
 
-        Docker stacks on it are updating, or (for a host) a guest on it is updating, rebooting or rolling
-        back, or (for a guest) its host is being updated.
+        Its own Docker stacks are updating, or (for a host) a guest on it is updating, updating Docker,
+        rebooting or rolling back. A guest is never held back by its host updating.
         """
-        if (host_id := self._host_id(target)) in self._host_busy:
-            return f"waiting for {self.inventory.targets[host_id][0].name} to finish updating"
         busy = [j for j in self.jobs.values() if j.target_id == target.id and j.action == "stack-update"]
         if target.kind == "host":
             busy += [j for j in self._guest_jobs(target) if j.action in GUEST_ACTIONS_BLOCKING_HOST]

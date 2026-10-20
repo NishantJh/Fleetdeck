@@ -121,6 +121,7 @@ def create_app(
         cfg.community_scripts_update,
         backup_folder,
         cfg.backup_age_recipient,
+        cfg.backup_password,
     )
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
     scheduler = Scheduler(cfg.schedule.check_every, inventory, jobs, notifier, store, cfg.schedule.check_docker)

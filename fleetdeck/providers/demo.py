@@ -163,7 +163,9 @@ class DemoBackup:
     def __init__(self, steps: list[str]):
         self.steps = steps
 
-    async def run(self, on_line, destination: str | None = None, dashboard_folder=None, age_recipient=None) -> None:
+    async def run(
+        self, on_line, destination: str | None = None, dashboard_folder=None, age_recipient=None, password=None
+    ) -> None:
         for step in self.steps:
             on_line("stdout", step)
             await asyncio.sleep(0.5)

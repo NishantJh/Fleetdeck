@@ -40,6 +40,7 @@ from typing import Protocol
 
 import httpx
 
+from . import agecrypt
 from .config import HostBackupConfig, IncusConfig
 from .executors import LineCallback, SSHExecutor
 from .host_backups import NO_PROMPTS, _env
@@ -53,6 +54,7 @@ KEEP_FILES = 7
 AGE_SUFFIX = ".age"
 AGE_RECIPIENT = re.compile(r"^age1[a-z0-9]{50,}$")
 STAMP_GLOB = "[0-9]" * 8 + "_" + "[0-9]" * 6  # matches the STAMP of the script, e.g. 20260101_030000
+STAMP_RE = re.compile(r"\d{8}_\d{6}")
 # The place to choose for "save on the dashboard", in a run's destination and a machine's saved place.
 DASHBOARD = "dashboard"
 # Everything saved on the dashboard goes in this folder inside the backup folder; nothing else there is touched.
@@ -83,6 +85,11 @@ def _stamp() -> str:
     return datetime.now(UTC).strftime("%Y%m%d_%H%M%S")
 
 
+def safe_name(name: str) -> str:
+    """``name`` as it can go in a file name: letters, digits, ``.``, ``_`` and ``-`` only."""
+    return re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".") or "machine"
+
+
 def machine_folder(folder: Path | None, name: str) -> Path:
     """``<folder>/fleetdeck/<machine>/`` in the dashboard's backup folder, made if needed. The backup folder itself
     must be there already, so a share that is not mounted is an error, not a folder on the wrong disk."""
@@ -90,7 +97,7 @@ def machine_folder(folder: Path | None, name: str) -> Path:
         raise RuntimeError("no backup folder on the dashboard is set: set backup_folder in the config")
     if not folder.is_dir():
         raise RuntimeError(f"{folder} does not exist in the dashboard's container (is the folder mounted?)")
-    sub = folder / APP_FOLDER / (re.sub(r"[^A-Za-z0-9._-]", "_", name).lstrip(".") or "machine")
+    sub = folder / APP_FOLDER / safe_name(name)
     try:
         sub.mkdir(mode=0o700, parents=True, exist_ok=True)
         probe = sub / ".write-test"
@@ -105,7 +112,12 @@ def machine_folder(folder: Path | None, name: str) -> Path:
 
 
 def _prune(folder: Path, pattern: str, steps: _Steps) -> None:
-    for f in sorted(folder.glob(pattern))[:-KEEP_FILES]:
+    # Oldest first by the date in the name, so older names without the machine in them go first too.
+    def stamp(f: Path) -> str:
+        m = STAMP_RE.search(f.name)
+        return m.group(0) if m else ""
+
+    for f in sorted(folder.glob(pattern), key=lambda f: (stamp(f), f.name))[:-KEEP_FILES]:
         f.unlink(missing_ok=True)
         steps.say(f"removed old {f.name}")
 
@@ -147,6 +159,12 @@ _ARCHIVE_PLAIN = """\
   tar -czf "$OUT" "$@" "$W/packages.txt" 2>"$W/err"
   rc=$?
 """
+# A backup password can't be given to `age` without a terminal, so with only a password set nothing is
+# written on the machine rather than an archive that isn't encrypted. 6 is turned into this message.
+_ARCHIVE_REFUSE = """\
+  echo "a backup password only covers backups saved on the dashboard (or set backup_age_recipient)" >&2
+  exit 6
+"""
 # The plain archive only exists in the script's private temp folder (removed on exit), never next to the
 # encrypted one. 127 is the exit code _config_step turns into "not installed".
 _ARCHIVE_AGE = """\
@@ -168,6 +186,8 @@ def config_script(
     destination: str | None = None,
     stream: bool = False,
     age_recipient: str | None = None,
+    name: str = "machine",
+    refuse_plain: bool = False,
 ) -> str:
     """A POSIX sh script that backs up the machine's config where its ``backup:`` entry says.
 
@@ -177,7 +197,11 @@ def config_script(
     With ``stream`` the tar.gz goes to stdout and nothing is written here (see SshHostBackup).
     With ``age_recipient`` the archives written on the machine are encrypted to that public key with `age`
     (it must be installed there; nothing is written unencrypted instead). Backups pushed to Proxmox Backup
-    Server, restic or borg keep their own encryption."""
+    Server, restic or borg keep their own encryption. With ``refuse_plain`` (a backup password and no
+    ``age_recipient``) an archive that would be written unencrypted on the machine is refused.
+
+    Archives are named after the machine's hostname, or ``name`` (the dashboard's name for it) when that
+    can't be read: `hostname` is not installed on every system (Debian 13 containers, for one)."""
     if age_recipient is not None and not AGE_RECIPIENT.match(age_recipient):
         raise ValueError("backup_age_recipient is not an age public key (it starts with age1)")
     local_dir = shlex.quote(local_dir)
@@ -185,7 +209,8 @@ def config_script(
     head = f"""\
 umask 077
 STAMP=$(date -u +%Y%m%d_%H%M%S)
-HOST=$(hostname)
+HOST=$({{ hostname || uname -n; }} 2>/dev/null | head -n 1 | tr -cd 'A-Za-z0-9._-')
+[ -n "$HOST" ] || HOST={shlex.quote(safe_name(name))}
 W=$(mktemp -d) || exit 3
 trap 'rm -rf "$W"' EXIT
 # What goes in: the config folders that exist here.
@@ -196,12 +221,13 @@ done
 # What is installed, so a rebuilt machine can get the same packages.
 {{ dpkg --get-selections || rpm -qa || apk info -v || pacman -Q; }} >"$W/packages.txt" 2>/dev/null
 """
+    refuse = _ARCHIVE_REFUSE if refuse_plain and not age_recipient else ""
     local = f"""\
 archive() {{
   # $1: the folder to put it in; the rest is what to archive. tar exit 1 only means a file changed
   # while it was read.
   DEST="$1"; shift
-  OUT="$DEST/{FILE_PREFIX}$HOST-$STAMP.tar.gz{AGE_SUFFIX if age_recipient else ""}"
+{refuse}  OUT="$DEST/{FILE_PREFIX}$HOST-$STAMP.tar.gz{AGE_SUFFIX if age_recipient else ""}"
   mkdir -p "$DEST" && chmod 700 "$DEST" 2>/dev/null
 {_ARCHIVE_AGE.format(key=age_recipient) if age_recipient else _ARCHIVE_PLAIN}  grep -v 'Removing leading' "$W/err" >&2
   [ "$rc" -le 1 ] || {{ rm -f "$OUT"; echo "tar failed" >&2; exit 4; }}
@@ -303,9 +329,24 @@ async def _config_step(
     *,
     proxmox: bool = False,
     age_recipient: str | None = None,
+    password: str | None = None,
+    name: str = "machine",
 ) -> None:
-    script = config_script(cfg, proxmox=proxmox, destination=destination, age_recipient=age_recipient)
+    script = config_script(
+        cfg,
+        proxmox=proxmox,
+        destination=destination,
+        age_recipient=age_recipient,
+        name=name,
+        refuse_plain=bool(password),
+    )
     res = await ssh.run(script, steps.on_line, timeout=3600)
+    if res.rc == 6 and password and not age_recipient:
+        raise RuntimeError(
+            "backup_password only encrypts backups saved on the dashboard (`age` can't take a password without "
+            "a terminal), so nothing was written on the machine. Save this machine's backups on the dashboard, "
+            "or set backup_age_recipient as well for archives written on the machine"
+        )
     if res.rc == 127:
         what = cfg.type if cfg and cfg.type != "path" else "a command it needs (for encrypted backups: age)"
         raise RuntimeError(f"{what} is not installed on this machine")
@@ -343,11 +384,14 @@ async def _stream_step(
     folder: Path | None,
     name: str,
     age_recipient: str | None = None,
+    password: str | None = None,
 ) -> None:
     """The machine's config as a tar.gz streamed back over SSH into ``<folder>/<name>/``. It is written under a
-    temporary name and renamed once complete, so a failed run leaves nothing that looks like a backup."""
+    temporary name and renamed once complete, so a failed run leaves nothing that looks like a backup.
+    With ``password`` it is encrypted with it (age's passphrase format), else with ``age_recipient`` to that key."""
     sub = machine_folder(folder, name)
-    final = sub / f"{FILE_PREFIX}{_stamp()}.tar.gz{AGE_SUFFIX if age_recipient else ''}"
+    sealed_with = password or age_recipient
+    final = sub / f"{FILE_PREFIX}{safe_name(name)}-{_stamp()}.tar.gz{AGE_SUFFIX if sealed_with else ''}"
     part = sub / f".{final.name}.part"
     try:
         with open(os.open(part, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as out:
@@ -359,11 +403,14 @@ async def _stream_step(
         if rc != 0:
             raise RuntimeError(f"exited with code {rc}")
         await asyncio.to_thread(_check_gzip, part)
-        if age_recipient:
+        if sealed_with:
             sealed = sub / f".{final.name}.sealed"
             try:
                 os.close(os.open(sealed, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600))
-                await asyncio.to_thread(_encrypt, part, sealed, age_recipient)
+                if password:
+                    await asyncio.to_thread(agecrypt.encrypt_file, part, sealed, password)
+                else:
+                    await asyncio.to_thread(_encrypt, part, sealed, age_recipient)
                 os.replace(sealed, final)
             finally:
                 sealed.unlink(missing_ok=True)
@@ -395,18 +442,27 @@ class SshHostBackup:
         destination: str | None = None,
         dashboard_folder: Path | None = None,
         age_recipient: str | None = None,
+        password: str | None = None,
     ) -> None:
         steps = _Steps(on_line)
         title = "Backing up the node's config" if self.proxmox else "Archiving the machine's config"
         if destination == DASHBOARD:
             await steps.step(
-                title, lambda: _stream_step(self.ssh, self.cfg, steps, dashboard_folder, self.name, age_recipient)
+                title,
+                lambda: _stream_step(self.ssh, self.cfg, steps, dashboard_folder, self.name, age_recipient, password),
             )
         else:
             await steps.step(
                 title,
                 lambda: _config_step(
-                    self.ssh, self.cfg, steps, destination, proxmox=self.proxmox, age_recipient=age_recipient
+                    self.ssh,
+                    self.cfg,
+                    steps,
+                    destination,
+                    proxmox=self.proxmox,
+                    age_recipient=age_recipient,
+                    password=password,
+                    name=self.name,
                 ),
             )
         steps.finish()
@@ -477,6 +533,7 @@ class IncusHostBackup:
         destination: str | None = None,
         dashboard_folder: Path | None = None,
         age_recipient: str | None = None,
+        password: str | None = None,
     ) -> None:
         steps = _Steps(on_line)
         await steps.step("Saving the Incus settings", lambda: self._dump(steps, destination, dashboard_folder))
@@ -486,11 +543,13 @@ class IncusHostBackup:
             if destination == DASHBOARD:
                 await steps.step(
                     "Archiving the host's config",
-                    lambda: _stream_step(ssh, cfg, steps, dashboard_folder, self.cfg.name, age_recipient),
+                    lambda: _stream_step(ssh, cfg, steps, dashboard_folder, self.cfg.name, age_recipient, password),
                 )
             else:
                 await steps.step(
                     "Archiving the host's config",
-                    lambda: _config_step(ssh, cfg, steps, destination, age_recipient=age_recipient),
+                    lambda: _config_step(
+                        ssh, cfg, steps, destination, age_recipient=age_recipient, password=password, name=self.cfg.name
+                    ),
                 )
         steps.finish()

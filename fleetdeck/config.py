@@ -324,6 +324,18 @@ class AppConfig(BaseModel):
             raise ValueError("backup_age_recipient must be an age public key (it starts with age1)")
         return v.strip() if v else None
 
+    # One password for the host config archives saved on the dashboard: they are written as age files
+    # (.tar.gz.age) that `age -d` opens with it. Archives written on the machine can't use it (`age` only
+    # takes a password from a terminal); set backup_age_recipient for those. Use ${VAR} to keep it out of the file.
+    backup_password: str | None = None
+
+    @field_validator("backup_password")
+    @classmethod
+    def _password(cls, v: str | None) -> str | None:
+        if v and len(v) < 8:
+            raise ValueError("backup_password must be at least 8 characters")
+        return v or None
+
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     notify: list[NotifyConfig] = Field(default_factory=list)
     # The dashboard's address, linked from notifications (e.g. http://192.168.1.50:8080).

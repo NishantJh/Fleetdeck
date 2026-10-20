@@ -43,6 +43,10 @@ community_scripts_update: true
 # the matching private key, which you keep in your password manager, opens them; the dashboard never
 # has it. Machines that write the archive themselves need `age` installed (apt install age).
 # backup_age_recipient: age1...
+# Or one password for every archive saved on the dashboard (at least 8 characters). They are written as
+# .tar.gz.age; `age -d file.tar.gz.age | tar xz` asks for it. Archives written on the machine itself can't
+# use a password: set backup_age_recipient too for those, or save them on the dashboard.
+# backup_password: ${BACKUP_PASSWORD}
 # Check every machine on a timer (e.g. 30m, 6h, 1d; at least 5m). Nothing is ever upgraded
 # automatically; you get a notification when something new is pending.
 schedule:
