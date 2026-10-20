@@ -108,6 +108,42 @@
     </form>
   </dialog>
 
-  <script src="/static/app.js?v=11"></script>
+  <dialog id="run-dialog" class="wide">
+    <h3 id="run-title">Run command</h3>
+    <div id="run-warn"></div>
+    <div id="run-unlock" hidden>
+      <p class="muted">The console is locked. Enter the dashboard password to unlock it; it locks again after a while without use.</p>
+      <input type="password" id="run-password" autocomplete="current-password" placeholder="Dashboard password">
+      <button id="run-unlock-go" class="primary">Unlock</button>
+      <p id="run-unlock-msg" class="bad"></p>
+    </div>
+    <div id="run-main">
+      <p class="muted"><b id="run-as">Runs as root</b></p>
+      <label class="dlg-field">Where <select id="run-container"></select></label>
+      <label class="check-row" id="run-root-row" hidden><input type="checkbox" id="run-root"> Run as root in the container</label>
+      <textarea id="run-command" rows="4" spellcheck="false" autocomplete="off" placeholder="Command (Ctrl+Enter runs it)"></textarea>
+      <div class="run-row">
+        <label>Timeout <input type="number" id="run-timeout" value="60" min="1" max="3600" class="run-num"> s</label>
+        <select id="run-history"></select>
+        <button id="run-go" class="primary">Run</button>
+        <button id="run-stop" hidden>Stop</button>
+      </div>
+      <div id="run-confirm-row" hidden>
+        <p class="bad" id="run-confirm-text"></p>
+        <input type="text" id="run-confirm" autocomplete="off" spellcheck="false" placeholder="Type the name to confirm">
+        <button id="run-confirm-go" class="primary">Run anyway</button>
+      </div>
+      <pre id="run-out"></pre>
+      <p id="run-status" class="muted"></p>
+    </div>
+    <menu>
+      <button id="run-copy">Copy output</button>
+      <button id="run-lock" hidden>Lock</button>
+      <button id="run-close">Close</button>
+    </menu>
+  </dialog>
+
+  <script src="/static/app.js?v=12"></script>
+  <script src="/static/console.js?v=1"></script>
 </body>
 </html>

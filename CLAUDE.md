@@ -51,6 +51,7 @@ Setup and security
   for each machine type and tunnel. `config.example.yaml` documents the options.
 - `fleetdeck/envvars.py`: `env(name)` reads `FLEETDECK_<name>`.
 - `fleetdeck/store.py`: SQLite for check results, job history and hidden machines.
+- `fleetdeck/console.py`, `console_routes.py`: the off-by-default Run command box (unlock, network gate, danger guard, audit log). Spec: `docs/CONSOLE.md`.
 - `fleetdeck/notify.py`: ntfy, Gotify, Discord, Telegram, generic JSON webhook.
 - `fleetdeck/models.py`: pydantic models for API payloads and results.
 

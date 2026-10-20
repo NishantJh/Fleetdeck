@@ -16,6 +16,17 @@ auth:
 # visitor's own IP instead of the proxy's. The proxy must also pass the original Host header.
 # trusted_proxies: ["172.18.0.0/16"]
 
+# Run commands on machines from the dashboard (Run command), as root. Off by default and only switched on here
+# (or with FLEETDECK_CONSOLE=1), never from the web page. Needs `auth:`. See docs/CONSOLE.md.
+# console:
+#   enabled: true
+#   allow_from: [127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7, 100.64.0.0/10]
+#   allow_plain_http: true # false blocks it over http:// (a warning shows either way)
+#   unlock_minutes: 15 # idle time before the password is asked for again
+#   keep_days: 90 # how long the audit log is kept
+#   notify: true # send a notification when a guarded (dangerous-looking) command runs
+#   exclude: [] # machine names or ids that never get it
+
 # How many machines may be checked/updated at once.
 max_parallel: 4
 
