@@ -255,6 +255,45 @@ class NotifyConfig(BaseModel):
         return self
 
 
+class ConsoleConfig(BaseModel):
+    """Run commands on machines from the dashboard (see docs/CONSOLE.md). Off unless switched on here."""
+
+    enabled: bool = False
+    # Client addresses allowed to use it, after trusted_proxies is applied: loopback, private networks and
+    # 100.64.0.0/10 (Tailscale, Headscale, NetBird).
+    allow_from: list[str] = Field(
+        default_factory=lambda: [
+            "127.0.0.0/8",
+            "::1/128",
+            "10.0.0.0/8",
+            "172.16.0.0/12",
+            "192.168.0.0/16",
+            "fc00::/7",
+            "100.64.0.0/10",
+        ]
+    )
+    # Works over plain http:// from the allowed networks, under a warning; false blocks it there.
+    allow_plain_http: bool = True
+    unlock_minutes: int = Field(15, ge=1, le=60)
+    keep_days: int = Field(90, ge=1)
+    # Notify when a guarded command runs.
+    notify: bool = True
+    # Machine names or ids that never get it.
+    exclude: list[str] = Field(default_factory=list)
+
+    @field_validator("allow_from")
+    @classmethod
+    def _networks(cls, v: list[str]) -> list[str]:
+        import ipaddress
+
+        for n in v:
+            try:
+                ipaddress.ip_network(n, strict=False)
+            except ValueError:
+                raise ValueError(f"console.allow_from: {n!r} is not an address range such as 192.168.0.0/16") from None
+        return v
+
+
 class AppConfig(BaseModel):
     proxmox: list[ProxmoxConfig] = Field(default_factory=list)
     incus: list[IncusConfig] = Field(default_factory=list)
@@ -306,6 +345,7 @@ class AppConfig(BaseModel):
     # Reverse proxies whose X-Forwarded-For is believed (IPs or CIDRs). Without it, everyone behind a
     # proxy shares the proxy's address, so the login lockout would lock them all out together.
     trusted_proxies: list[str] = Field(default_factory=list)
+    console: ConsoleConfig = Field(default_factory=ConsoleConfig)
 
     @property
     def dashboard_backup_folder(self) -> Path | None:
@@ -405,6 +445,8 @@ def load_config(path: str | None = None) -> AppConfig:
     cfg = validate_raw(yaml.safe_load(p.read_text()), str(p))
     if env("DEMO") == "1":
         cfg.demo = True
+    if env("CONSOLE") == "1":
+        cfg.console.enabled = True
     if env("BACKUP_FOLDER"):
         cfg.backup_folder = env("BACKUP_FOLDER")
     if env("STATE"):

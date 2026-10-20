@@ -176,6 +176,7 @@ function rowHtml(v, withBackup) {
       <button class="small" data-act="reboot" data-id="${esc(t.id)}" ${canReboot(t) && !busy && !v.blocked ? "" : "disabled"} title="${esc(t.no_reboot || (t.check_only ? t.note : "") || v.blocked || "")}">Reboot</button>
       ${canUpgrade(t) ? `<button class="small ${dockerBehind(v) ? "primary" : ""}" data-act="docker" data-id="${esc(t.id)}" title="Docker Compose stacks on this machine">Docker${dockerBehind(v) ? ` (${dockerBehind(v)} ↑)` : ""}</button>` : ""}
       ${t.can_backup ? `<button class="small" data-act="backup" data-id="${esc(t.id)}" ${busy ? "disabled" : ""} title="Back up this machine">Back up</button>` : ""}
+      ${state.console?.enabled && t.status !== "stopped" && t.status !== "offline" ? `<button class="small" data-run="${esc(t.id)}" title="Run a command on this machine">Run command…</button>` : ""}
       <button class="small ghost" data-hide="${v.hidden ? "0" : "1"}" data-id="${esc(t.id)}" title="${v.hidden ? "Show this machine on the dashboard again" : "Hide from the dashboard, Check all and scheduled checks"}">${v.hidden ? "Unhide" : "Hide"}</button>
     </td></tr>`;
   if (pending && state.expanded.has(t.id)) {

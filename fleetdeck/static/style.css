@@ -311,3 +311,13 @@ td.os { white-space: normal; min-width: 150px; max-width: 230px; }
 .restore > summary ~ * { margin-top: 12px; }
 .restore label.check { flex-direction: row; align-items: center; gap: 8px; margin: 10px 0; font-weight: 500; cursor: pointer; }
 #restore-preview[hidden] { display: none; }
+
+/* Run command dialog */
+dialog.wide { max-width: 760px; }
+#run-dialog textarea, #run-dialog input[type="text"], #run-dialog input[type="password"] { width: 100%; box-sizing: border-box; font: 13px/1.5 var(--mono); }
+#run-dialog .dlg-field { display: block; margin: 8px 0; }
+.run-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
+.run-num { width: 64px; }
+pre#run-out { margin: 0; background: #0a0e17; color: #cbd5e1; padding: 12px 14px; border-radius: 10px; height: 260px; overflow: auto; font: 12px/1.6 var(--mono); white-space: pre-wrap; border: 1px solid var(--border); }
+#run-dialog menu { display: flex; gap: 8px; justify-content: flex-end; padding: 0; margin: 12px 0 0; }
+#run-dialog [hidden] { display: none; }

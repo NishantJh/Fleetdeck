@@ -19,6 +19,8 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 from .backup import add_backup_routes
 from .backup_runs import check_destination
 from .config import AppConfig, config_path, load_config
+from .console import Console
+from .console_routes import add_console_routes
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
 from .models import CheckResult, Job, JobAction, StacksResult, Target
@@ -336,6 +338,18 @@ def create_app(
         return sorted({j.target_name for j in jobs.jobs.values() if j.status in ("queued", "running")})
 
     restart = _when_idle(restart, busy) if restart is not None else None
+    if cfg.console.enabled:
+        # Off unless the server config says so, and never without a login (a demo without real machines excepted).
+        if locked or setup_token is not None and cfg.has_real_targets:
+            log.warning("The command console stays off until setup is finished.")
+        elif cfg.auth is None and (cfg.has_real_targets or not cfg.demo):
+            log.warning("console.enabled is set but there is no `auth:` login, so the command console stays off.")
+        else:
+            console = Console(cfg.console, cfg.auth, store, notifier.send if notifier else None)
+            app.state.console = console
+            # Its own lockout: the login's is reset by every request that carries the right password.
+            add_console_routes(app, cfg, console, inventory, LoginThrottle())
+            log.warning("The command console is ON: users who unlock it can run commands as root on your machines.")
     add_setup_routes(app, cfg, paths, restart, setup_token is not None, busy)
     add_backup_routes(app, cfg, paths, store, restart, busy, first_run=setup_token is not None)
 

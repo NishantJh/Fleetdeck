@@ -44,6 +44,10 @@ class Store:
         self.db.execute("CREATE TABLE IF NOT EXISTS stacks (target_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS hidden (target_id TEXT PRIMARY KEY)")
         self.db.execute("CREATE TABLE IF NOT EXISTS backup_places (target_id TEXT PRIMARY KEY, path TEXT NOT NULL)")
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS console_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL,"
+            " data TEXT NOT NULL)"
+        )
         self.db.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
 
     def close(self) -> None:
@@ -112,6 +116,19 @@ class Store:
             "INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
             (key, value),
         )
+
+    def add_console_log(self, at: str, data: str) -> int:
+        return self.db.execute("INSERT INTO console_log (at, data) VALUES (?, ?)", (at, data)).lastrowid
+
+    def update_console_log(self, row_id: int, data: str) -> None:
+        self.db.execute("UPDATE console_log SET data = ? WHERE id = ?", (data, row_id))
+
+    def load_console_log(self, limit: int) -> list[str]:
+        """The newest ``limit`` audit rows (JSON text), newest first."""
+        return [d for (d,) in self.db.execute("SELECT data FROM console_log ORDER BY id DESC LIMIT ?", (limit,))]
+
+    def prune_console_log(self, before: str) -> None:
+        self.db.execute("DELETE FROM console_log WHERE at < ?", (before,))
 
     def load_backup_places(self) -> dict[str, str]:
         return dict(self.db.execute("SELECT target_id, path FROM backup_places"))
