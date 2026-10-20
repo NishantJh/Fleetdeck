@@ -73,7 +73,7 @@ function groups() {
 }
 
 const canUpgrade = (t) => t.updatable && !t.check_only;
-const selectable = (v) => canUpgrade(v.target) && !v.hidden;
+const selectable = (v) => canUpgrade(v.target) && !v.hidden && !v.blocked;
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
 const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "checking Docker", "stack-update": "updating Docker" };
 
@@ -172,7 +172,7 @@ function rowHtml(v, withBackup) {
     <td class="muted" data-label="Checked">${c ? ago(c.checked_at) : ""}</td>
     <td class="actions">
       <button class="small" data-act="check" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Check</button>
-      <button class="small ${pending && !t.check_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy ? "" : "disabled"} title="${t.check_only ? esc(t.note) : ""}">Update</button>
+      <button class="small ${pending && !t.check_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy && !v.blocked ? "" : "disabled"} title="${t.check_only ? esc(t.note) : esc(v.blocked || "")}">Update</button>
       <button class="small" data-act="reboot" data-id="${esc(t.id)}" ${canReboot(t) && !busy && !v.blocked ? "" : "disabled"} title="${esc(t.no_reboot || (t.check_only ? t.note : "") || v.blocked || "")}">Reboot</button>
       ${canUpgrade(t) ? `<button class="small ${dockerBehind(v) ? "primary" : ""}" data-act="docker" data-id="${esc(t.id)}" title="Docker Compose stacks on this machine">Docker${dockerBehind(v) ? ` (${dockerBehind(v)} ↑)` : ""}</button>` : ""}
       ${t.can_backup ? `<button class="small" data-act="backup" data-id="${esc(t.id)}" ${busy ? "disabled" : ""} title="Back up this machine">Back up</button>` : ""}

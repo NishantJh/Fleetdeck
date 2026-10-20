@@ -232,7 +232,7 @@ class JobManager:
             if action == "upgrade" and reboot_if_required:
                 existing.reboot_if_required = True
             return existing
-        if action == "reboot" and (why := self.update_blocked(target)):
+        if action in ("upgrade", "reboot") and (why := self.update_blocked(target)):
             raise ValueError(f"{target.name}: {why}")
         job = Job(
             id=uuid.uuid4().hex[:12],
@@ -299,7 +299,7 @@ class JobManager:
                     _ensure_can_back_up(target, self.inventory.backup_runs.get(job.target_id))
                 else:
                     _ensure_runnable(target, executor, job.action)
-                if job.action == "reboot":
+                if job.action in ("upgrade", "reboot"):
                     await self._wait_unblocked(job, target, slot)
                 if job.action == "backup":
                     job.log.append(
@@ -370,7 +370,7 @@ class JobManager:
                     self._save_job(job)
 
     async def _wait_unblocked(self, job: Job, target: Target, slot: _Slot) -> None:
-        """The check at submit is not enough: a reboot that was queued may start when a guest has begun
+        """The check at submit is not enough: a job that was queued may start when a guest has begun
         updating since. Wait for it, without holding a slot."""
         if why := self.update_blocked(target):
             job.log.append(f"== Not starting yet: {why}")
@@ -555,10 +555,10 @@ class JobManager:
         return None
 
     def update_blocked(self, target: Target) -> str | None:
-        """Why a machine can't be rebooted right now, if it can't.
+        """Why a machine can't be updated or rebooted right now, if it can't.
 
         Its own Docker stacks are updating, or (for a host) a guest on it is updating, updating Docker,
-        rebooting or rolling back. Updates themselves may run at the same time as a parent's or child's.
+        rebooting or rolling back. A guest is never held back by its host updating.
         """
         busy = [j for j in self.jobs.values() if j.target_id == target.id and j.action == "stack-update"]
         if target.kind == "host":

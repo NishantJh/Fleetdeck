@@ -197,15 +197,15 @@ def _guest(tid, parent="t1", **kw) -> Target:
     return Target(id=tid, name=tid, platform="ssh", source="hosts", kind="lxc", parent=parent, **kw)
 
 
-async def test_host_reboot_refused_while_guest_updates_but_host_update_allowed(fast_reboot):
+async def test_host_update_and_reboot_refused_while_guest_updates(fast_reboot):
     gate = asyncio.Event()
     host = RebootingExecutor()
     jobs = JobManager(_inventory((_target(), host), (_guest("g1"), FakeExecutor(gate=gate))), max_parallel=2)
     guest_job = jobs.submit("g1", "upgrade")
-    with pytest.raises(ValueError, match="waiting for g1 to finish updating"):
-        jobs.submit("t1", "reboot")
+    for action in ("reboot", "upgrade"):
+        with pytest.raises(ValueError, match="waiting for g1 to finish updating"):
+            jobs.submit("t1", action)
     assert jobs.update_blocked(jobs.inventory.get("t1")[0])
-    assert jobs.submit("t1", "upgrade")  # updates may run at the same time
     jobs.submit("t1", "check")  # checking is harmless
     gate.set()
     await _finish(jobs)
@@ -229,14 +229,12 @@ async def test_guest_may_update_and_reboot_while_its_host_updates():
     assert host_job.status == "succeeded" and jobs.update_blocked(guest) is None
 
 
-async def test_queued_reboot_waits_at_start_for_a_guest_that_began_updating(fast_reboot):
+async def test_queued_job_waits_at_start_for_a_guest_that_began_updating(fast_reboot):
     gate = asyncio.Event()
     # One slot: the host job is queued behind the guest's check, then the guest starts an upgrade.
-    jobs = JobManager(
-        _inventory((_target(), RebootingExecutor()), (_guest("g1"), FakeExecutor(gate=gate))), max_parallel=1
-    )
+    jobs = JobManager(_inventory((_target(), FakeExecutor()), (_guest("g1"), FakeExecutor(gate=gate))), max_parallel=1)
     blocker = jobs.submit("g1", "check")
-    host_job = jobs.submit("t1", "reboot")  # accepted: nothing is updating yet
+    host_job = jobs.submit("t1", "upgrade")  # accepted: nothing is updating yet
     jobs.jobs["x"] = Job(
         id="x", target_id="g1", target_name="g1", action="upgrade", status="queued", created_at=datetime.now(UTC)
     )  # the guest's update is queued before the host job gets to start
@@ -249,7 +247,7 @@ async def test_queued_reboot_waits_at_start_for_a_guest_that_began_updating(fast
     assert host_job.status == "succeeded", host_job.log
 
 
-async def test_host_reboot_refused_while_its_docker_stacks_update():
+async def test_host_refused_while_its_docker_stacks_update():
     gate = asyncio.Event()
     jobs = JobManager(_inventory((_target(), FakeExecutor(gate=gate)), (_guest("g1"), FakeExecutor())))
     host = jobs.inventory.get("t1")[0]
@@ -268,14 +266,15 @@ async def test_host_reboot_refused_while_its_docker_stacks_update():
         assert jobs.update_blocked(host)
         with pytest.raises(ValueError, match="to finish updating"):
             jobs.submit("t1", "reboot")
-    # A guest whose own Docker stacks are updating can't be rebooted either.
+    # A guest whose own Docker stacks are updating can't be updated or rebooted either.
     jobs.jobs.clear()
     job = Job(
         id="s", target_id="g1", target_name="g1", action="stack-update", status="running", created_at=datetime.now(UTC)
     )
     jobs.jobs[job.id] = job
-    with pytest.raises(ValueError, match="waiting for g1"):
-        jobs.submit("g1", "reboot")
+    for action in ("upgrade", "reboot"):
+        with pytest.raises(ValueError, match="waiting for g1"):
+            jobs.submit("g1", action)
     jobs.jobs.clear()
     assert jobs.update_blocked(host) is None
 
