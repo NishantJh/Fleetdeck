@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -377,6 +378,7 @@ class ProxmoxProvider:
                     source=self.name,
                     kind="lxc",
                     parent=nname,
+                    tags=[x for x in re.split(r"[;,]", ct.get("tags") or "") if x],
                     status=ct.get("status", "unknown"),
                     updatable=updatable,
                     note=note,
