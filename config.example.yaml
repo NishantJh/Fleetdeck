@@ -20,6 +20,7 @@ auth:
 # (or with FLEETDECK_CONSOLE=1), never from the web page. Needs `auth:`. See docs/CONSOLE.md.
 # console:
 #   enabled: true
+#   terminal: true # the interactive terminal (SSH hosts, Proxmox LXCs, Docker containers on them)
 #   allow_from: [127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, fc00::/7, 100.64.0.0/10]
 #   allow_plain_http: true # false blocks it over http:// (a warning shows either way)
 #   unlock_minutes: 15 # idle time before the password is asked for again

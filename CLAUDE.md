@@ -58,6 +58,9 @@ Setup and security
 Front end (served from `fleetdeck/static/`, packaged via `pyproject.toml`)
 - `index.html`, `app.js`, `style.css`: the dashboard.
 - `setup.html`, `setup.js`: the setup page.
+- `console.js`: the Run command dialog. `terminal.html`/`.js`/`.css`: the terminal window, served at `/terminal` with its
+  own CSP (xterm.js sets style elements). `xterm.js`, `xterm.css`, `xterm-addon-fit.js` are vendored from npm
+  (@xterm/xterm 6.0.0, @xterm/addon-fit 0.11.0, MIT, licence in `xterm-LICENSE.txt`); no CDN.
 - `theme.js`: light/dark theme.
 
 Other

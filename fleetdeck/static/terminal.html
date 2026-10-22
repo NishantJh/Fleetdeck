@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Terminal · Fleetdeck</title>
+  <link rel="stylesheet" href="/static/xterm.css?v=6.0.0">
+  <link rel="stylesheet" href="/static/terminal.css?v=1">
+</head>
+<body>
+  <header>
+    <b id="t-title">Terminal</b>
+    <span class="chip" id="t-user">root</span>
+    <span class="muted" id="t-time"></span>
+    <span class="spacer"></span>
+    <button id="t-close">Close</button>
+  </header>
+  <div id="t-warn" hidden>This connection isn't encrypted. Your password and everything typed here, and its output, can be read on the network. Put the dashboard behind HTTPS.</div>
+  <div id="t-wait">Waiting for the dashboard…</div>
+  <div id="term"></div>
+  <script src="/static/xterm.js?v=6.0.0"></script>
+  <script src="/static/xterm-addon-fit.js?v=0.11.0"></script>
+  <script src="/static/terminal.js?v=1"></script>
+</body>
+</html>
