@@ -325,6 +325,128 @@ OS can still be managed).
 The image is public, so `docker pull` needs no login. To pin a version instead of `latest`, use a release tag such as
 `ghcr.io/nishantjh/fleetdeck:1.2.3` (see [Install](#install)).
 
+## Settings
+
+Two files shape the container, and each setting goes in one of them:
+
+* **`docker-compose.yml`** (or the stack editor of your container manager) decides what the container
+  gets: the image version, the ports, the folders it can see and the environment variables it is given.
+* **`.env`** is a file named `.env` in the same folder as `docker-compose.yml`. Compose reads it to fill in
+  `${NAME}` placeholders *inside the compose file*. A value in `.env` does **not** reach the container by
+  itself. Pass it on with an `environment:` line (`NAME: ${NAME}`), or with `env_file: .env` to pass the whole
+  file. In Portainer, Dockge, Arcane and similar tools, the stack's "environment" box plays the part of `.env`.
+
+After any change to the compose file or `.env`, run `docker compose up -d` again (or deploy the stack again).
+A restart alone does not reload either file.
+
+### Settings in docker-compose.yml
+
+**Version (`image:`).** `ghcr.io/nishantjh/fleetdeck:1` takes every 1.x release when you pull. `:1.2` takes only
+patch fixes, and `:1.2.3` stays on exactly that release. `:latest` follows every change to `main`, released or not.
+To update: `docker compose pull && docker compose up -d`.
+
+**Port (`FLEETDECK_PORT`).** The port on the host, 8080 by default. The compose file already maps it:
+
+```yaml
+ports:
+  - "${FLEETDECK_PORT:-8080}:8080"
+environment:
+  FLEETDECK_PORT: ${FLEETDECK_PORT:-8080}   # so the setup link in the log shows the right port
+```
+
+To change it, put this in `.env`:
+
+```
+FLEETDECK_PORT=8081
+```
+
+To listen on one network interface only, edit the `ports:` line, for example
+`"192.168.1.50:${FLEETDECK_PORT:-8080}:8080"`. The container always listens on 8080 inside, so leave that part alone.
+
+**Data folder (`volumes:`).** The default `fleetdeck-data` named volume holds everything the dashboard keeps:
+config, keys, pinned host keys and history. To keep it in a folder you can see, replace the volume line with
+`- ./data:/data`. Back up that folder and you have backed up the whole install.
+
+**Owner of the data folder (`PUID` / `PGID`).** At start, the container runs as the owner of `/data`. Owner
+means uid 10001 for a named volume or a folder Docker created, and whoever owns a folder you made yourself.
+Set `PUID` and `PGID` to pick the user yourself. Be aware that the app then changes the owner of everything
+in `/data` to that user. Example, for a folder owned by uid 1000:
+
+```yaml
+environment:
+  PUID: "1000"
+  PGID: "1000"
+```
+
+With rootless Docker or Podman, use `PUID: "0"`, which keeps root in the container (your own user on the host).
+
+**Backup folder (`FLEETDECK_BACKUP_FOLDER`).** Where "Back up" > "On the dashboard" saves each machine's
+archive. Mount the folder, then name its path inside the container. The complete steps, including the
+folder's permissions, are under **Back up a host** in the Backups part of the features list above. The short form:
+
+```yaml
+environment:
+  FLEETDECK_BACKUP_FOLDER: /backups
+volumes:
+  - /apps/backups:/backups     # the folder on this Docker host, then the path in the container
+```
+
+**HTTPS (`TLS_CERT` / `TLS_KEY`).** The dashboard serves HTTPS itself when it has a certificate. The two
+names have no `FLEETDECK_` prefix. Put the certificate and key in the data folder, then give their paths
+inside the container. The port stays the same and now speaks HTTPS:
+
+```yaml
+environment:
+  TLS_CERT: /data/tls.crt
+  TLS_KEY: /data/tls.key
+```
+
+If a reverse proxy in front already does HTTPS, skip this and see [Put it behind HTTPS](#put-it-behind-https).
+
+**Run command (`FLEETDECK_CONSOLE`).** Off by default. Setting `FLEETDECK_CONSOLE: "1"` turns it on even if
+`config.yaml` does not, and it needs a login (`auth:`). Turning it on in `config.yaml` instead is
+`console: { enabled: true }`. Everything about it, including who can reach it, is in [docs/CONSOLE.md](CONSOLE.md).
+
+**Demo (`FLEETDECK_DEMO`).** `FLEETDECK_DEMO: "1"` shows fake demo machines so you can look around. Remove
+it once you add real machines.
+
+**Set by the image, leave alone.** The image already sets `FLEETDECK_DATA=/data`,
+`FLEETDECK_CONFIG=/data/config.yaml`, `FLEETDECK_STATE=/data/state.db` and `PORT=8080`. Changing them can
+break the paths the dashboard expects.
+
+### Values used in config.yaml
+
+Settings such as the login, machines and notifications live in `config.yaml`. The setup page writes that
+file, and its editor (**+ Add machines** > config editor) changes it. A copy with every option described is in
+[`config.example.yaml`](../config.example.yaml). Some of the common ones:
+
+* `max_parallel`: how many machines are checked or updated at once.
+* `schedule.check_every`: how often to check, for example `6h`.
+* `public_url`: the link notifications use to point back at the dashboard.
+* `allowed_hosts` and `trusted_proxies`: the names you open it by, and the reverse proxy in front of it, if any.
+* `snapshot_before_upgrade` and `snapshot_keep`: snapshots taken before upgrades.
+* `backup_age_recipient`: encrypts host backups to your age public key.
+
+A value written as `${NAME}` in `config.yaml` is read from the container's environment. It has to be passed in
+with an `environment:` line, as above. The `.env` file next to the compose file is the usual place to keep it:
+
+```yaml
+# docker-compose.yml
+environment:
+  NTFY_TOKEN: ${NTFY_TOKEN}
+```
+
+```
+# .env
+NTFY_TOKEN=your-token-here
+```
+
+If a `${NAME}` is not set, the dashboard does not start, and the log names the missing variable. Common
+ones are `PVE_TOKEN_SECRET` (a Proxmox API token), `NTFY_TOKEN`, `GOTIFY_APP_TOKEN`, `DISCORD_WEBHOOK_URL`,
+`TELEGRAM_BOT_TOKEN` and `BACKUP_PASSWORD`. The names are your choice; `config.example.yaml` shows the form.
+A login made on the setup page is stored as a hash, so you do not need `FLEETDECK_PASSWORD` for it. Only a
+hand-written `password: ${FLEETDECK_PASSWORD}` in `config.yaml` needs that variable.
+
 ## Configuring by hand
 
 The setup page writes an ordinary `config.yaml`, and everything below can also be set by hand

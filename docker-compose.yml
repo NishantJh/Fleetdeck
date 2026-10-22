@@ -19,6 +19,17 @@ services:
       # Only so the setup link in the logs shows the right port.
       FLEETDECK_PORT: ${FLEETDECK_PORT:-8080}
       # FLEETDECK_BACKUP_FOLDER: /backups
+      # Owner the app runs as, if /data's owner is wrong (see docs/DETAILED-README.md#settings):
+      # PUID: "1000"
+      # PGID: "1000"
+      # HTTPS served directly, with the certificate and key in the data volume:
+      # TLS_CERT: /data/tls.crt
+      # TLS_KEY: /data/tls.key
+      # Off by default. "1" turns on Run command, "1" shows demo machines:
+      # FLEETDECK_CONSOLE: "1"
+      # FLEETDECK_DEMO: "1"
+      # Values that config.yaml reads as ${NAME} must be listed here too, e.g.:
+      # NTFY_TOKEN: ${NTFY_TOKEN}
     volumes:
       # Config, the dashboard's own keys and its history: the whole install, so back it up.
       # A named volume works the same in every tool. To keep it in a folder instead, use e.g.

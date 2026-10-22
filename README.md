@@ -25,6 +25,22 @@ get notified when something needs attention.
 2. Open `http://<this machine>:8080`. The setup page asks for the setup code from the container's log, then creates the admin login.
 3. Add each machine, paste its generated script on it, and press Connect.
 
+## Settings
+
+Most installs change nothing here. These are set in the `environment:` part of [`docker-compose.yml`](docker-compose.yml),
+or in a `.env` file next to it. A `.env` value only reaches the container once the compose file passes it on
+(details in the [guide](docs/DETAILED-README.md#settings)).
+
+* **`FLEETDECK_PORT`**: the host port, 8080 by default. If 8080 is taken, put `FLEETDECK_PORT=8081` in `.env`.
+* **Image tag**: `image: ghcr.io/nishantjh/fleetdeck:1` takes every 1.x update. Use `:1.2.3` to pin one release.
+* **`PUID` / `PGID`**: the user the app runs as, if the data folder has the wrong owner. Example: `PUID: "1000"`.
+* **`FLEETDECK_BACKUP_FOLDER`**: where "Back up" saves archives, with that folder mounted into the container.
+* **`TLS_CERT` / `TLS_KEY`**: serve HTTPS directly, using certificate files in `/data`.
+* **`FLEETDECK_CONSOLE`** (`"1"` turns on Run command) and **`FLEETDECK_DEMO`** (`"1"` shows demo machines): both off by default.
+
+Everything else, such as the login, machines and notifications, is set on the setup page, which writes `config.yaml`.
+After changing the compose file, run `docker compose up -d` again. A plain restart does not reload it.
+
 ## Full documentation
 
 The complete guide, with features, backups, install steps, configuration, security, HTTPS and development notes, is in **[docs/DETAILED-README.md](docs/DETAILED-README.md)**.
