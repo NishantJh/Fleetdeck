@@ -259,6 +259,8 @@ class ConsoleConfig(BaseModel):
     """Run commands on machines from the dashboard (see docs/CONSOLE.md). Off unless switched on here."""
 
     enabled: bool = False
+    # The interactive terminal, on machines whose connection can give one. false keeps only Run command.
+    terminal: bool = True
     # Client addresses allowed to use it, after trusted_proxies is applied: loopback, private networks and
     # 100.64.0.0/10 (Tailscale, Headscale, NetBird).
     allow_from: list[str] = Field(

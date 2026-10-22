@@ -37,6 +37,27 @@ def _emit(on_line: LineCallback | None, stream: str, text: str) -> None:
             on_line(stream, line)
 
 
+class PtySession:
+    """An interactive terminal on a target: raw bytes in and out (``read`` returns b"" when it ends)."""
+
+    def __init__(self, conn: asyncssh.SSHClientConnection, proc: asyncssh.SSHClientProcess):
+        self.conn, self.proc = conn, proc
+
+    async def read(self) -> bytes:
+        return await self.proc.stdout.read(65536)
+
+    def write(self, data: bytes) -> None:
+        self.proc.stdin.write(data)
+
+    def resize(self, cols: int, rows: int) -> None:
+        self.proc.change_terminal_size(cols, rows)
+
+    async def close(self) -> None:
+        self.proc.close()
+        self.conn.close()
+        await self.conn.wait_closed()
+
+
 class SSHExecutor:
     detached = True  # can run a script in the background on the target (see detached.py)
 
@@ -98,6 +119,22 @@ class SSHExecutor:
     async def run(self, script, on_line=None, timeout=DEFAULT_TIMEOUT) -> ExecResult:
         return await self.run_command(f"sh -c {shlex.quote(script)}", on_line, timeout)
 
+    async def open_terminal(self, cols: int, rows: int, command: str | None = None) -> PtySession:
+        """A terminal on the machine: its root shell, or ``command`` (as root) with a terminal attached."""
+        if command is None and self.cfg.sudo:
+            command = "sudo -n -i"
+        elif command is not None:
+            command = self._as_root(command)
+        conn = await asyncssh.connect(**self._connect_kwargs())
+        try:
+            proc = await conn.create_process(
+                command, term_type="xterm-256color", term_size=(cols, rows), encoding=None, stderr=asyncssh.STDOUT
+            )
+        except BaseException:
+            conn.close()
+            raise
+        return PtySession(conn, proc)
+
     async def run_to_file(self, script, out, on_line: LineCallback | None = None, timeout=DEFAULT_TIMEOUT) -> int:
         """Runs the script and writes its raw stdout, as bytes, to the open binary file ``out`` while it arrives
         (nothing is held in memory). stderr lines go to ``on_line``. Returns the exit code."""
@@ -133,6 +170,10 @@ class PctExecutor:
     async def run(self, script, on_line=None, timeout=DEFAULT_TIMEOUT) -> ExecResult:
         cmd = f"pct exec {self.vmid} -- sh -c {shlex.quote(script)}"
         return await self.node_ssh.run_command(cmd, on_line, timeout)
+
+    async def open_terminal(self, cols: int, rows: int, command: str | None = None) -> PtySession:
+        inner = f"pct exec {self.vmid} -- sh -c {shlex.quote(command)}" if command else f"pct enter {self.vmid}"
+        return await self.node_ssh.open_terminal(cols, rows, inner)
 
 
 _AGENT_START = (

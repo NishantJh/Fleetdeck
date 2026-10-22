@@ -58,10 +58,23 @@ function runWarnings(v) {
   return out;
 }
 
-function openRun(id) {
+async function refreshConsoleInfo() {
+  try {
+    const r = await fetch("/api/console");
+    if (r.ok) consoleInfo = await r.json();
+  } catch { /* keep the old answer */ }
+}
+
+function updateTerminalButton() {
+  $("#run-terminal").hidden = !(consoleInfo?.terminal && consoleInfo.terminals?.includes(runTarget.target.id));
+}
+
+async function openRun(id) {
   const v = state.targets.find((t) => t.target.id === id);
   if (!v) return;
   runTarget = v;
+  await refreshConsoleInfo();
+  updateTerminalButton();
   $("#run-title").textContent = `Run command on ${v.target.name}`;
   $("#run-warn").replaceChildren(...runWarnings(v).map((w) => mk("div", { className: "error-banner" }, w)));
   $("#run-out").textContent = "";
@@ -200,6 +213,32 @@ $("#run-lock").onclick = async () => {
 };
 $("#run-close").onclick = () => $("#run-dialog").close();
 $("#run-dialog").addEventListener("close", () => { clearTimeout(runPoll); runId = null; });
+
+// The terminal opens in its own window (its page needs a looser style policy than the dashboard). Once that
+// window says it is ready, it is handed the unlock token; the token is never in a URL.
+let pendingTerminal = null;
+$("#run-terminal").onclick = () => {
+  const c = $("#run-container");
+  const win = window.open("/terminal", "_blank", "popup,width=960,height=640");
+  if (!win) { $("#run-status").textContent = "The browser blocked the terminal window: allow pop-ups for this page."; return; }
+  pendingTerminal = {
+    type: "fleetdeck-terminal-open",
+    token: consoleToken,
+    target: runTarget.target.id,
+    name: runTarget.target.name,
+    container_id: c.value || null,
+    container: c.value ? c.selectedOptions[0].textContent.split(" (")[0] : null,
+    as_root: $("#run-root").checked,
+    win,
+  };
+};
+window.addEventListener("message", (e) => {
+  if (e.origin !== location.origin || e.data?.type !== "fleetdeck-terminal-ready") return;
+  if (!pendingTerminal || e.source !== pendingTerminal.win) return;
+  const { win, ...job } = pendingTerminal;
+  pendingTerminal = null;
+  win.postMessage(job, location.origin);
+});
 
 document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-run]");

@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
+import shlex
+import time
+import uuid
+from pathlib import Path
+from urllib.parse import urlsplit
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from .config import AppConfig
@@ -13,8 +20,12 @@ from .console import (
     CONTAINER_ID,
     CONTAINER_NAME,
     MAX_COMMAND,
+    MAX_TERMINALS,
     MAX_TIMEOUT,
+    TERMINAL_IDLE,
+    TERMINAL_MAX,
     Console,
+    DemoTerminal,
     Session,
     client_ip,
     danger,
@@ -25,6 +36,9 @@ from .console import (
 from .inventory import Inventory
 from .security import LoginThrottle
 from .stacks import _own_id
+
+STATIC = Path(__file__).parent / "static"
+WATCH_EVERY = 5.0  # seconds between idle checks of an open terminal
 
 PLAIN_HTTP = (
     "This connection isn't encrypted. Your password and every command and its output can be read on the network. "
@@ -54,6 +68,11 @@ def add_console_routes(
     app: FastAPI, cfg: AppConfig, console: Console, inventory: Inventory, throttle: LoginThrottle
 ) -> None:
     ccfg = cfg.console
+
+    def _can_terminal(target, executor) -> bool:
+        if target.id in ccfg.exclude or target.name in ccfg.exclude or executor is None:
+            return False
+        return target.source == "demo" or hasattr(executor, "open_terminal")
 
     def gate(request: Request, *, token: bool = True) -> Session | None:
         """Raises unless this request may use the console; returns its unlock session (when ``token``)."""
@@ -86,7 +105,8 @@ def add_console_routes(
             problem = "blocked over plain HTTP"
         return {
             "enabled": True,
-            "terminal": False,
+            "terminal": ccfg.terminal,
+            "terminals": [i for i, (t, e) in inventory.targets.items() if _can_terminal(t, e)] if ccfg.terminal else [],
             "allowed": problem is None,
             "reason": problem,
             "secure": is_secure(request),
@@ -227,3 +247,163 @@ def add_console_routes(
         if kind is not None and not re.fullmatch(r"[a-z-]{1,20}", kind):
             raise HTTPException(400, "bad kind")
         return {"rows": console.audit_rows(limit, kind)}
+
+    def ws_origin_ok(ws: WebSocket) -> bool:
+        """A WebSocket upgrade is a GET, so the CSRF check does not see it: the page that opened it must be ours."""
+        origin = ws.headers.get("origin")
+        return bool(origin) and urlsplit(origin).netloc.lower() == ws.headers.get("host", "").lower()
+
+    @app.get("/terminal")
+    async def terminal_page():
+        """The terminal window. xterm.js sets style elements, which the dashboard's strict policy refuses, so it lives
+        on its own page (opened as a separate window) that allows inline styles and nothing else extra."""
+        csp = "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'"
+        return FileResponse(STATIC / "terminal.html", headers={"Content-Security-Policy": csp})
+
+    @app.websocket("/api/console/terminal")
+    async def terminal(ws: WebSocket):
+        if not ws_origin_ok(ws):
+            await ws.close(code=1008)
+            return
+        await ws.accept()
+
+        async def refuse(reason: str) -> None:
+            await ws.close(code=4403, reason=reason[:120])
+
+        try:
+            hello = json.loads(await asyncio.wait_for(ws.receive_text(), 15))
+            cols, rows = max(10, min(int(hello["cols"]), 500)), max(2, min(int(hello["rows"]), 200))
+            token, target_id, container = hello.get("token"), str(hello["target"]), hello.get("container")
+            as_root = bool(hello.get("as_root"))
+        except Exception:  # noqa: BLE001 - anything but a well-formed first message
+            await refuse("bad first message")
+            return
+        if not ccfg.terminal:
+            await refuse("the terminal is switched off (console.terminal)")
+            return
+        if (why := network_problem(ws, ccfg.allow_from)) is not None:
+            await refuse(f"not available from here: {why}")
+            return
+        if not ccfg.allow_plain_http and not is_secure(ws):
+            await refuse("blocked over plain HTTP (console.allow_plain_http is false)")
+            return
+        session = console.session(token, client_ip(ws))
+        if session is None:
+            await refuse("locked: unlock the console again")
+            return
+        try:
+            target, executor = await target_of(target_id)
+        except HTTPException as e:
+            await refuse(str(e.detail))
+            return
+        if not _can_terminal(target, executor):
+            await refuse(f"{target.name} cannot give a terminal (Run command works)")
+            return
+        if len(console.terminals) >= MAX_TERMINALS:
+            await refuse(f"{MAX_TERMINALS} terminals are already open")
+            return
+        demo = target.source == "demo"
+        name, command = target.name, None
+        if container:
+            if not CONTAINER_ID.match(str(container)):
+                await refuse("bad container id")
+                return
+            found = DEMO_CONTAINERS if demo else (await _containers(executor))["containers"]
+            match = next((c for c in found if c["id"] == container), None)
+            if match is None:
+                await refuse("that container is not on this machine (or is the dashboard's own)")
+                return
+            name = match["name"]
+            shell = shlex.quote("command -v bash >/dev/null 2>&1 && exec bash || exec sh")
+            command = f"docker exec -it {'-u 0 ' if as_root else ''}{container} sh -c {shell}"
+
+        tid = uuid.uuid4().hex[:12]
+        console.terminals.add(tid)
+        started = time.monotonic()
+        row = {
+            "kind": "terminal",
+            "user": session.user,
+            "ip": session.ip,
+            "user_agent": ws.headers.get("user-agent", "")[:200],
+            "target_id": target.id,
+            "target": target.name,
+            "container": name if container else None,
+            "http": not is_secure(ws),
+            "status": "open",
+            "duration": None,
+        }
+        audit_id = console.audit(row)
+        pty = None
+        reason = "closed"
+        try:
+            if not demo:
+                # A line in the machine's own journal that the dashboard cannot erase.
+                where = f"{session.user}@{session.ip}: terminal" + (f" in container {name}" if container else "")
+                await executor.run(f"logger -t fleetdeck-console {shlex.quote(where)} 2>/dev/null; true", None, 30)
+            if console.notify and ccfg.notify:
+                asyncio.create_task(_notify_terminal(console, session, target.name, name if container else None))
+            pty = DemoTerminal(name, cols, rows) if demo else await executor.open_terminal(cols, rows, command)
+            last = time.monotonic()
+
+            async def output() -> None:
+                nonlocal last
+                while data := await pty.read():
+                    last = time.monotonic()
+                    await ws.send_bytes(data)
+
+            async def keys() -> None:
+                nonlocal last
+                while True:
+                    msg = await ws.receive()
+                    if msg["type"] == "websocket.disconnect":
+                        return
+                    last = time.monotonic()
+                    if msg.get("bytes") is not None:
+                        pty.write(msg["bytes"])
+                    elif msg.get("text"):
+                        ctl = json.loads(msg["text"])
+                        if "resize" in ctl:
+                            c, r = ctl["resize"]
+                            pty.resize(max(10, min(int(c), 500)), max(2, min(int(r), 200)))
+
+            async def watchdog() -> str:
+                while True:
+                    await asyncio.sleep(WATCH_EVERY)
+                    now = time.monotonic()
+                    if now - last > TERMINAL_IDLE:
+                        return "closed after 15 minutes without activity"
+                    if now - started > TERMINAL_MAX:
+                        return "closed after 4 hours"
+
+            tasks = {asyncio.create_task(output()), asyncio.create_task(keys()), asyncio.create_task(watchdog())}
+            done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+            for t in pending:
+                t.cancel()
+            for t in done:
+                if not t.cancelled() and t.exception() is None and isinstance(t.result(), str):
+                    reason = t.result()
+        except Exception as e:  # noqa: BLE001 - shown in the terminal window
+            reason = f"could not open the terminal: {e}"
+        finally:
+            if pty is not None:
+                try:
+                    await pty.close()
+                except Exception:  # noqa: BLE001
+                    pass
+            console.terminals.discard(tid)
+            row.update(status="closed", duration=round(time.monotonic() - started, 1))
+            console.audit(row, audit_id)
+        try:
+            await ws.close(code=4000, reason=reason[:120])
+        except Exception:  # noqa: BLE001 - already gone
+            pass
+
+
+async def _notify_terminal(console: Console, session, machine: str, container: str | None) -> None:
+    where = machine + (f" / {container}" if container else "")
+    try:
+        await console.notify(
+            "Fleetdeck: terminal opened", f"{session.user} from {session.ip} opened a terminal on {where}"
+        )
+    except Exception:  # noqa: BLE001 - a failed notification must not stop the terminal
+        pass

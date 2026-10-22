@@ -34,6 +34,9 @@ MAX_COMMAND = 16 * 1024
 MAX_OUTPUT = 1024 * 1024  # characters kept per run
 AUDIT_OUTPUT = 4096
 MAX_RUNS = 4
+MAX_TERMINALS = 2
+TERMINAL_IDLE = 15 * 60.0  # seconds without keystrokes or output
+TERMINAL_MAX = 4 * 3600.0
 ABSOLUTE_UNLOCK = 3600.0
 MAX_TIMEOUT = 3600
 KEEP_RUNS = 50
@@ -123,7 +126,7 @@ def network_problem(request: Request, allow_from: list[str]) -> str | None:
 
 def is_secure(request: Request) -> bool:
     """HTTPS (served here, or told so by a trusted proxy: uvicorn applies X-Forwarded-Proto then) or loopback."""
-    if request.url.scheme == "https":
+    if request.url.scheme in ("https", "wss"):
         return True
     ip = _ip(client_ip(request))
     return bool(ip and ip.is_loopback)
@@ -180,9 +183,10 @@ class Console:
         self.notify = notify
         self.sessions: dict[str, Session] = {}
         self.runs: dict[str, Run] = {}
+        self.terminals: set[str] = set()  # ids of the terminals open now
         self._memory: deque[tuple[int, str]] = deque(maxlen=1000)  # audit rows when there is no state file
         self._next_id = 1
-        self._pruned = 0.0
+        self._pruned = float("-inf")  # prune on the first write, then hourly
 
     # --- unlock -------------------------------------------------------------------------------------------
 
@@ -378,3 +382,36 @@ def demo_output(command: str, name: str) -> list[str]:
     if text is None:
         return [f"(demo) {command.strip()[:200]}", "No machine was touched: this is demo data."]
     return text.format(name=name).splitlines()
+
+
+class DemoTerminal:
+    """A pretend shell for the demo, which has no real machines: it echoes what is typed and runs nothing."""
+
+    def __init__(self, name: str, cols: int, rows: int):
+        self.out: asyncio.Queue[bytes] = asyncio.Queue()
+        self.line = ""
+        self.prompt = f"root@{name}:~# "
+        self.out.put_nowait(f"Demo shell on {name}. Nothing you type here is run.\r\n{self.prompt}".encode())
+
+    async def read(self) -> bytes:
+        return await self.out.get()
+
+    def write(self, data: bytes) -> None:
+        for ch in data.decode(errors="replace"):
+            if ch in "\r\n":
+                reply = f"\r\n(demo) {self.line.strip()}\r\n" if self.line.strip() else "\r\n"
+                self.line = ""
+                self.out.put_nowait((reply + self.prompt).encode())
+            elif ch in "\x7f\b":
+                if self.line:
+                    self.line = self.line[:-1]
+                    self.out.put_nowait(b"\b \b")
+            elif ch >= " ":
+                self.line += ch
+                self.out.put_nowait(ch.encode())
+
+    def resize(self, cols: int, rows: int) -> None:
+        pass
+
+    async def close(self) -> None:
+        self.out.put_nowait(b"")
