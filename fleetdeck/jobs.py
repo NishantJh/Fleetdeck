@@ -84,9 +84,6 @@ class _Slot:
             self.held = True
 
 
-COMMUNITY_TAG = "community-script"
-
-
 class JobManager:
     """Runs checks and upgrades in the background, at most ``max_parallel`` at a time.
 
@@ -687,14 +684,11 @@ class JobManager:
             return None
 
     async def _app_first(self, job: Job, target: Target, executor, on_line, slot: _Slot, app: str) -> None:
-        """A community-scripts container is updated by its own `update`, as its authors recommend. Only if
-        that fails does the plain OS upgrade run instead, unless the container is tagged community-script
-        in Proxmox: it has more installed than the helper script put there, so the OS upgrade follows either way."""
-        both = COMMUNITY_TAG in target.tags
-        if await self._community_update(job, executor, app, on_line, fallback=True) and not both:
-            await self._after_upgrade(job, target, executor, on_line, slot, "", app_updated=True)
-            return
-        job.log.append("== Running OS upgrade" + ("" if both else " instead"))
+        """A community-scripts container is updated by its own `update`, as its authors recommend, and then
+        by the OS upgrade: many of these containers have more installed than the helper script put there.
+        The OS upgrade runs even if the app's own update failed."""
+        await self._community_update(job, executor, app, on_line, fallback=True)
+        job.log.append("== Running OS upgrade")
         stdout = await self._upgrade(job, executor, on_line)
         await self._after_upgrade(job, target, executor, on_line, slot, stdout, app_updated=True)
 

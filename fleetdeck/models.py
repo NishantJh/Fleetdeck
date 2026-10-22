@@ -41,8 +41,6 @@ class Target(BaseModel):
     # Can be checked but not upgraded from here (e.g. a Proxmox node without SSH settings).
     check_only: bool = False
     note: str | None = None
-    # Proxmox tags, or Incus user.tags. Tagged community-script: the OS upgrade follows the app's own update.
-    tags: list[str] = Field(default_factory=list)
     backup: BackupInfo | None = None
     # Why this target must not be rebooted from here (e.g. the node that runs this dashboard).
     no_reboot: str | None = None

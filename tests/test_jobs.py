@@ -364,58 +364,30 @@ class CommunityExecutor:
         return ExecResult(rc=0, stdout="__PM__=apt\n__REBOOT__=no\n__CSAPP__=plex\n")
 
 
-async def test_helper_scripts_own_update_replaces_the_os_upgrade():
+async def test_helper_scripts_own_update_is_followed_by_the_os_upgrade():
     ex = CommunityExecutor()
     jobs = JobManager(_inventory((_target(), ex)))
     job = jobs.submit("t1", "upgrade")
     await _finish(jobs)
     assert job.status == "succeeded", job.error
-    assert COMMUNITY_UPDATE_SCRIPT in ex.scripts and UPGRADE_SCRIPT not in ex.scripts
+    assert ex.scripts.index(UPGRADE_SCRIPT) > ex.scripts.index(COMMUNITY_UPDATE_SCRIPT)
+    assert ex.scripts.count(COMMUNITY_UPDATE_SCRIPT) == 1  # the OS upgrade's output doesn't start it again
     assert "✔️ Updated Plex" in job.log  # colours and the spinner frame are dropped
     assert "== Re-checking for remaining updates" in job.log
     assert jobs.checks["t1"].community_script == "plex"
 
 
-async def test_os_upgrade_runs_only_if_helper_scripts_update_fails():
+async def test_os_upgrade_still_runs_if_helper_scripts_update_fails():
     ex = CommunityExecutor(update_rc=1)
     jobs = JobManager(_inventory((_target(), ex)))
     job = jobs.submit("t1", "upgrade")
     await _finish(jobs)
     assert job.status == "succeeded", job.error
     assert any("plex's own update failed" in line and "code 1" in line for line in job.log)
-    assert "== Running OS upgrade instead" in job.log
+    assert "== Running OS upgrade" in job.log
     assert ex.scripts.index(UPGRADE_SCRIPT) > ex.scripts.index(COMMUNITY_UPDATE_SCRIPT)
-    assert ex.scripts.count(COMMUNITY_UPDATE_SCRIPT) == 1  # not run again after the fallback
+    assert ex.scripts.count(COMMUNITY_UPDATE_SCRIPT) == 1  # not run again after the OS upgrade
     assert "== Re-checking for remaining updates" in job.log
-
-
-async def test_tagged_helper_script_machine_gets_both_updates_in_order():
-    ex = CommunityExecutor()
-    jobs = JobManager(_inventory((_target(tags=["community-script"]), ex)))
-    job = jobs.submit("t1", "upgrade")
-    await _finish(jobs)
-    assert job.status == "succeeded", job.error
-    assert ex.scripts.index(UPGRADE_SCRIPT) > ex.scripts.index(COMMUNITY_UPDATE_SCRIPT)
-    assert ex.scripts.count(COMMUNITY_UPDATE_SCRIPT) == 1  # the OS upgrade's output doesn't start it again
-    assert "== Running OS upgrade" in job.log and "== Running OS upgrade instead" not in job.log
-
-
-async def test_tagged_machine_still_gets_the_os_upgrade_when_the_app_update_fails():
-    ex = CommunityExecutor(update_rc=1)
-    jobs = JobManager(_inventory((_target(tags=["community-script"]), ex)))
-    job = jobs.submit("t1", "upgrade")
-    await _finish(jobs)
-    assert job.status == "succeeded", job.error
-    assert UPGRADE_SCRIPT in ex.scripts
-
-
-async def test_untagged_helper_script_machine_keeps_the_app_update_only():
-    ex = CommunityExecutor()
-    jobs = JobManager(_inventory((_target(tags=["other"]), ex)))
-    job = jobs.submit("t1", "upgrade")
-    await _finish(jobs)
-    assert job.status == "succeeded", job.error
-    assert UPGRADE_SCRIPT not in ex.scripts
 
 
 async def test_helper_script_update_off_only_warns():
