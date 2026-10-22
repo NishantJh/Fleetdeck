@@ -77,7 +77,13 @@ async def test_incus_discovery_without_ssh():
             200,
             json={
                 "metadata": [
-                    {"name": "web", "project": "default", "type": "container", "status": "Running"},
+                    {
+                        "name": "web",
+                        "project": "default",
+                        "type": "container",
+                        "status": "Running",
+                        "config": {"user.tags": "media, community-script"},
+                    },
                     {"name": "vm1", "project": "lab", "type": "virtual-machine", "status": "Stopped"},
                 ]
             },
@@ -87,6 +93,7 @@ async def test_incus_discovery_without_ssh():
     found = {t.name: t for t, _ in await p.discover()}
     assert not found["incus01"].updatable  # host needs ssh settings
     assert found["web"].kind == "container" and found["web"].updatable
+    assert found["web"].tags == ["media", "community-script"] and found["lab/vm1"].tags == []
     assert found["lab/vm1"].kind == "vm" and not found["lab/vm1"].updatable
 
 

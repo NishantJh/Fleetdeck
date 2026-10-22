@@ -31,7 +31,7 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   * **Community-scripts apps:** a container made by a Proxmox VE Helper-Script (community-scripts) is updated by its
     app's own update, the same as typing `update` inside it (in a pseudo-terminal), instead of the OS upgrade.
     Only if that fails does the OS upgrade run as a fallback.
-    Tag the container `community-script` in Proxmox (Options > Tags) and the OS upgrade runs after the app's own update as well,
+    Tag the container `community-script` (Proxmox: Options > Tags; Incus: `incus config set <name> user.tags community-script`) and the OS upgrade runs after the app's own update as well,
     for containers that have more installed than the helper script put there. Without the tag only the app's own update runs.
     On by default. Turn it off with `community_scripts_update: false` (the dashboard then only warns and you run `update` yourself).
 * Check results and the Activity history are saved to `data/state.db` (SQLite), so they survive a
