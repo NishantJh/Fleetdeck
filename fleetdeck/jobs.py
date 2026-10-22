@@ -101,6 +101,7 @@ class JobManager:
         backup_folder: Path | None = None,
         age_recipient: str | None = None,
         backup_password: str | None = None,
+        community_scripts_and_os: list[str] | None = None,
     ):
         self.inventory = inventory
         # Where backups that are saved on the dashboard go (see backup_runs.DASHBOARD).
@@ -111,6 +112,8 @@ class JobManager:
         self.backup_password = backup_password
         self.snapshot_keep = snapshot_keep
         self.community_scripts_update = community_scripts_update
+        # Machines (names or ids) that also get the OS upgrade after the app's own update.
+        self.community_scripts_and_os = set(community_scripts_and_os or ())
         self.sem = asyncio.Semaphore(max_parallel)
         self.store = store
         self.jobs: OrderedDict[str, Job] = OrderedDict()
@@ -685,11 +688,13 @@ class JobManager:
 
     async def _app_first(self, job: Job, target: Target, executor, on_line, slot: _Slot, app: str) -> None:
         """A community-scripts container is updated by its own `update`, as its authors recommend. Only if
-        that fails does the plain OS upgrade run instead."""
-        if await self._community_update(job, executor, app, on_line, fallback=True):
+        that fails does the plain OS upgrade run instead, unless the machine is listed in
+        community_scripts_and_os: then the OS upgrade follows either way."""
+        both = target.id in self.community_scripts_and_os or target.name in self.community_scripts_and_os
+        if await self._community_update(job, executor, app, on_line, fallback=True) and not both:
             await self._after_upgrade(job, target, executor, on_line, slot, "", app_updated=True)
             return
-        job.log.append("== Running OS upgrade instead")
+        job.log.append("== Running OS upgrade" + ("" if both else " instead"))
         stdout = await self._upgrade(job, executor, on_line)
         await self._after_upgrade(job, target, executor, on_line, slot, stdout, app_updated=True)
 

@@ -313,6 +313,9 @@ class AppConfig(BaseModel):
     # that fails. A plain OS upgrade can leave such an app broken. On by default; set false and the job only warns.
     # It runs the latest upstream script as root and can upgrade the app itself.
     community_scripts_update: bool = True
+    # Machines (names or ids) that run the OS upgrade as well, right after the app's own update, instead of
+    # only when that fails. Empty (the default): the app's own update alone, as before.
+    community_scripts_and_os: list[str] = Field(default_factory=list)
     # An `age` public key (age1...). When set, the host config archives made by the "Back up" button are
     # encrypted to it (.tar.gz.age); only the matching private key, which the dashboard never has, opens them.
     backup_age_recipient: str | None = None
