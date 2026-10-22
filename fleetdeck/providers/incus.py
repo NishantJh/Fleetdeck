@@ -15,7 +15,7 @@ from ..host_backups import HostBackups
 from ..models import BackupInfo, Target
 from ..snapshots import PREFIX, IncusSnapshots
 from ..tls import PinnedTransport
-from . import Discovered, parse_tags
+from . import Discovered
 
 log = logging.getLogger(__name__)
 
@@ -164,7 +164,6 @@ class IncusProvider:
                 source=self.name,
                 kind="vm" if is_vm else "container",
                 parent=self.name,
-                tags=parse_tags((inst.get("config") or {}).get("user.tags")),
                 status=inst.get("status", "unknown").lower(),
                 updatable=running,
                 note=None if running else "not running",

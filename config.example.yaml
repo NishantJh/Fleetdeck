@@ -39,8 +39,7 @@ snapshot_keep: 3
 # update, the same as typing `update` in them, instead of the OS upgrade (which only runs if it fails). It fetches the latest script from
 # GitHub, runs it as root, and can upgrade the app itself. Set false and the job only warns.
 community_scripts_update: true
-# A container tagged community-script (Proxmox tag, or Incus user.tags) gets the OS upgrade right after the app's own update,
-# not only when that fails. Machines without the tag keep the app's own update alone.
+# Such a container then also gets the regular OS upgrade right after, even if the app's own update failed.
 # Encrypt the host config archives of the "Back up" button to this age public key (age1...). Only
 # the matching private key, which you keep in your password manager, opens them; the dashboard never
 # has it. Machines that write the archive themselves need `age` installed (apt install age).

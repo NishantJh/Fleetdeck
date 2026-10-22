@@ -16,7 +16,7 @@ from ..models import BackupInfo, CheckResult, ExecResult, Package, Target
 from ..snapshots import PveSnapshots
 from ..tls import PinnedTransport
 from ..updates import REBOOT_SCRIPT, parse_apt, parse_reboot
-from . import Discovered, parse_tags
+from . import Discovered
 
 log = logging.getLogger(__name__)
 # The PVE API doesn't say which suite an update comes from; apt does, after the API's refresh.
@@ -377,7 +377,6 @@ class ProxmoxProvider:
                     source=self.name,
                     kind="lxc",
                     parent=nname,
-                    tags=parse_tags(ct.get("tags")),
                     status=ct.get("status", "unknown"),
                     updatable=updatable,
                     note=note,

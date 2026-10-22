@@ -12,7 +12,7 @@ PVE = {
         {"vmid": "101", "name": "pihole", "status": "running"},
         {"vmid": "102", "name": "old", "status": "stopped"},
         {"vmid": "199", "name": "hidden", "status": "running"},
-        {"vmid": "103", "name": "arcane", "status": "running", "tags": "media;community-script"},
+        {"vmid": "103", "name": "arcane", "status": "running"},
     ],
     "/api2/json/nodes/pve/qemu": [
         {"vmid": 200, "name": "docker", "status": "running"},
@@ -48,7 +48,6 @@ async def test_proxmox_discovery():
     assert found["pve"].kind == "host" and found["pve"].updatable and not found["pve"].check_only
     assert not found["broken"].updatable and "VM config" in found["broken"].note
     assert found["pihole"].updatable and not found["old"].updatable
-    assert found["arcane"].tags == ["media", "community-script"] and found["pihole"].tags == []
     assert not found["arcane"].updatable and "protected" in found["arcane"].note
     assert "arcane" in found["pve"].no_reboot
     assert found["docker"].updatable
@@ -77,13 +76,7 @@ async def test_incus_discovery_without_ssh():
             200,
             json={
                 "metadata": [
-                    {
-                        "name": "web",
-                        "project": "default",
-                        "type": "container",
-                        "status": "Running",
-                        "config": {"user.tags": "media, community-script"},
-                    },
+                    {"name": "web", "project": "default", "type": "container", "status": "Running"},
                     {"name": "vm1", "project": "lab", "type": "virtual-machine", "status": "Stopped"},
                 ]
             },
@@ -93,7 +86,6 @@ async def test_incus_discovery_without_ssh():
     found = {t.name: t for t, _ in await p.discover()}
     assert not found["incus01"].updatable  # host needs ssh settings
     assert found["web"].kind == "container" and found["web"].updatable
-    assert found["web"].tags == ["media", "community-script"] and found["lab/vm1"].tags == []
     assert found["lab/vm1"].kind == "vm" and not found["lab/vm1"].updatable
 
 
