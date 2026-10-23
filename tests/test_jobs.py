@@ -5,7 +5,7 @@ import pytest
 
 from fleetdeck.inventory import Inventory
 from fleetdeck.jobs import JobManager
-from fleetdeck.models import ExecResult, Job, Target
+from fleetdeck.models import CheckResult, ExecResult, Job, Target
 from fleetdeck.updates import CHECK_SCRIPT, COMMUNITY_UPDATE_SCRIPT, UPGRADE_SCRIPT
 
 
@@ -213,6 +213,26 @@ async def test_host_update_and_reboot_refused_while_guest_updates(fast_reboot):
     jobs.submit("t1", "reboot")
     await _finish(jobs)
     assert host.reboots == 1
+
+
+async def test_dashboard_guest_reboots_while_its_host_job_waits_for_it(fast_reboot):
+    class DashboardGuest(RebootingExecutor):
+        async def run(self, script, on_line=None, timeout=0):
+            res = await super().run(script, on_line, timeout)
+            if res.stdout.startswith("__PM__"):
+                res.stdout += "__SELF__=yes\n"
+            return res
+
+    guest = DashboardGuest()
+    jobs = JobManager(_inventory((_target(), RebootingExecutor()), (_guest("g1"), guest)), max_parallel=2)
+    jobs.checks["g1"] = CheckResult(checked_at=datetime.now(UTC), runs_dashboard=True)
+    # The host job is accepted first, then waits at start for the guest's update, which needs a reboot.
+    host_job = jobs.submit("t1", "upgrade", reboot_if_required=True)
+    guest_job = jobs.submit("g1", "upgrade", reboot_if_required=True)
+    await asyncio.wait_for(_finish(jobs), 10)
+    assert guest.reboots == 1
+    assert guest_job.status == "succeeded", guest_job.log
+    assert host_job.status == "succeeded", host_job.log
 
 
 async def test_guest_may_update_and_reboot_while_its_host_updates():
