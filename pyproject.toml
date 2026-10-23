@@ -1,6 +1,6 @@
 [project]
 name = "fleetdeck"
-version = "1.0.0"
+version = "2.0.0"
 description = "One dashboard to manage a homelab: OS updates across Proxmox, Incus and plain hosts."
 requires-python = ">=3.11"
 dependencies = [
