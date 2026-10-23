@@ -121,6 +121,8 @@ class JobManager:
         self._tasks: set[asyncio.Task] = set()
         # Hosts that are rebooting, or waiting for their guests' jobs so they can reboot.
         self._rebooting: set[str] = set()
+        # Ids of jobs that are only waiting for a guest's update to finish (not working on their machine).
+        self._waiting_for_guests: set[str] = set()
         # Machines hidden from the dashboard: left out of scheduled checks and their notifications.
         self.hidden: set[str] = set()
         # Host id -> the folder its Back up button is set to use every time.
@@ -381,9 +383,13 @@ class JobManager:
         updating since. Wait for it, without holding a slot."""
         if why := self.update_blocked(target):
             job.log.append(f"== Not starting yet: {why}")
-            async with slot.released():
-                while self.update_blocked(target):
-                    await asyncio.sleep(1)
+            self._waiting_for_guests.add(job.id)
+            try:
+                async with slot.released():
+                    while self.update_blocked(target):
+                        await asyncio.sleep(1)
+            finally:
+                self._waiting_for_guests.discard(job.id)
 
     async def _find_again(self, job: Job) -> tuple[Target, object]:
         """The job's target after a restart, once discovery has found it (and it can run commands)."""
@@ -599,11 +605,15 @@ class JobManager:
             self._rebooting.discard(target.id)
 
     def _other_jobs(self, job: Job) -> list[Job]:
-        """Active jobs besides ``job``, except hosts waiting for their guests to reboot (``job`` may be one)."""
+        """Active jobs besides ``job``, except hosts waiting for their guests to reboot (``job`` may be one) and
+        jobs only waiting for a guest's update to finish (the dashboard machine may be that guest)."""
         return [
             j
             for j in self.jobs.values()
-            if j is not job and j.status in ("queued", "running") and j.target_id not in self._rebooting
+            if j is not job
+            and j.status in ("queued", "running")
+            and j.target_id not in self._rebooting
+            and j.id not in self._waiting_for_guests
         ]
 
     async def _reboot_now(self, job: Job, target: Target, executor, on_line, slot: _Slot) -> None:
