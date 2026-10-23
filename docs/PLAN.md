@@ -42,4 +42,5 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 - [x] "Back up" button on hosts: the host's own settings (Proxmox node config to PBS, Incus settings, SSH hosts' /etc), to the default place or a chosen folder/share, remembered per host
 - [ ] Set a host's backup location from the setup page
 - [ ] Notify when a backup goes stale
-- [ ] Proper login (OIDC) instead of basic auth
+- [x] Login page with session cookies instead of the browser's Basic auth popup
+- [ ] Single sign-on (OIDC)

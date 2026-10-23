@@ -334,7 +334,7 @@ $("#restore-go").onclick = async () => {
     const r = await api("/api/setup/restore", { method: "POST", body: JSON.stringify({ passphrase: $("#restore-pass").value, data: restoreData, confirm: true }) });
     $("#admin").hidden = true;
     if (!r.restarting) return notice("Restored. Restart the container, then open the dashboard and log in with the backup's login.", "info");
-    notice("Restored. Restarting; log in with the backup's login when your browser asks.", "info");
+    notice("Restored. Restarting; then sign in with the backup's login.", "info");
     // The restarted app asks for the restored login, so the page can only be reloaded, not polled.
     setTimeout(() => (location.href = "/"), 2500);
   } catch (err) {
@@ -349,7 +349,7 @@ $("#admin-form").onsubmit = async (e) => {
   if (password !== $("#admin-pass2").value) return notice("The two passwords differ.");
   try {
     const r = await api("/api/setup/admin", { method: "POST", body: JSON.stringify({ username: $("#admin-user").value, password }) });
-    notice(r.restarting ? "Login created. Restarting; log in with it when your browser asks." : "Login created. Restart the container, then open /setup again.", "info");
+    notice(r.restarting ? "Login created. Restarting; then sign in with it." : "Login created. Restart the container, then open /setup again.", "info");
     $("#admin").hidden = true;
     // The restarted app asks for the new login, so the page can only be reloaded, not polled.
     if (r.restarting) setTimeout(() => (location.href = "/setup"), 2500);
