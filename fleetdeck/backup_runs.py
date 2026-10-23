@@ -33,6 +33,7 @@ import os
 import re
 import shlex
 import subprocess
+import tempfile
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -228,7 +229,8 @@ archive() {{
   # while it was read.
   DEST="$1"; shift
 {refuse}  OUT="$DEST/{FILE_PREFIX}$HOST-$STAMP.tar.gz{AGE_SUFFIX if age_recipient else ""}"
-  mkdir -p "$DEST" && chmod 700 "$DEST" 2>/dev/null
+  # A folder made here is private; one that was already there (a share) is left as its owner set it.
+  [ -d "$DEST" ] || {{ mkdir -p "$DEST" && chmod 700 "$DEST" 2>/dev/null; }}
 {_ARCHIVE_AGE.format(key=age_recipient) if age_recipient else _ARCHIVE_PLAIN}  grep -v 'Removing leading' "$W/err" >&2
   [ "$rc" -le 1 ] || {{ rm -f "$OUT"; echo "tar failed" >&2; exit 4; }}
   echo "wrote $OUT ($(wc -c <"$OUT") bytes)"
@@ -506,7 +508,14 @@ class IncusHostBackup:
             out["projects"][name] = entry
         return out
 
-    async def _dump(self, steps: _Steps, destination: str | None, dashboard_folder: Path | None) -> None:
+    async def _dump(
+        self,
+        steps: _Steps,
+        destination: str | None,
+        dashboard_folder: Path | None,
+        age_recipient: str | None = None,
+        password: str | None = None,
+    ) -> None:
         prefix = f"incus-{self.cfg.name}-"
         if destination == DASHBOARD:
             folder, prefix = machine_folder(dashboard_folder, self.cfg.name), "incus-settings-"
@@ -521,11 +530,29 @@ class IncusHostBackup:
         else:
             folder.mkdir(parents=True, exist_ok=True, mode=0o700)
         data = await self.settings()
-        path = folder / f"{prefix}{_stamp()}.json"
-        path.touch(mode=0o600)
-        path.write_text(json.dumps(data, indent=2, default=str))
+        sealed_with = password or age_recipient
+        path = folder / f"{prefix}{_stamp()}.json{AGE_SUFFIX if sealed_with else ''}"
+        if sealed_with:
+            # The settings can hold storage credentials: sealed like the archives, and the plain file never stays.
+            # It is written in a private temporary folder of the dashboard, never beside the sealed file (a share).
+            try:
+                with tempfile.TemporaryDirectory(prefix="fleetdeck-") as tmp:
+                    plain = Path(tmp) / "settings.json"
+                    fd = os.open(plain, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    with open(fd, "w") as f:
+                        f.write(json.dumps(data, indent=2, default=str))
+                    if password:
+                        await asyncio.to_thread(agecrypt.encrypt_file, plain, path, password)
+                    else:
+                        await asyncio.to_thread(_encrypt, plain, path, age_recipient)
+            except BaseException:
+                path.unlink(missing_ok=True)
+                raise
+        else:
+            path.touch(mode=0o600)
+            path.write_text(json.dumps(data, indent=2, default=str))
         steps.say(f"wrote {path} ({path.stat().st_size} bytes)")
-        _prune(folder, f"{prefix}*.json", steps)
+        _prune(folder, f"{prefix}*.json*", steps)
 
     async def run(
         self,
@@ -536,7 +563,10 @@ class IncusHostBackup:
         password: str | None = None,
     ) -> None:
         steps = _Steps(on_line)
-        await steps.step("Saving the Incus settings", lambda: self._dump(steps, destination, dashboard_folder))
+        await steps.step(
+            "Saving the Incus settings",
+            lambda: self._dump(steps, destination, dashboard_folder, age_recipient, password),
+        )
         if self.ssh is not None:
             ssh, cfg = self.ssh, self.cfg.ssh.backup if self.cfg.ssh else None
             # The host's own backup: entry is not used when the user named a place for this run.

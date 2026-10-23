@@ -161,6 +161,8 @@ class Job(BaseModel):
     remote_offset: int = 0
     # True while ``remote`` is a helper-script app update, not the OS upgrade, so a resume picks the right step.
     app_update: bool = False
+    # True once the helper-script app update has run, so a resume of the OS upgrade after it doesn't run it again.
+    app_updated: bool = False
     # While waiting for a reboot to finish: the boot id from before it.
     reboot_from: str | None = None
 

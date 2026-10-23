@@ -105,20 +105,64 @@ def client_ip(request: Request) -> str:
     return request.client.host if request.client else "?"
 
 
-def network_problem(request: Request, allow_from: list[str]) -> str | None:
+def _trusted(ip: ipaddress.IPv4Address | ipaddress.IPv6Address | None, trusted: list[str]) -> bool:
+    """Whether uvicorn would believe a proxy at this address (``trusted_proxies``: IPs, CIDRs or ``*``)."""
+    if ip is None:
+        return False
+    for n in trusted:
+        try:
+            if ip in ipaddress.ip_network(n.strip(), strict=False):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _without_port(host: str) -> str:
+    """``1.2.3.4:80`` and ``[::1]:80`` as the bare address (a proxy may add the port)."""
+    if host.startswith("["):
+        return host[1:].split("]", 1)[0]
+    if host.count(":") == 1:
+        return host.split(":", 1)[0]
+    return host
+
+
+def forwarded_client(forwarded: str, trusted: list[str]) -> str | None:
+    """The visitor's address as uvicorn derives it from X-Forwarded-For: the right-most entry that is not itself a
+    trusted proxy (the first entry with ``*``). A proxy appends the address it saw, so only the right-hand end of the
+    header is the proxy's word; everything to its left is whatever the visitor sent."""
+    hosts = [h.strip() for h in forwarded.split(",") if h.strip()]
+    if not hosts:
+        return None
+    if [n.strip() for n in trusted] == ["*"]:  # uvicorn trusts everyone only when that is the whole setting
+        return hosts[0]
+    for h in reversed(hosts):
+        if not _trusted(_ip(_without_port(h)), trusted):
+            return h
+    return hosts[0]
+
+
+def network_problem(request: Request, allow_from: list[str], trusted_proxies: list[str] | None = None) -> str | None:
     """Why this request may not use the console (None: allowed).
 
     The address is the one uvicorn settled on: the real client when the request came through a proxy listed in
-    ``trusted_proxies``, else the connection's own address. A request that carries X-Forwarded-For but whose address is
-    not in it came through a proxy we don't trust: its address is the proxy's, which says nothing about the client."""
+    ``trusted_proxies``, else the connection's own address. A request that carries X-Forwarded-For must have that
+    address as the visitor named by the header's right-hand end (see :func:`forwarded_client`). Otherwise it came
+    through a proxy we don't trust: its address is the proxy's, which says nothing about the client, and the header's
+    contents (which the visitor can fill in, e.g. with the proxy's own address) can't be used to vouch for it."""
     raw = client_ip(request)
     ip = _ip(raw)
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded and raw not in {p.strip() for p in forwarded.split(",")}:
-        return (
-            "this request came through a reverse proxy that the dashboard doesn't trust, so the visitor's address "
-            "is unknown. Add the proxy to trusted_proxies"
-        )
+    # uvicorn joins every X-Forwarded-For line (HAProxy adds its own line instead of extending the visitor's).
+    forwarded = ", ".join(request.headers.getlist("x-forwarded-for"))
+    if forwarded:
+        # The default is the one __main__ gives uvicorn when trusted_proxies is empty.
+        trusted = list(trusted_proxies) if trusted_proxies else ["127.0.0.1"]
+        client = forwarded_client(forwarded, trusted)
+        if client is None or _ip(_without_port(client)) != ip:
+            return (
+                "this request came through a reverse proxy that the dashboard doesn't trust, so the visitor's address "
+                "is unknown. Add the proxy to trusted_proxies"
+            )
     if ip is None or not any(ip in ipaddress.ip_network(n, strict=False) for n in allow_from):
         return f"{raw} is not in console.allow_from"
     return None
@@ -202,6 +246,21 @@ class Console:
         token = secrets.token_urlsafe(32)
         self.sessions[token] = Session(ip, self.auth.username if self.auth else "demo", now, now)
         return token
+
+    def alive(self, token: str, *, touch: bool = False) -> bool:
+        """Whether the unlock is still good, for an open terminal (``touch``: it was in use, so it stays unlocked).
+        The hour limit on an unlock only stops new commands and terminals: one already open is not cut off in the
+        middle of something (an upgrade); it is bounded by TERMINAL_MAX and goes when the console is locked."""
+        s = self.sessions.get(token)
+        if s is None:
+            return False
+        now = time.monotonic()
+        if now - s.last > self.cfg.unlock_minutes * 60:
+            del self.sessions[token]
+            return False
+        if touch:
+            s.last = now
+        return True
 
     def lock(self, token: str) -> None:
         self.sessions.pop(token, None)

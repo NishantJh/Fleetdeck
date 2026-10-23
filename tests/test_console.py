@@ -100,6 +100,38 @@ def test_proxy_that_is_not_trusted_is_refused():
     assert why and "trusted_proxies" in why
 
 
+def test_spoofed_forwarded_for_does_not_vouch_for_an_untrusted_proxy():
+    # A proxy that is not trusted appends the visitor's address to what the visitor sent. Naming the proxy's own
+    # (private) address in front of it must not make the request look like it came from there.
+    spoofed = {"x-forwarded-for": "172.18.0.2, 203.0.113.9"}
+    why = network_problem(_request("172.18.0.2", spoofed), ALLOW)
+    assert why and "trusted_proxies" in why
+    # The same request through a proxy that is trusted: the visitor is the right-most address that isn't a proxy,
+    # which uvicorn has already made the request's address.
+    assert "not in console.allow_from" in network_problem(_request("203.0.113.9", spoofed), ALLOW, ["172.18.0.0/16"])
+    ok = {"x-forwarded-for": "172.18.0.2, 192.168.1.20"}
+    assert network_problem(_request("192.168.1.20", ok), ALLOW, ["172.18.0.0/16"]) is None
+    # Several trusted proxies in a chain, and the default (loopback) proxy.
+    chain = {"x-forwarded-for": "192.168.1.20, 172.18.0.5"}
+    assert network_problem(_request("192.168.1.20", chain), ALLOW, ["172.18.0.0/16"]) is None
+    assert network_problem(_request("192.168.1.20", {"x-forwarded-for": "192.168.1.20"}), ALLOW) is None
+    # "*" believes the first address, as uvicorn does, but only as the whole setting.
+    assert network_problem(_request("192.168.1.20", {"x-forwarded-for": "192.168.1.20, 8.8.8.8"}), ALLOW, ["*"]) is None
+    assert network_problem(
+        _request("192.168.1.20", {"x-forwarded-for": "192.168.1.20, 8.8.8.8"}), ALLOW, ["10.0.0.1", "*"]
+    )
+    # A proxy that adds the port.
+    assert network_problem(_request("192.168.1.20", {"x-forwarded-for": "192.168.1.20:5555"}), ALLOW) is None
+    assert network_problem(_request("::1", {"x-forwarded-for": "[::1]:80"}), ALLOW) is None
+
+
+def test_forwarded_for_on_several_lines_is_read_as_one_list():
+    # HAProxy adds its own line. The visitor's own line must not be taken as the proxy's word.
+    request = _request("10.0.0.2", {})
+    request.scope["headers"] = [(b"x-forwarded-for", b"10.0.0.2"), (b"x-forwarded-for", b"203.0.113.9")]
+    assert network_problem(request, ["10.0.0.0/8"]) is not None
+
+
 def test_secure_connection():
     assert is_secure(_request("192.168.1.20", scheme="https"))
     assert is_secure(_request("127.0.0.1"))

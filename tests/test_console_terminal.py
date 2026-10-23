@@ -142,6 +142,48 @@ def test_idle_terminal_is_closed(monkeypatch):
         assert e.value.code == 4000 and "without activity" in e.value.reason
 
 
+def test_locking_the_console_closes_open_terminals(monkeypatch):
+    monkeypatch.setattr(console_routes, "WATCH_EVERY", 0.1)
+    with _client() as c:
+        token, target = _setup(c)
+        with c.websocket_connect("/api/console/terminal", headers=ORIGIN) as ws:
+            ws.send_text(_hello(token, target))
+            ws.receive_bytes()
+            assert c.post("/api/console/lock", headers={"x-console-token": token}).status_code == 200
+            with pytest.raises(WebSocketDisconnect) as e:
+                while True:
+                    ws.receive_bytes()
+        assert e.value.code == 4000 and "locked" in e.value.reason
+
+
+def test_a_terminal_in_use_keeps_the_console_unlocked(monkeypatch):
+    monkeypatch.setattr(console_routes, "WATCH_EVERY", 0.1)
+    with _client() as c:
+        token, target = _setup(c)
+        console = c.app.state.console
+        console.cfg.unlock_minutes = 1
+        with c.websocket_connect("/api/console/terminal", headers=ORIGIN) as ws:
+            ws.send_text(_hello(token, target))
+            ws.receive_bytes()
+            console.sessions[token].last -= 50  # nearly idle for a minute...
+            ws.send_bytes(b"x")  # ...but someone is typing
+            ws.receive_bytes()
+            for _ in range(5):
+                ws.send_bytes(b"x")
+                ws.receive_bytes()
+            assert console.alive(token)
+
+
+def test_a_refused_terminal_gives_its_place_back():
+    with _client() as c:
+        token, target = _setup(c)
+        for _ in range(3):
+            with c.websocket_connect("/api/console/terminal", headers=ORIGIN) as ws:
+                ws.send_text(_hello(token, target, container="0" * 12))
+                assert _closed_with(ws) == 4403
+        assert c.app.state.console.terminals == set()
+
+
 def test_terminal_page_has_its_own_policy():
     with _client() as c:
         r = c.get("/terminal")

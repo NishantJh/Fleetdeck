@@ -104,6 +104,17 @@ async def test_backup_folder_is_used_when_the_machine_has_one(tree):
     assert not (tmp / "out").exists()
 
 
+async def test_existing_backup_folder_keeps_its_permissions_and_a_new_one_is_private(tree):
+    tmp, etc = tree
+    nas = tmp / "nas"
+    nas.mkdir()
+    nas.chmod(0o755)
+    r = await LocalExecutor().run(script(HostBackupConfig(type="path", path=str(nas)), tmp, etc))
+    assert r.rc == 0 and (nas.stat().st_mode & 0o777) == 0o755
+    r = await LocalExecutor().run(script(None, tmp, etc))  # the default folder does not exist yet
+    assert r.rc == 0 and ((tmp / "out").stat().st_mode & 0o777) == 0o700
+
+
 async def test_backup_path_that_is_a_file_falls_back_and_says_so(tree):
     tmp, etc = tree
     f = tmp / "latest.tar"
@@ -270,6 +281,21 @@ async def test_incus_keeps_the_newest_seven_settings_files(tmp_path):
     other.write_text("{}")
     await run.run(lines()[1])
     assert len(list((tmp_path / "dumps").glob("incus-inc-*.json"))) == 7 and other.exists()
+
+
+async def test_incus_settings_are_sealed_with_the_backup_password(tmp_path):
+    from test_agecrypt import decrypt
+
+    run, _ = incus(tmp_path)
+    old_n, backup_runs.agecrypt.WORK_FACTOR = backup_runs.agecrypt.WORK_FACTOR, 10
+    try:
+        await run.run(lines()[1], password="correct horse")
+    finally:
+        backup_runs.agecrypt.WORK_FACTOR = old_n
+    (f,) = (tmp_path / "dumps").iterdir()  # no plain copy or temp file left beside it
+    assert f.name.startswith("incus-inc-") and f.name.endswith(".json.age")
+    assert b"core.https_address" not in f.read_bytes()
+    assert json.loads(decrypt(f.read_bytes(), "correct horse"))["server"]["config"] == {"core.https_address": ":8443"}
 
 
 async def test_incus_backs_up_to_a_folder_the_user_names(tmp_path):
