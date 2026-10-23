@@ -44,7 +44,7 @@ browser to a root shell. The design is about guarding that path.
 | --- | --- |
 | Someone has the dashboard password | Off unless enabled on the server; private networks only by default; audit log and notifications show use. |
 | An unattended, logged-in browser | Password again to unlock; unlock lives in page memory, ends after 15 idle minutes and on reload. |
-| Password sniffed on plain HTTP | Basic auth on HTTP sends the password in the clear; the console warns on every open over plain HTTP, and `allow_plain_http: false` blocks it. |
+| Password sniffed on plain HTTP | Over plain HTTP the password and the session cookie travel in the clear; the console warns on every open over plain HTTP, and `allow_plain_http: false` blocks it. |
 | Another site drives the browser (CSRF) | Existing `cross_site` check covers POSTs. WebSockets are GET, so the terminal checks `Origin` itself. |
 | Command text breaks out of quoting | The command is one argument to `sh -c`, quoted with `shlex.quote`, as every script is today. Container names are checked against the list the machine returned and a name pattern. |
 | Output attacks the page (HTML, escape codes) | One-off output is shown as text (`textContent`), with control characters other than tab and newline stripped. The terminal renders through xterm.js, which handles escape codes. |

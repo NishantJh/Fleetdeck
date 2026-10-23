@@ -497,7 +497,11 @@ The setup page writes an ordinary `config.yaml`, and everything below can also b
   works through the one-time link in the logs until it has created a login (`allow_no_auth: true`
   skips this when a proxy in front does the login). The setup page stores only a scrypt hash of
   the password (`password_hash`). Repeated wrong passwords lock that IP out for 5 minutes.
-* Basic auth sends the password with every request, so use HTTPS: either set `TLS_CERT` and
+* The browser signs in on the login page and gets a session cookie (HttpOnly, SameSite=Lax, Secure over
+  HTTPS), for the browser session or 30 days with "Keep me signed in". Changing the username or password
+  ends every session; so does Sign out, in that browser. Scripts can still send the login with each
+  request (HTTP Basic, e.g. `curl -u admin:...`).
+* The password and the session cookie cross the network, so use HTTPS: either set `TLS_CERT` and
   `TLS_KEY` (paths inside the container, e.g. `/data/tls.crt`) to serve HTTPS directly, or put
   Caddy, Traefik or `tailscale serve` in front.
 * The page shows a warning when it is opened over plain HTTP from anything but localhost.
@@ -511,7 +515,7 @@ The setup page writes an ordinary `config.yaml`, and everything below can also b
 
 ### Put it behind HTTPS
 
-The login is HTTP Basic, so over plain HTTP the password crosses your network in clear text, and it is
+Over plain HTTP the password and the session cookie cross your network in clear text, and they are
 effectively root on every machine the dashboard manages. Most people already run a reverse proxy; put
 Fleetdeck behind it. With [Caddy](https://caddyserver.com) (a certificate is made for you):
 

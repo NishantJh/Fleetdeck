@@ -1,4 +1,5 @@
-"""Request guards for the dashboard: auth with brute-force throttling, CSRF and security headers."""
+"""Request guards for the dashboard: login page and sessions, auth with brute-force throttling, CSRF and security
+headers."""
 
 from __future__ import annotations
 
@@ -6,14 +7,17 @@ import asyncio
 import base64
 import binascii
 import hashlib
+import hmac
 import itertools
 import os
 import secrets
 import time
-from urllib.parse import urlsplit
+from pathlib import Path
+from urllib.parse import quote, urlsplit
 
-from fastapi import Request
-from fastapi.responses import RedirectResponse, Response
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from pydantic import BaseModel, Field
 
 from .config import AuthConfig
 
@@ -122,6 +126,53 @@ def basic_auth_ok(header: str, auth: AuthConfig) -> bool:
     return user_ok and pwd_ok
 
 
+SESSION_COOKIE = "fleetdeck_session"
+SESSION_SHORT = 12 * 3600  # "keep me signed in" unticked: a browser-session cookie, good for at most this long
+SESSION_LONG = 30 * 86400
+
+
+class Sessions:
+    """Signed login cookies, so the browser logs in once on the login page instead of sending the password with
+    every request. ``expiry.mac``: nothing is stored on the server. The key mixes a secret kept in the state
+    database (or made per run without one) with the login itself, so changing the username or password ends
+    every session."""
+
+    def __init__(self, auth: AuthConfig, secret: bytes):
+        login = "\n".join((auth.username, auth.password_hash or auth.password or "")).encode()
+        self._key = hmac.new(secret, login, hashlib.sha256).digest()
+
+    def _mac(self, expiry: int) -> str:
+        return hmac.new(self._key, str(expiry).encode(), hashlib.sha256).hexdigest()
+
+    def issue(self, ttl: int) -> str:
+        expiry = int(time.time()) + ttl
+        return f"{expiry}.{self._mac(expiry)}"
+
+    def valid(self, token: str) -> bool:
+        expiry, _, mac = token.partition(".")
+        if not expiry.isdigit() or int(expiry) < time.time():
+            return False
+        return secrets.compare_digest(mac, self._mac(int(expiry)))
+
+
+def session_secret(store) -> bytes:
+    """The signing secret, kept in the state database so logins survive a restart or an update."""
+    if store is None:
+        return os.urandom(32)
+    if (saved := store.get_value("session_secret")) is None:
+        saved = secrets.token_hex(32)
+        store.set_value("session_secret", saved)
+    return bytes.fromhex(saved)
+
+
+def safe_next(target: str | None) -> str:
+    """Where to go after logging in: a path on this site only, never another site (``//evil``, or a backslash,
+    which browsers read as a slash)."""
+    if not target or not target.startswith("/") or target.startswith("//") or "\\" in target:
+        return "/"
+    return target
+
+
 def cross_site(request: Request) -> bool:
     """True for a state-changing request sent by another site (CSRF)."""
     if request.method in SAFE_METHODS:
@@ -137,11 +188,20 @@ def cross_site(request: Request) -> bool:
 
 SETUP_PATHS = ("/setup", "/static/")
 INSTALL_PATH = "/install/"
+# Reachable without logging in: the login page, its API and the static files it needs (all public in the repo).
+LOGIN_PATHS = {"/login", "/api/login", "/api/logout"}
 
 
-def make_guard(auth: AuthConfig | None, throttle: LoginThrottle, setup_token: str | None = None, locked: bool = True):
+def make_guard(
+    auth: AuthConfig | None,
+    throttle: LoginThrottle,
+    setup_token: str | None = None,
+    locked: bool = True,
+    sessions: Sessions | None = None,
+):
     """``setup_token`` (when there is no login) makes the setup API need the one-time token printed in
-    the logs. ``locked`` is first-run mode: nothing but the setup page works until a login exists."""
+    the logs. ``locked`` is first-run mode: nothing but the setup page works until a login exists.
+    ``sessions`` lets the login page's cookie stand in for the password; HTTP Basic still works for scripts."""
     # A password hash is deliberately slow to check, and the browser sends the login with every
     # request; remember the headers that were right (by digest) instead of re-hashing each time.
     good: set[str] = set()
@@ -190,6 +250,11 @@ def make_guard(auth: AuthConfig | None, throttle: LoginThrottle, setup_token: st
                     return await call_next(request)
                 return Response("finish setup first: open /setup", status_code=403)
         if auth is not None:
+            path = request.url.path
+            if path in LOGIN_PATHS or path.startswith("/static/"):
+                return await call_next(request)
+            if sessions is not None and sessions.valid(request.cookies.get(SESSION_COOKIE, "")):
+                return await call_next(request)
             ip = request.client.host if request.client else "?"
             if (left := throttle.blocked_for(ip)) > 0:
                 return Response(
@@ -201,8 +266,74 @@ def make_guard(auth: AuthConfig | None, throttle: LoginThrottle, setup_token: st
             if not await auth_ok(header):
                 if header:  # the browser's first, credential-less request isn't a failed guess
                     throttle.failed(ip, header)
-                return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="homelab"'})
+                if sessions is None:
+                    return Response(status_code=401, headers={"WWW-Authenticate": 'Basic realm="homelab"'})
+                # No WWW-Authenticate: it would make the browser pop up its own login box. Pages go to the login page.
+                if request.method == "GET" and "text/html" in request.headers.get("accept", ""):
+                    url = path + (f"?{request.url.query}" if request.url.query else "")
+                    return RedirectResponse(f"/login?next={quote(url, safe='')}", status_code=303)
+                return Response("login required", status_code=401)
             throttle.succeeded(ip)
         return await call_next(request)
 
+    guard.auth_ok = auth_ok
     return guard
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(max_length=200)
+    password: str = Field(max_length=1000)
+    remember: bool = False
+
+
+def add_login_routes(app: FastAPI, auth: AuthConfig | None, guard, throttle: LoginThrottle, sessions, page: Path):
+    """The login page and its API. ``guard`` is the middleware from ``make_guard``: its password check (cached,
+    with the scrypt work limited) is reused, and wrong passwords here count towards the same lockout."""
+
+    @app.get("/login")
+    async def login_page(request: Request, next: str | None = None):  # noqa: A002 - the query parameter's name
+        if sessions is None:
+            return RedirectResponse("/", status_code=303)
+        if sessions.valid(request.cookies.get(SESSION_COOKIE, "")):
+            return RedirectResponse(safe_next(next), status_code=303)
+        return FileResponse(page, headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/login")
+    async def login(body: LoginRequest, request: Request):
+        if sessions is None:
+            return JSONResponse({"detail": "this dashboard has no login"}, status_code=404)
+        ip = request.client.host if request.client else "?"
+        if (left := throttle.blocked_for(ip)) > 0:
+            wait = int(left) + 1
+            return JSONResponse(
+                {"detail": "Too many failed attempts. Try again in a few minutes.", "retry_after": wait},
+                status_code=429,
+                headers={"Retry-After": str(wait)},
+            )
+        header = "Basic " + base64.b64encode(f"{body.username}:{body.password}".encode()).decode()
+        if ":" in body.username or not await guard.auth_ok(header):
+            throttle.failed(ip, header)
+            return JSONResponse({"detail": "Wrong username or password."}, status_code=401)
+        throttle.succeeded(ip)
+        ttl = SESSION_LONG if body.remember else SESSION_SHORT
+        response = JSONResponse({"ok": True})
+        response.set_cookie(
+            SESSION_COOKIE,
+            sessions.issue(ttl),
+            max_age=ttl if body.remember else None,
+            httponly=True,
+            samesite="lax",
+            secure=request.url.scheme == "https",
+        )
+        return response
+
+    @app.post("/api/logout")
+    async def logout():
+        response = JSONResponse({"ok": True})
+        response.delete_cookie(SESSION_COOKIE, httponly=True, samesite="lax")
+        return response
+
+    @app.get("/api/session")
+    async def session():
+        """For the dashboard's Sign out button (behind the guard, so only a logged-in browser gets here)."""
+        return {"login": sessions is not None, "username": auth.username if auth else None}

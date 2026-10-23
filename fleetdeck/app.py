@@ -29,7 +29,7 @@ from .onboarding import Paths
 from .providers.proxmox import PROTECTED_NOTE
 from .report import build_report
 from .scheduler import Scheduler
-from .security import LoginThrottle, make_guard
+from .security import LoginThrottle, Sessions, add_login_routes, make_guard, session_secret
 from .setup_routes import add_setup_routes
 from .store import Store
 from .tunnels import TunnelManager
@@ -182,7 +182,12 @@ def create_app(
     app.state.scheduler = scheduler
     app.state.setup_token = setup_token
 
-    app.middleware("http")(make_guard(cfg.auth, LoginThrottle(), setup_token, locked))
+    # The login page's cookie; HTTP Basic (scripts, curl -u) keeps working alongside it.
+    sessions = Sessions(cfg.auth, session_secret(store)) if cfg.auth is not None else None
+    throttle = LoginThrottle()
+    guard = make_guard(cfg.auth, throttle, setup_token, locked, sessions)
+    app.middleware("http")(guard)
+    add_login_routes(app, cfg.auth, guard, throttle, sessions, STATIC / "login.html")
     if cfg.allowed_hosts:
         # Added last so it runs first: a request for a foreign Host never reaches the API.
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=cfg.allowed_hosts)

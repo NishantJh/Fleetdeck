@@ -1,7 +1,7 @@
 # Every setting, for reference. The setup page (/setup) writes config.yaml for you and has an
 # editor for it; to write one by hand, copy this file to config.yaml. ${VARS} are read from the environment.
 
-# Basic auth for the dashboard. Required: this app can run commands as root on your lab. (If a
+# The dashboard's login (its login page; scripts can use HTTP Basic). Required: this app can run commands as root on your lab. (If a
 # proxy in front already does the login, `allow_no_auth: true` lets it start without.)
 # 10 wrong passwords from one IP within 5 minutes lock that IP out for 5 minutes.
 auth:
