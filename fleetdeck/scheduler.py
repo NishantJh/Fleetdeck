@@ -182,9 +182,12 @@ class Scheduler:
         # a new pending reboot, or a machine whose check started failing. Things that were fixed
         # since drop out, so they notify again if they come back.
         new = seen - self._last_seen
-        self._last_seen = seen
         if new and self.notifier is not None:
             errors = await self.notifier.send(title, body)
             if len(errors) < len(self.notifier.targets):
                 self.last_notified = datetime.now(UTC)
+                self._last_seen = seen
+            # Every target failed: keep what was known before, so the next round tries to tell about it again.
+        else:
+            self._last_seen = seen
         self._save()

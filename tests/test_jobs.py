@@ -397,6 +397,26 @@ async def test_helper_scripts_own_update_is_followed_by_the_os_upgrade():
     assert jobs.checks["t1"].community_script == "plex"
 
 
+async def test_resumed_os_upgrade_does_not_run_the_helper_scripts_update_again():
+    ex = CommunityExecutor()
+    jobs = JobManager(_inventory((_target(), ex)))
+    job = Job(
+        id="j1", target_id="t1", target_name="t1", action="upgrade", status="running", created_at=datetime.now(UTC)
+    )
+    job.app_updated, job.remote = True, "j1"  # the app's own update is done; the OS upgrade was running when we stopped
+    jobs.jobs[job.id] = job
+
+    async def finish(job_, executor, on_line, script=UPGRADE_SCRIPT, what="upgrade"):
+        job_.remote = None
+        return "__PM__=apt\n__REBOOT__=no\n__CSAPP__=plex\n"
+
+    jobs._upgrade = finish
+    target, executor = jobs.inventory.get("t1")
+    await jobs._continue(job, target, executor, lambda *_: None, None)
+    assert COMMUNITY_UPDATE_SCRIPT not in ex.scripts
+    assert "== Re-checking for remaining updates" in job.log
+
+
 async def test_os_upgrade_still_runs_if_helper_scripts_update_fails():
     ex = CommunityExecutor(update_rc=1)
     jobs = JobManager(_inventory((_target(), ex)))

@@ -110,6 +110,29 @@ async def test_restart_keeps_the_schedule_and_does_not_repeat_a_notification(mon
     assert again._delay() == fleetdeck.scheduler.FIRST_RUN_DELAY
 
 
+async def test_notification_that_reached_nobody_is_tried_again(monkeypatch):
+    import fleetdeck.scheduler
+
+    monkeypatch.setattr(fleetdeck.scheduler, "POLL", 0)
+    inv = _inventory((_target("pi4"), PkgExecutor(["curl"])))
+    inv.refresh = _noop_refresh
+
+    class Down(RecordingNotifier):
+        async def send(self, title, body):
+            await super().send(title, body)
+            return {"ntfy": "connection refused"}
+
+    notifier = Down()
+    sched = Scheduler(3600, inv, JobManager(inv), notifier)
+    await sched.run_once()
+    await sched.run_once()  # nobody heard about curl, so it is still new
+    assert len(notifier.messages) == 2 and sched.last_notified is None
+    notifier.send = RecordingNotifier.send.__get__(notifier)  # the target is back
+    await sched.run_once()
+    await sched.run_once()
+    assert len(notifier.messages) == 3  # told once, then quiet
+
+
 async def test_scheduled_run_notifies_only_about_new_things(monkeypatch):
     import fleetdeck.scheduler
 

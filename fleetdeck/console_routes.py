@@ -76,7 +76,7 @@ def add_console_routes(
 
     def gate(request: Request, *, token: bool = True) -> Session | None:
         """Raises unless this request may use the console; returns its unlock session (when ``token``)."""
-        if (why := network_problem(request, ccfg.allow_from)) is not None:
+        if (why := network_problem(request, ccfg.allow_from, cfg.trusted_proxies)) is not None:
             raise HTTPException(403, f"the console isn't available from here: {why}")
         if not ccfg.allow_plain_http and not is_secure(request):
             raise HTTPException(403, "the console is blocked over plain HTTP (console.allow_plain_http is false)")
@@ -100,7 +100,7 @@ def add_console_routes(
 
     @app.get("/api/console")
     async def state(request: Request):
-        problem = network_problem(request, ccfg.allow_from)
+        problem = network_problem(request, ccfg.allow_from, cfg.trusted_proxies)
         if problem is None and not ccfg.allow_plain_http and not is_secure(request):
             problem = "blocked over plain HTTP"
         return {
@@ -249,7 +249,9 @@ def add_console_routes(
         return {"rows": console.audit_rows(limit, kind)}
 
     def ws_origin_ok(ws: WebSocket) -> bool:
-        """A WebSocket upgrade is a GET, so the CSRF check does not see it: the page that opened it must be ours."""
+        """A WebSocket upgrade is a GET, so the CSRF check does not see it: the page that opened it must be ours.
+        (The login middleware does not see WebSockets either: the unlock token, which is only handed out after the
+        login and the password again, is what lets a terminal open.)"""
         origin = ws.headers.get("origin")
         return bool(origin) and urlsplit(origin).netloc.lower() == ws.headers.get("host", "").lower()
 
@@ -267,7 +269,10 @@ def add_console_routes(
             return
         await ws.accept()
 
+        tid = uuid.uuid4().hex[:12]
+
         async def refuse(reason: str) -> None:
+            console.terminals.discard(tid)
             await ws.close(code=4403, reason=reason[:120])
 
         try:
@@ -281,7 +286,7 @@ def add_console_routes(
         if not ccfg.terminal:
             await refuse("the terminal is switched off (console.terminal)")
             return
-        if (why := network_problem(ws, ccfg.allow_from)) is not None:
+        if (why := network_problem(ws, ccfg.allow_from, cfg.trusted_proxies)) is not None:
             await refuse(f"not available from here: {why}")
             return
         if not ccfg.allow_plain_http and not is_secure(ws):
@@ -302,13 +307,21 @@ def add_console_routes(
         if len(console.terminals) >= MAX_TERMINALS:
             await refuse(f"{MAX_TERMINALS} terminals are already open")
             return
+        console.terminals.add(tid)  # taken now: the lookups below wait, and another terminal could slip in meanwhile
         demo = target.source == "demo"
         name, command = target.name, None
         if container:
             if not CONTAINER_ID.match(str(container)):
                 await refuse("bad container id")
                 return
-            found = DEMO_CONTAINERS if demo else (await _containers(executor))["containers"]
+            try:
+                found = DEMO_CONTAINERS if demo else (await _containers(executor))["containers"]
+            except Exception as e:  # noqa: BLE001 - shown in the terminal window
+                await refuse(f"could not list the containers: {e}"[:120])
+                return
+            except BaseException:  # cancelled (shutdown): the place must not stay taken
+                console.terminals.discard(tid)
+                raise
             match = next((c for c in found if c["id"] == container), None)
             if match is None:
                 await refuse("that container is not on this machine (or is the dashboard's own)")
@@ -317,8 +330,6 @@ def add_console_routes(
             shell = shlex.quote("command -v bash >/dev/null 2>&1 && exec bash || exec sh")
             command = f"docker exec -it {'-u 0 ' if as_root else ''}{container} sh -c {shell}"
 
-        tid = uuid.uuid4().hex[:12]
-        console.terminals.add(tid)
         started = time.monotonic()
         row = {
             "kind": "terminal",
@@ -332,10 +343,11 @@ def add_console_routes(
             "status": "open",
             "duration": None,
         }
-        audit_id = console.audit(row)
+        audit_id = None
         pty = None
         reason = "closed"
         try:
+            audit_id = console.audit(row)
             if not demo:
                 # A line in the machine's own journal that the dashboard cannot erase.
                 where = f"{session.user}@{session.ip}: terminal" + (f" in container {name}" if container else "")
@@ -370,6 +382,9 @@ def add_console_routes(
                 while True:
                     await asyncio.sleep(WATCH_EVERY)
                     now = time.monotonic()
+                    # Typing or output keeps the unlock alive; locking the console or its unlock running out ends it.
+                    if not console.alive(token, touch=now - last < WATCH_EVERY * 2):
+                        return "closed: the console was locked or its unlock ran out"
                     if now - last > TERMINAL_IDLE:
                         return "closed after 15 minutes without activity"
                     if now - started > TERMINAL_MAX:
