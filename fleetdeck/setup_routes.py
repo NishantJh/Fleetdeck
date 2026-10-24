@@ -216,10 +216,11 @@ def add_setup_routes(
                 tunnel = tunnels.to_config(await asyncio.to_thread(_pending_tunnel, req))
             try:
                 await asyncio.to_thread(tunnel_manager.ensure, req.name, tunnel)
-            except RuntimeError as e:
+            except RuntimeError:
+                log.exception("Tunnel setup failed for machine '%s'", req.name)
                 return {
                     "ok": False,
-                    "log": [str(e)],
+                    "log": ["Could not establish tunnel connection. Check tunnel configuration and try again."],
                     "fingerprint": None,
                     "host_key_changed": False,
                     "needs_confirm": False,
