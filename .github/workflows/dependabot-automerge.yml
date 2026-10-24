@@ -1,0 +1,40 @@
+name: Dependabot auto-merge
+# Merges Dependabot patch-level updates once the CI test and image checks have passed.
+# Minor and major updates are left for the owner. No code from the pull request is checked out or run here.
+on:
+  pull_request_target:
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  automerge:
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: self-hosted
+    timeout-minutes: 45
+    steps:
+      - id: meta
+        uses: dependabot/fetch-metadata@v2
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+      - if: steps.meta.outputs.update-type == 'version-update:semver-patch'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const pull_number = context.payload.pull_request.number;
+            const sha = context.payload.pull_request.head.sha;
+            const needed = ["test", "image"];
+            for (let i = 0; i < 80; i++) {
+              const { data } = await github.rest.checks.listForRef({ owner, repo, ref: sha, per_page: 100 });
+              const runs = needed.map((n) => data.check_runs.find((r) => r.name === n));
+              if (runs.some((r) => r && r.status === "completed" && r.conclusion !== "success")) {
+                core.setFailed("A required check failed; leaving the pull request for the owner.");
+                return;
+              }
+              if (runs.every((r) => r && r.status === "completed")) {
+                await github.rest.pulls.merge({ owner, repo, pull_number, merge_method: "squash", sha });
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 30000));
+            }
+            core.setFailed("Timed out waiting for checks.");

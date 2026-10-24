@@ -3,15 +3,15 @@ updates:
   - package-ecosystem: pip
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
     ignore:
       # pydantic pins pydantic-core exactly; it only moves with pydantic.
       - dependency-name: pydantic-core
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
   - package-ecosystem: docker
     directory: /
     schedule:
-      interval: weekly
+      interval: daily
