@@ -236,7 +236,8 @@ case "$PM" in
     if [ -z "$pkgs" ]; then echo "== No security updates to install"
     else
       echo "== Installing security updates: $pkgs"
-      apt-get $APT_OPTS -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold install --only-upgrade $pkgs
+      apt-get $APT_OPTS -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+        install --only-upgrade $pkgs
     fi ;;
   *) echo "Security-only updates are only supported with apt" >&2; exit 3 ;;
 esac
