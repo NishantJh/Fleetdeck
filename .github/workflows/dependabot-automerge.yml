@@ -1,40 +1,61 @@
 name: Dependabot auto-merge
 # Merges Dependabot patch-level updates once the CI test and image checks have passed.
 # Minor and major updates are left for the owner. No code from the pull request is checked out or run here.
+# Uses only the GitHub API through python3, so it does not depend on any third-party action being allowed.
 on:
   pull_request_target:
 permissions:
   contents: write
   pull-requests: write
+  checks: read
 jobs:
   automerge:
     if: github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: self-hosted
     timeout-minutes: 45
     steps:
-      - id: meta
-        uses: dependabot/fetch-metadata@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-      - if: steps.meta.outputs.update-type == 'version-update:semver-patch'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-            const pull_number = context.payload.pull_request.number;
-            const sha = context.payload.pull_request.head.sha;
-            const needed = ["test", "image"];
-            for (let i = 0; i < 80; i++) {
-              const { data } = await github.rest.checks.listForRef({ owner, repo, ref: sha, per_page: 100 });
-              const runs = needed.map((n) => data.check_runs.find((r) => r.name === n));
-              if (runs.some((r) => r && r.status === "completed" && r.conclusion !== "success")) {
-                core.setFailed("A required check failed; leaving the pull request for the owner.");
-                return;
-              }
-              if (runs.every((r) => r && r.status === "completed")) {
-                await github.rest.pulls.merge({ owner, repo, pull_number, merge_method: "squash", sha });
-                return;
-              }
-              await new Promise((resolve) => setTimeout(resolve, 30000));
-            }
-            core.setFailed("Timed out waiting for checks.");
+      - name: Merge a patch update once test and image pass
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, time, urllib.error, urllib.request
+
+          repo, pr, sha = os.environ["REPO"], os.environ["PR"], os.environ["SHA"]
+          needed = ("test", "image")
+
+
+          def api(method, path, body=None):
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{repo}/{path}",
+                  data=json.dumps(body).encode() if body is not None else None,
+                  method=method,
+                  headers={
+                      "Authorization": f"Bearer {os.environ['GH_TOKEN']}",
+                      "Accept": "application/vnd.github+json",
+                  },
+              )
+              with urllib.request.urlopen(req) as resp:
+                  return json.load(resp)
+
+
+          commits = api("GET", f"pulls/{pr}/commits?per_page=100")
+          if "update-type: version-update:semver-patch" not in commits[-1]["commit"]["message"]:
+              print("Not a patch update; leaving it for the owner.")
+              sys.exit(0)
+
+          for _ in range(80):
+              runs = api("GET", f"commits/{sha}/check-runs?per_page=100")["check_runs"]
+              found = {n: next((r for r in runs if r["name"] == n), None) for n in needed}
+              if any(r and r["status"] == "completed" and r["conclusion"] != "success" for r in found.values()):
+                  sys.exit("A required check failed; leaving the pull request for the owner.")
+              if all(r and r["status"] == "completed" for r in found.values()):
+                  api("PUT", f"pulls/{pr}/merge", {"merge_method": "squash", "sha": sha})
+                  print("Merged.")
+                  sys.exit(0)
+              time.sleep(30)
+          sys.exit("Timed out waiting for checks.")
+          PY
