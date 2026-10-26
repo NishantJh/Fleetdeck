@@ -141,6 +141,8 @@ class Job(BaseModel):
     action: JobAction
     # Upgrade only: reboot afterwards if the upgrade left a reboot pending.
     reboot_if_required: bool = False
+    # Upgrade only: install just the packages from a security repository (see updates.SECURITY_UPGRADE_SCRIPT).
+    security_only: bool = False
     # Upgrade: take a snapshot first (guests only). Upgrade/rollback: the snapshot taken / restored.
     snapshot_first: bool = False
     snapshot: str | None = None

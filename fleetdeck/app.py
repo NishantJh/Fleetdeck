@@ -124,7 +124,15 @@ def create_app(
         cfg.backup_password,
     )
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
-    scheduler = Scheduler(cfg.schedule.check_every, inventory, jobs, notifier, store, cfg.schedule.check_docker)
+    scheduler = Scheduler(
+        cfg.schedule.check_every,
+        inventory,
+        jobs,
+        notifier,
+        store,
+        cfg.schedule.check_docker,
+        cfg.schedule.auto_security_updates,
+    )
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):

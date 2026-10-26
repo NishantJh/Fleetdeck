@@ -49,13 +49,19 @@ community_scripts_update: true
 # .tar.gz.age; `age -d file.tar.gz.age | tar xz` asks for it. Archives written on the machine itself can't
 # use a password: set backup_age_recipient too for those, or save them on the dashboard.
 # backup_password: ${BACKUP_PASSWORD}
-# Check every machine on a timer (e.g. 30m, 6h, 1d; at least 5m). Nothing is ever upgraded
-# automatically; you get a notification when something new is pending.
+# Check every machine on a timer (e.g. 30m, 6h, 1d; at least 5m). Nothing is upgraded
+# automatically unless you turn on auto_security_updates below; you get a notification when something new is pending.
 schedule:
   check_every: 6h
   # Also look for newer Docker images on every machine with Docker. Off by default because it
   # downloads (pulls) the images each time, which can use a lot of bandwidth and disk space.
   # check_docker: true
+  # After each check, install the security updates it found, with no click: hosts first, then their
+  # containers, LXCs and VMs, then Docker stacks. Off by default. Never reboots.
+  # Security-only means apt packages from a -security repository (Debian, Ubuntu, Proxmox); other
+  # package managers are left alone. Docker has no security-only updates, so every running stack with a
+  # newer image is updated: needs check_docker, and skips the stack that runs this dashboard.
+  # auto_security_updates: true
 
 # Linked from notifications.
 # public_url: http://192.168.1.50:8080

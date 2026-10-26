@@ -22,6 +22,7 @@ from .updates import (
     COMMUNITY_SCRIPT_DETECT,
     COMMUNITY_UPDATE_SCRIPT,
     REBOOT_NOW_SCRIPT,
+    SECURITY_UPGRADE_SCRIPT,
     UPGRADE_SCRIPT,
     clean_line,
     parse_boot_id,
@@ -216,6 +217,7 @@ class JobManager:
         destination: str | None = None,
         stack: str | None = None,
         prune: bool = False,
+        security_only: bool = False,
     ) -> Job:
         target, executor = self.inventory.get(target_id)
         if action == "rollback":
@@ -245,6 +247,7 @@ class JobManager:
             target_name=target.name,
             action=action,
             reboot_if_required=reboot_if_required and action == "upgrade",
+            security_only=security_only and action == "upgrade",
             snapshot_first=snapshot_first and action == "upgrade",
             snapshot=snapshot if action == "rollback" else None,
             destination=destination if action == "backup" else None,
@@ -359,7 +362,12 @@ class JobManager:
                 else:
                     if job.snapshot_first:
                         await self._snapshot(job)
-                    if app := await self._community_app(executor):
+                    if job.security_only:
+                        # The community-scripts app update is a full update, not a security-only one.
+                        job.log.append("== Installing security updates only")
+                        stdout = await self._upgrade(job, executor, on_line)
+                        await self._after_upgrade(job, target, executor, on_line, slot, stdout, app_updated=True)
+                    elif app := await self._community_app(executor):
                         await self._app_first(job, target, executor, on_line, slot, app)
                     else:
                         job.log.append("== Running OS upgrade")
@@ -414,14 +422,16 @@ class JobManager:
             await self._app_first(job, target, executor, on_line, slot, "the app")
         elif job.remote is not None:
             stdout = await self._upgrade(job, executor, on_line)
-            await self._after_upgrade(job, target, executor, on_line, slot, stdout, app_updated=job.app_updated)
+            await self._after_upgrade(job, target, executor, on_line, slot, stdout, app_updated=job.app_updated or job.security_only)
         else:  # waiting for a reboot, on its own or after an upgrade
             await self._reboot(job, target, executor, on_line, slot)
 
-    async def _upgrade(self, job: Job, executor, on_line, script: str = UPGRADE_SCRIPT, what: str = "upgrade") -> str:
+    async def _upgrade(self, job: Job, executor, on_line, script: str | None = None, what: str = "upgrade") -> str:
         """Runs the upgrade (or another long ``script``) and returns its output. Detached on the target
         where the executor allows, so it goes on if the dashboard restarts, and :meth:`resume`
         follows it again."""
+        if script is None:
+            script = SECURITY_UPGRADE_SCRIPT if job.security_only else UPGRADE_SCRIPT
         if not getattr(executor, "detached", False):
             return await _attached(executor, on_line, script, what)
         if job.remote is None:
