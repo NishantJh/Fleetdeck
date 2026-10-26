@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 
 from .inventory import Inventory
 from .jobs import JobManager
+from .models import Job
 from .notify import Notifier
 from .store import Store
 
@@ -20,6 +21,8 @@ FIRST_RUN_DELAY = 60.0
 POLL = 2.0
 # Stop waiting for a scheduled round after this long; checks still running are reported as stuck.
 RUN_TIMEOUT = 30 * 60.0
+# Same for each automatic security-update round (hosts, then guests).
+UPDATE_TIMEOUT = 2 * 60 * 60.0
 
 Fingerprint = frozenset[tuple[str, ...]]
 
@@ -33,9 +36,11 @@ class Scheduler:
         notifier: Notifier | None,
         store: Store | None = None,
         check_docker: bool = False,
+        auto_security: bool = False,
     ):
         self.store = store
         self.check_docker = check_docker
+        self.auto_security = auto_security
         self.interval = interval
         self.inventory = inventory
         self.jobs = jobs
@@ -128,17 +133,64 @@ class Scheduler:
             ):
                 with contextlib.suppress(KeyError, ValueError):
                     submitted.append(self.jobs.submit(target.id, "stacks"))
-        deadline = time.monotonic() + RUN_TIMEOUT
-        while any(j.status in ("queued", "running") for j in submitted):
-            if time.monotonic() > deadline:
-                break
-            await asyncio.sleep(POLL)
+        await self._wait(submitted, RUN_TIMEOUT)
         # A hung check (an SSH session that never returns) must not hold back the whole report.
         stuck = sorted({j.target_id for j in submitted if j.status in ("queued", "running")})
         done = sorted({j.target_id for j in submitted} - set(stuck))
-        await self._report(done, stuck)
+        notes = await self._install_security_updates(done) if self.auto_security else []
+        await self._report(done, stuck, notes)
 
-    def summarize(self, target_ids: list[str], stuck: list[str] = ()) -> tuple[str, str, Fingerprint]:
+    async def _wait(self, jobs: list[Job], timeout: float) -> None:
+        deadline = time.monotonic() + timeout
+        while any(j.status in ("queued", "running") for j in jobs):
+            if time.monotonic() > deadline:
+                break
+            await asyncio.sleep(POLL)
+
+    async def _install_security_updates(self, checked: list[str]) -> list[str]:
+        """Install the security updates the checks found: hosts first, then their containers and VMs.
+
+        Each round finishes before the next starts, so a host is never updated while one of its guests is
+        (a host's upgrade waits for its guests anyway, see JobManager.update_blocked). Never reboots, and
+        leaves Docker stacks alone: they have no security-only updates. Returns lines for the notification.
+        """
+        notes: list[str] = []
+        for hosts in (True, False):
+            submitted: list[Job] = []
+            for tid in checked:
+                entry = self.inventory.targets.get(tid)
+                check = self.jobs.checks.get(tid)
+                if entry is None or check is None or check.error or tid in self.jobs.hidden:
+                    continue
+                target, executor = entry
+                if (target.kind == "host") != hosts or executor is None or target.check_only:
+                    continue
+                if not any(p.security for p in check.packages):
+                    continue
+                try:
+                    # A snapshot first where the guest can take one, like the Upgrade button.
+                    submitted.append(self.jobs.submit(tid, "upgrade", snapshot_first=True, security_only=True))
+                except (KeyError, ValueError) as e:
+                    log.warning("not installing security updates on %s: %s", target.name, e)
+            await self._wait(submitted, UPDATE_TIMEOUT)
+            notes += self._outcomes(submitted, "security updates")
+        return notes
+
+    @staticmethod
+    def _outcomes(jobs: list[Job], what: str) -> list[str]:
+        notes = []
+        for job in jobs:
+            who = job.target_name
+            if job.status == "succeeded":
+                notes.append(f"{who}: installed {what}")
+            else:
+                why = job.error.splitlines()[0][:150] if job.error else "still running after the time limit"
+                notes.append(f"{who}: {what} failed: {why}")
+        return notes
+
+    def summarize(
+        self, target_ids: list[str], stuck: list[str] = (), notes: list[str] = ()
+    ) -> tuple[str, str, Fingerprint]:
         lines: list[str] = []
         seen: set[tuple[str, ...]] = set()
         machines = 0
@@ -174,15 +226,17 @@ class Scheduler:
         if failed:
             bits.append(f"{failed} check{'s' if failed > 1 else ''} failed")
         title = "Homelab: " + (", ".join(bits) or "all up to date")
-        return title, "\n".join(sorted(lines, key=str.lower)), frozenset(seen)
+        body = "\n".join([*sorted(notes, key=str.lower), *sorted(lines, key=str.lower)])
+        return title, body, frozenset(seen)
 
-    async def _report(self, target_ids: list[str], stuck: list[str] = ()) -> None:
-        title, body, seen = self.summarize(target_ids, stuck)
+    async def _report(self, target_ids: list[str], stuck: list[str] = (), notes: list[str] = ()) -> None:
+        title, body, seen = self.summarize(target_ids, stuck, notes)
         # Only speak up when something new appeared: an update that wasn't pending at the last run,
         # a new pending reboot, or a machine whose check started failing. Things that were fixed
         # since drop out, so they notify again if they come back.
         new = seen - self._last_seen
-        if new and self.notifier is not None:
+        # What the dashboard installed by itself is always worth a message.
+        if (new or notes) and self.notifier is not None:
             errors = await self.notifier.send(title, body)
             if len(errors) < len(self.notifier.targets):
                 self.last_notified = datetime.now(UTC)

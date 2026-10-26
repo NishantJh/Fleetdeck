@@ -219,6 +219,9 @@ class ScheduleConfig(BaseModel):
     check_every: int | None = None
     # Also look for newer Docker images on every machine with Docker. Off by default: it pulls the images.
     check_docker: bool = False
+    # After each check, install the updates from security repositories (apt only) on every machine that has
+    # some: hosts first, then their containers and VMs. Never reboots. Off by default.
+    auto_security_updates: bool = False
 
     @field_validator("check_every", mode="before")
     @classmethod

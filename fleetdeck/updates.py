@@ -221,6 +221,31 @@ esac
 )
 
 
+# Only the packages whose new version comes from a security repository (the same rule parse_apt uses to
+# flag them), so a scheduled run never pulls in feature updates. Nothing else is installed on its own
+# account except the dependencies those packages need.
+SECURITY_UPGRADE_SCRIPT = (
+    _PRELUDE
+    + r"""
+set -e
+case "$PM" in
+  apt)
+    apt-get $APT_OPTS update -q
+    pkgs=$(apt list --upgradable 2>/dev/null | grep -E '^[^/ ]+/[^ ]*-security([, ]|$)' | cut -d/ -f1 | sort -u | tr '
+' ' ') || true
+    if [ -z "$pkgs" ]; then echo "== No security updates to install"
+    else
+      echo "== Installing security updates: $pkgs"
+      apt-get $APT_OPTS -y -q -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+        install --only-upgrade $pkgs
+    fi ;;
+  *) echo "Security-only updates are only supported with apt" >&2; exit 3 ;;
+esac
+"""
+    + REBOOT_SCRIPT
+)
+
+
 # Identifies one boot of the target, so a reboot can be confirmed: the kernel's boot_id changes
 # when a host or VM reboots, and PID 1's start time (field 22 of /proc/1/stat, counted after the
 # command name, which may contain spaces) changes when a container restarts on a running kernel.

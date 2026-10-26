@@ -1,3 +1,4 @@
+import asyncio
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -7,13 +8,14 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from test_jobs import FakeExecutor, _inventory, _target
 
+import fleetdeck.scheduler
 from fleetdeck.app import create_app
 from fleetdeck.config import AppConfig, NotifyConfig, ScheduleConfig
 from fleetdeck.jobs import JobManager
-from fleetdeck.models import ExecResult
+from fleetdeck.models import ExecResult, Target
 from fleetdeck.notify import Notifier
 from fleetdeck.scheduler import Scheduler
-from fleetdeck.updates import CHECK_SCRIPT
+from fleetdeck.updates import CHECK_SCRIPT, SECURITY_UPGRADE_SCRIPT
 
 
 def test_schedule_durations():
@@ -238,3 +240,72 @@ async def test_scheduled_docker_check_is_opt_in_and_skips_machines_without_docke
 
     assert await run() == [("pi4", "check"), ("vps", "check")]
     assert await run(check_docker=True) == [("pi4", "check"), ("pi4", "stacks"), ("vps", "check")]
+
+
+class SecExecutor(FakeExecutor):
+    """Reports one security update until the security-only upgrade has run on it."""
+
+    def __init__(self, name: str, calls: list[str], security: bool = True):
+        super().__init__()
+        self.name, self.calls, self.pending = name, calls, security
+
+    async def run(self, script, on_line=None, timeout=0):
+        if script == CHECK_SCRIPT:
+            body = "openssl/stable-security 2.0 amd64 [upgradable from: 1.0]" if self.pending else ""
+            return ExecResult(rc=0, stdout=f"__PM__=apt\n__OS__=Debian\n__BEGIN__\n{body}\n__END__\n__REBOOT__=no\n")
+        self.calls.append(f"{self.name}:{'security' if script == SECURITY_UPGRADE_SCRIPT else 'full'}")
+        await asyncio.sleep(0)
+        self.pending = False
+        return ExecResult(rc=0, stdout="__PM__=apt\n__REBOOT__=yes\n")
+
+
+def _guest(tid: str, parent: str) -> Target:
+    return Target(id=tid, name=tid, platform="proxmox", source="hosts", kind="lxc", parent=parent)
+
+
+async def test_auto_security_updates_hosts_before_guests(monkeypatch):
+    monkeypatch.setattr(fleetdeck.scheduler, "POLL", 0)
+    calls: list[str] = []
+    # Guest listed first: the order comes from the scheduler, not the inventory.
+    inv = _inventory(
+        (_guest("ct1", "pve"), SecExecutor("ct1", calls)),
+        (_guest("ct2", "pve"), SecExecutor("ct2", calls, security=False)),
+        (_target("pve"), SecExecutor("pve", calls)),
+    )
+    inv.refresh = _noop_refresh
+    notifier = RecordingNotifier()
+    jobs = JobManager(inv)
+    sched = Scheduler(3600, inv, jobs, notifier, auto_security=True)
+    await sched.run_once()
+    assert calls == ["pve:security", "ct1:security"]  # ct2 has nothing, and nothing ran the full upgrade
+    assert all(j.security_only and j.reboot_if_required is False for j in jobs.jobs.values() if j.action == "upgrade")
+    ((title, body),) = notifier.messages
+    assert "pve: installed security updates" in body and "ct1: installed security updates" in body
+    assert title == "Homelab: all up to date"
+
+
+async def test_auto_security_updates_are_off_by_default(monkeypatch):
+    monkeypatch.setattr(fleetdeck.scheduler, "POLL", 0)
+    assert ScheduleConfig().auto_security_updates is False
+    calls: list[str] = []
+    inv = _inventory((_target("pve"), SecExecutor("pve", calls)))
+    inv.refresh = _noop_refresh
+    await Scheduler(3600, inv, JobManager(inv), RecordingNotifier()).run_once()
+    assert calls == []
+
+
+async def test_failed_auto_security_update_is_reported(monkeypatch):
+    monkeypatch.setattr(fleetdeck.scheduler, "POLL", 0)
+
+    class Failing(SecExecutor):
+        async def run(self, script, on_line=None, timeout=0):
+            if script == SECURITY_UPGRADE_SCRIPT:
+                return ExecResult(rc=100, stdout="", stderr="E: dpkg was interrupted")
+            return await super().run(script, on_line, timeout)
+
+    inv = _inventory((_target("pve"), Failing("pve", [])))
+    inv.refresh = _noop_refresh
+    notifier = RecordingNotifier()
+    await Scheduler(3600, inv, JobManager(inv), notifier, auto_security=True).run_once()
+    ((_, body),) = notifier.messages
+    assert "pve: security updates failed: upgrade exited with code 100" in body
