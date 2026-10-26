@@ -152,9 +152,7 @@ class Scheduler:
 
         Each round finishes before the next starts, so a host is never updated while one of its guests is
         (a host's upgrade waits for its guests anyway, see JobManager.update_blocked). Never reboots, and
-        updates Docker stacks last. Stacks have no security-only updates, so this is a normal update of every
-        running stack the last Docker check found behind (needs ``check_docker``). Returns lines for the
-        notification.
+        leaves Docker stacks alone: they have no security-only updates. Returns lines for the notification.
         """
         notes: list[str] = []
         for hosts in (True, False):
@@ -176,29 +174,15 @@ class Scheduler:
                     log.warning("not installing security updates on %s: %s", target.name, e)
             await self._wait(submitted, UPDATE_TIMEOUT)
             notes += self._outcomes(submitted, "security updates")
-        stacks: list[Job] = []
-        for tid in checked:
-            entry = self.inventory.targets.get(tid)
-            result = self.jobs.stacks.get(tid)
-            if entry is None or result is None or tid in self.jobs.hidden or entry[1] is None:
-                continue
-            for stack in result.stacks:
-                if stack.update_available and stack.running and not stack.is_dashboard and not stack.error:
-                    try:
-                        stacks.append(self.jobs.submit(tid, "stack-update", stack=stack.name))
-                    except (KeyError, ValueError) as e:
-                        log.warning("not updating stack %s on %s: %s", stack.name, entry[0].name, e)
-        await self._wait(stacks, UPDATE_TIMEOUT)
-        notes += self._outcomes(stacks, "Docker stack update", lambda j: f" ({j.stack})")
         return notes
 
     @staticmethod
-    def _outcomes(jobs: list[Job], what: str, extra=lambda j: "") -> list[str]:
+    def _outcomes(jobs: list[Job], what: str) -> list[str]:
         notes = []
         for job in jobs:
-            who = f"{job.target_name}{extra(job)}"
+            who = job.target_name
             if job.status == "succeeded":
-                notes.append(f"{who}: installed {what}" if what.startswith("sec") else f"{who}: {what} done")
+                notes.append(f"{who}: installed {what}")
             else:
                 why = job.error.splitlines()[0][:150] if job.error else "still running after the time limit"
                 notes.append(f"{who}: {what} failed: {why}")

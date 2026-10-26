@@ -422,7 +422,9 @@ class JobManager:
             await self._app_first(job, target, executor, on_line, slot, "the app")
         elif job.remote is not None:
             stdout = await self._upgrade(job, executor, on_line)
-            await self._after_upgrade(job, target, executor, on_line, slot, stdout, app_updated=job.app_updated or job.security_only)
+            await self._after_upgrade(
+                job, target, executor, on_line, slot, stdout, app_updated=job.app_updated or job.security_only
+            )
         else:  # waiting for a reboot, on its own or after an upgrade
             await self._reboot(job, target, executor, on_line, slot)
 

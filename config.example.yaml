@@ -57,10 +57,9 @@ schedule:
   # downloads (pulls) the images each time, which can use a lot of bandwidth and disk space.
   # check_docker: true
   # After each check, install the security updates it found, with no click: hosts first, then their
-  # containers, LXCs and VMs, then Docker stacks. Off by default. Never reboots.
+  # containers, LXCs and VMs. Off by default. Never reboots.
   # Security-only means apt packages from a -security repository (Debian, Ubuntu, Proxmox); other
-  # package managers are left alone. Docker has no security-only updates, so every running stack with a
-  # newer image is updated: needs check_docker, and skips the stack that runs this dashboard.
+  # package managers are left alone. Docker stacks are never updated this way.
   # auto_security_updates: true
 
 # Linked from notifications.

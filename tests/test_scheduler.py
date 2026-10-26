@@ -309,24 +309,3 @@ async def test_failed_auto_security_update_is_reported(monkeypatch):
     await Scheduler(3600, inv, JobManager(inv), notifier, auto_security=True).run_once()
     ((_, body),) = notifier.messages
     assert "pve: security updates failed: upgrade exited with code 100" in body
-
-
-async def test_auto_updates_include_docker_stacks_last(monkeypatch):
-    from fleetdeck.models import Stack, StacksResult, StackService
-
-    monkeypatch.setattr(fleetdeck.scheduler, "POLL", 0)
-    calls: list[str] = []
-    inv = _inventory((_target("pve"), SecExecutor("pve", calls)))
-    inv.refresh = _noop_refresh
-    jobs = JobManager(inv)
-    svc = StackService(name="web", image="x", status="running", outdated=True)
-    jobs.stacks["pve"] = StacksResult(checked_at=datetime.now(UTC), docker="yes", compose="v2", stacks=[
-        Stack(name="media", services=[svc]),
-        Stack(name="mine", services=[svc], is_dashboard=True),
-    ])
-    sched = Scheduler(3600, inv, jobs, RecordingNotifier(), auto_security=True)
-    notifier = sched.notifier
-    await sched.run_once()
-    assert calls[0] == "pve:security" and len(calls) > 1  # then the stack update (the dashboard stack is skipped)
-    ((_, body),) = notifier.messages
-    assert "pve (media): Docker stack update done" in body and "mine" not in body
