@@ -13,7 +13,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Helper images come from mirror.gcr.io too: Docker Hub rate-limits CI pulls (429).
       - uses: docker/setup-qemu-action@v4
         with:
