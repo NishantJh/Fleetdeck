@@ -531,14 +531,15 @@ a.brand { color: var(--text); text-decoration: none; }
   }
   .dashboard-page .machine-table tr.guest .machine-main { margin-left: var(--guest-indent); }
   .dashboard-page .machine-table tr.guest .machine-cell::before {
-    content: ""; position: absolute; z-index: 1; left: var(--tree-x); top: -2px; width: var(--guest-branch); height: calc(50% + 2px);
+    content: ""; position: absolute; z-index: 1; left: var(--tree-x); top: calc(50% - 13px); width: var(--guest-branch); height: 13px;
     border-left: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border-strong));
     border-bottom: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border-strong)); border-bottom-left-radius: 13px;
   }
-  .dashboard-page .machine-table tr.guest:not(.last-guest) .machine-cell::after {
-    content: ""; position: absolute; z-index: 1; left: var(--tree-x); top: calc(50% - 1px); bottom: -2px;
+  .dashboard-page .machine-table tr.guest .machine-cell::after {
+    content: ""; position: absolute; z-index: 1; left: var(--tree-x); top: -2px; bottom: -2px;
     border-left: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border-strong));
   }
+  .dashboard-page .machine-table tr.guest.last-guest .machine-cell::after { bottom: 50%; }
   .dashboard-page .machine-table tr.pkgs.tree-continues > td:nth-child(2) { position: relative; }
   .dashboard-page .machine-table tr.pkgs.tree-continues > td:nth-child(2)::before {
     content: ""; position: absolute; z-index: 1; left: 17px; top: -2px; bottom: -2px;
