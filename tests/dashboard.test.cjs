@@ -188,6 +188,49 @@ test("update columns separate security, packages and phased updates with only re
   assert.deepEqual(ui.errors, []);
 });
 
+test("Proxmox node backup and repository context share one neutral information popover", async () => {
+  const unsafeBackupNote = 'Not configured <img src=x onerror="alert(1)">';
+  const ui = await dashboard({ targets: [
+    machine("pve", {
+      target: { backup: { last: null, not_set_up: true, note: unsafeBackupNote } },
+      check: { notes: ["Repositories (from PVE): No-Subscription", "Repository refresh needs attention"] },
+    }),
+    machine("guest", {
+      guest: true,
+      parent: "pve",
+      target: { backup: { last: null, not_set_up: true, note: "Guest backup is not configured" } },
+    }),
+  ] });
+  const doc = ui.document;
+  const node = doc.querySelector('[data-machine-row="pve"]');
+  const guest = doc.querySelector('[data-machine-row="guest"]');
+  assert.equal(node.querySelector(".backup-cell").textContent.trim(), "");
+  assert.match(guest.querySelector(".backup-cell").textContent, /not set up/);
+  assert.equal(node.querySelector(".repo-note"), null);
+
+  const trigger = node.querySelector('[data-node-info="pve"]');
+  assert.ok(trigger);
+  assert.equal(trigger.classList.contains("warn"), false);
+  assert.equal(trigger.classList.contains("bad"), false);
+  assert.equal(trigger.hasAttribute("title"), false);
+  ui.click('[data-node-info="pve"]');
+
+  const panel = doc.querySelector("#node-information");
+  assert.equal(panel.hidden, false);
+  assert.ok(doc.activeElement === panel, "opening the popover moves focus to its content");
+  assert.deepEqual([...panel.querySelectorAll("h3")].map((el) => el.textContent), ["Backup", "Repositories"]);
+  assert.match(panel.textContent, /Not configured <img src=x onerror="alert\(1\)">/);
+  assert.match(panel.textContent, /Repositories \(from PVE\): No-Subscription/);
+  assert.equal(panel.querySelector("img"), null, "information remains escaped");
+  assert.equal(trigger.getAttribute("aria-expanded"), "true");
+
+  doc.dispatchEvent(Object.assign(new ui.window.Event("keydown"), { key: "Escape" }));
+  assert.equal(panel.hidden, true);
+  assert.ok(doc.activeElement === trigger, "Escape returns focus to the information button");
+  assert.equal(trigger.getAttribute("aria-expanded"), "false");
+  assert.deepEqual(ui.errors, []);
+});
+
 test("cluster hierarchy uses the approved compact continuous tree geometry", () => {
   const css = read("style.css");
   assert.match(css, /--tree-line: 2px; --guest-indent: 26px; --guest-branch: 18px; --guest-curve: 11px;/);

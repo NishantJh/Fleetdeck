@@ -466,6 +466,15 @@ a.brand { color: var(--text); text-decoration: none; }
 .context-actions { position: fixed; z-index: 20; min-width: 220px; max-width: calc(100vw - 16px); padding: 5px; background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
 .context-actions > button { display: flex; width: 100%; text-align: left; justify-content: flex-start; white-space: normal; background: transparent; border: 0; box-shadow: none; font-weight: 500; }
 .menu-caption { padding: 8px 12px; border-bottom: 1px solid var(--border); margin-bottom: 4px; color: var(--text-2); font-size: 13px; font-weight: 650; }
+.node-information { width: 340px; padding: 0; color: var(--text); }
+.node-info-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 13px; border-bottom: 1px solid var(--border); }
+.node-info-heading > span { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.node-info-heading > .muted { overflow: hidden; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.node-info-heading .ui-icon { width: 15px; height: 15px; color: var(--muted); }
+.node-info-section { padding: 10px 13px; }
+.node-info-section + .node-info-section { border-top: 1px solid var(--border); }
+.node-info-section h3 { margin: 0 0 5px; font-size: 12px; font-weight: 650; }
+.node-info-section p { margin: 3px 0 0; color: var(--text-2); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
 #docker-settings-dialog .dlg-field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
 #docker-settings-dialog input, #docker-settings-dialog select { width: 100%; }
 .discovery-note { font-size: 12px; }
@@ -549,6 +558,10 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page button.reboot-action { padding-inline: 8px; border-color: color-mix(in srgb, var(--reboot) 45%, var(--border)); background: color-mix(in srgb, var(--reboot) 10%, var(--panel)); color: var(--reboot); box-shadow: none; font-weight: 650; }
 .dashboard-page button.reboot-action:hover:not(:disabled) { border-color: var(--reboot); background: color-mix(in srgb, var(--reboot) 16%, var(--panel)); }
 .dashboard-page .last-check { color: var(--muted); }
+.dashboard-page .last-check > span { vertical-align: middle; }
+.dashboard-page button.node-info-trigger { min-width: 28px; min-height: 28px; margin-left: 3px; padding: 4px 6px; color: var(--muted); background: transparent; border-color: transparent; box-shadow: none; }
+.dashboard-page button.node-info-trigger:hover:not(:disabled) { color: var(--text); background: var(--chip); border-color: transparent; box-shadow: none; }
+.dashboard-page .node-info-trigger .ui-icon { width: 14px; height: 14px; }
 .dashboard-page td.actions { min-width: 160px; padding-inline: 8px; text-align: left; white-space: nowrap; }
 .dashboard-page td.actions button.small { padding-inline: 8px; }
 .dashboard-page td.more-cell { padding-left: 4px; padding-right: 10px; text-align: left; }
@@ -638,5 +651,5 @@ a.brand { color: var(--text); text-decoration: none; }
   #docker-settings-dialog input, #docker-settings-dialog select { font-size: 16px; }
 }
 @media (pointer: coarse) {
-  .dashboard-page .more-actions, .dashboard-menu summary, .context-actions > button, .dashboard-page .docker-status-link { min-height: 44px; }
+  .dashboard-page .more-actions, .dashboard-page .node-info-trigger, .dashboard-menu summary, .context-actions > button, .dashboard-page .docker-status-link { min-height: 44px; }
 }

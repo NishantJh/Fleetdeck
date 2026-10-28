@@ -24,6 +24,9 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
   do not show placeholder dashes.
 - Per-machine **More** menus use icons and concise labels for checks, configuration backups,
   hiding and any optional command-console or Docker actions that are actually available.
+- Proxmox nodes combine configuration-backup and repository context in one neutral information
+  popover beside the checked time. A missing node configuration backup no longer adds a colored
+  or textual status to the backup column; real backup timestamps remain visible.
 - Selecting machines reveals the bulk-update bar. Updates and reboots retain their confirmation dialogs.
 - Platform/host groups and guest rows have a deterministic order, including after refreshes.
   Hosts use **Node** for Proxmox. A centered 2 px tree line uses compact guest indentation,
@@ -120,8 +123,8 @@ Node dependencies are development-only and are not included in the runtime image
 
 ### Preview verification
 
-On the development Mac: 407 Python tests passed, 6 were skipped, and 7 documented
+In the restricted development environment: 398 Python tests passed, 6 were skipped, and 16 documented
 platform/sandbox-dependent tests were deselected after a full run reproduced those same failures.
-All 6 offline dashboard tests, JavaScript syntax checks and Ruff checks passed. Browser visual
+All 8 offline dashboard tests, JavaScript syntax checks and Ruff checks passed. Browser visual
 verification used only the built-in simulated machines; a Docker image build was not completed in
 this environment. No real homelab machines were contacted or updated during development.

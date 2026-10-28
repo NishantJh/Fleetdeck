@@ -20,11 +20,13 @@ const ICON = {
   eyeOff: '<path d="m3 3 18 18"/><path d="M10.6 10.6A2 2 0 0 0 13.4 13.4"/><path d="M9.9 4.2A10.7 10.7 0 0 1 21.9 12a10.5 10.5 0 0 1-2.1 3.1"/><path d="M6.2 6.2A10.8 10.8 0 0 0 2.1 12a10.8 10.8 0 0 0 12 7.8"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>',
   check: '<circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/>',
   alert: '<path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
 };
 const icon = (name) => `<svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
 const plural = (count, one, many) => count === 1 ? one : many;
 const kindLabel = (t) => t.kind === "host" && t.platform === "proxmox" ? "Node" : KIND[t.kind] || t.kind;
+const isProxmoxNode = (t) => t.kind === "host" && t.platform === "proxmox";
 // Status dot: Proxmox says online/offline for nodes, running/stopped for guests; anything else is grey.
 const DOT = { running: "on", online: "on", stopped: "off", offline: "off" };
 
@@ -157,6 +159,9 @@ function backupCell(t) {
   if (b.last) {
     const tip = `${new Date(b.last).toLocaleString()} on ${b.storage} · ${b.count} backup${b.count > 1 ? "s" : ""}`;
     html = `<span class="${b.stale ? "warn" : ""}" title="${esc(tip)}">${ago(b.last)}</span>`;
+  } else if (isProxmoxNode(t)) {
+    // Proxmox node configuration-backup context is available from the neutral node information popover.
+    return "";
   } else if (b.not_set_up) {
     html = `<span class="muted" title="${esc(b.note)}">not set up ⓘ</span>`;
   } else if (b.note) {
@@ -168,6 +173,12 @@ function backupCell(t) {
   if (b.in_job === false) html += ` <span class="chip warn" title="Not in any scheduled backup job">no job</span>`;
   if (b.last && b.note) html += ` <span class="muted" title="${esc(b.note)}">ⓘ</span>`;
   return html;
+}
+
+function nodeInfoButton(t, c) {
+  if (!isProxmoxNode(t) || (!t.backup && !c?.notes?.length)) return "";
+  const id = esc(t.id);
+  return `<button class="small ghost node-info-trigger" data-node-info="${id}" data-focus-key="node-info:${id}" aria-label="Information for ${esc(t.name)}" aria-controls="node-information" aria-expanded="false">${icon("info")}</button>`;
 }
 
 function csTip(app) {
@@ -243,8 +254,9 @@ function rowHtml(v, withBackup, relation = {}) {
     ? ` <span class="chip" title="${esc(csTip(c.community_script))}">helper script</span>` : "";
   const note = t.updatable && t.note
     ? ` <span class="machine-note warn" title="${esc(t.note)}" aria-label="${esc(t.note)}">${icon("alert")}</span>` : "";
-  const repoNote = c?.notes?.length
+  const repoNote = !isProxmoxNode(t) && c?.notes?.length
     ? `<span class="repo-note ${c.notes.length > 1 ? "warn" : "muted"}" title="${esc(c.notes.join("\n"))}" aria-label="Repository information">${icon("alert")}</span>` : "";
+  const nodeInfo = nodeInfoButton(t, c);
   const rebootTitle = t.no_reboot || v.blocked || "Reboot needed";
   const reboot = c?.reboot_required === true
     ? canReboot(t)
@@ -267,7 +279,7 @@ function rowHtml(v, withBackup, relation = {}) {
     <td class="update-action-cell" data-label="Update">${updateState(v)}</td>
     <td class="reboot-cell" data-label="Reboot">${reboot}</td>
     ${state.settings.docker_enabled ? `<td class="containers-cell" data-label="Containers">${dockerCell(v)}</td>` : ""}
-    <td class="last-check" data-label="Checked"><span>${c ? ago(c.checked_at) : "Never"}</span>${repoNote}</td>
+    <td class="last-check" data-label="Checked"><span>${c ? ago(c.checked_at) : "Never"}</span>${nodeInfo || repoNote}</td>
     <td class="more-cell"><button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="More actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button></td>
   </tr>`;
   if (c?.packages?.length && state.expanded.has(t.id)) {
@@ -355,6 +367,7 @@ function render() {
   $("#bulk-toolbar").hidden = state.selected.size === 0 || state.view !== "machines";
   $("#selection-count").textContent = `${state.selected.size} ${plural(state.selected.size, "machine", "machines")} selected`;
   document.querySelectorAll("[data-machine-menu]").forEach((el) => el.setAttribute("aria-expanded", String(el.dataset.machineMenu === machineMenuId)));
+  document.querySelectorAll("[data-node-info]").forEach((el) => el.setAttribute("aria-expanded", String(el.dataset.nodeInfo === nodeInfoId)));
 
   $("#jobs").innerHTML = state.jobs.map((j) => {
     const cls = j.status === "failed" ? "bad" : j.status === "succeeded" ? "ok" : "";
@@ -371,6 +384,7 @@ function setView(view, hostId = null) {
   state.view = state.settings.docker_enabled && view === "containers" ? "containers" : "machines";
   remember.set("dashboardView", state.view);
   closeMachineMenu();
+  closeNodeInformation();
   render();
   if (hostId) document.getElementById(`docker-${hostId}`)?.scrollIntoView({ block: "start" });
 }
@@ -389,6 +403,7 @@ function closeMachineMenu(restoreFocus = false) {
 function openMachineMenu(id, trigger) {
   const open = machineMenuId === id;
   closeMachineMenu();
+  closeNodeInformation();
   if (open) return;
   const v = state.targets.find((item) => item.target.id === id);
   if (!v) return;
@@ -409,6 +424,63 @@ function openMachineMenu(id, trigger) {
   menu.style.left = `${Math.max(8, Math.min(rect.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8))}px`;
   menu.style.top = `${Math.max(8, rect.bottom + menu.offsetHeight < innerHeight ? rect.bottom + 6 : rect.top - menu.offsetHeight - 6)}px`;
   menu.querySelector("button:not(:disabled)")?.focus();
+}
+
+let nodeInfoId = null;
+function closeNodeInformation(restoreFocus = false) {
+  const panel = $("#node-information");
+  panel.hidden = true;
+  if (nodeInfoId) {
+    const trigger = [...document.querySelectorAll("[data-node-info]")].find((el) => el.dataset.nodeInfo === nodeInfoId);
+    trigger?.setAttribute("aria-expanded", "false");
+    if (restoreFocus) trigger?.focus();
+  }
+  nodeInfoId = null;
+}
+
+function nodeInfoSection(title, lines) {
+  if (!lines.length) return "";
+  return `<section class="node-info-section"><h3>${esc(title)}</h3>${lines.map((line) => `<p>${esc(line)}</p>`).join("")}</section>`;
+}
+
+function backupInformation(t) {
+  const b = t.backup;
+  if (!b) return [];
+  const lines = [];
+  if (b.last) {
+    const count = `${b.count} backup${b.count === 1 ? "" : "s"} found`;
+    lines.push(`Last backup ${new Date(b.last).toLocaleString()}${b.storage ? ` on ${b.storage}` : ""}; ${count}.`);
+  } else if (b.note) {
+    lines.push(b.note);
+  } else if (b.not_set_up) {
+    lines.push("Fleetdeck backup is not configured for this Proxmox node.");
+  } else {
+    lines.push("No backup was found for this Proxmox node.");
+  }
+  if (b.verified === false) lines.push("The newest backup failed verification.");
+  if (b.in_job === false) lines.push("This node is not in a scheduled backup job.");
+  return lines;
+}
+
+function openNodeInformation(id, trigger) {
+  const open = nodeInfoId === id;
+  closeNodeInformation();
+  closeMachineMenu();
+  if (open) return;
+  const v = state.targets.find((item) => item.target.id === id);
+  if (!v || !isProxmoxNode(v.target)) return;
+  const backup = backupInformation(v.target);
+  const repositories = v.check?.notes || [];
+  if (!backup.length && !repositories.length) return;
+  const panel = $("#node-information");
+  panel.innerHTML = `<div class="node-info-heading"><span>${icon("info")}<strong id="node-information-title">Node information</strong></span><span class="muted">${esc(v.target.name)}</span></div>${nodeInfoSection("Backup", backup)}${nodeInfoSection("Repositories", repositories)}`;
+  nodeInfoId = id;
+  trigger.setAttribute("aria-expanded", "true");
+  panel.hidden = false;
+  const rect = trigger.getBoundingClientRect();
+  panel.style.left = `${Math.max(8, Math.min(rect.right - panel.offsetWidth, innerWidth - panel.offsetWidth - 8))}px`;
+  panel.style.top = `${Math.max(8, rect.bottom + panel.offsetHeight < innerHeight ? rect.bottom + 6 : rect.top - panel.offsetHeight - 6)}px`;
+  panel.focus();
 }
 
 function dockerModeFields() {
@@ -640,9 +712,11 @@ document.addEventListener("click", (e) => {
 
 document.addEventListener("click", (e) => {
   if (!e.target.closest("#dashboard-menu") || e.target.closest(".dashboard-menu-items button,.dashboard-menu-items a")) $("#dashboard-menu").open = false;
-  const el = e.target.closest("[data-machine-menu],[data-open-docker],[data-docker-settings],[data-view],[data-fetch-docker],[data-discover-docker]");
+  const el = e.target.closest("[data-machine-menu],[data-node-info],[data-open-docker],[data-docker-settings],[data-view],[data-fetch-docker],[data-discover-docker]");
   if (el?.dataset.machineMenu) { openMachineMenu(el.dataset.machineMenu, el); return; }
+  if (el?.dataset.nodeInfo) { openNodeInformation(el.dataset.nodeInfo, el); return; }
   if (!e.target.closest("#machine-actions")) closeMachineMenu();
+  if (!e.target.closest("#node-information")) closeNodeInformation();
   if (!el || el.disabled) return;
   if (el.dataset.view) setView(el.dataset.view);
   else if (el.dataset.openDocker) setView("containers", el.dataset.openDocker);
@@ -655,10 +729,10 @@ document.addEventListener("click", (e) => {
   }
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeMachineMenu(true); $("#dashboard-menu").open = false; }
+  if (e.key === "Escape") { closeMachineMenu(true); closeNodeInformation(true); $("#dashboard-menu").open = false; }
 });
-window.addEventListener("resize", () => closeMachineMenu());
-window.addEventListener("scroll", () => closeMachineMenu(), true);
+window.addEventListener("resize", () => { closeMachineMenu(); closeNodeInformation(); });
+window.addEventListener("scroll", () => { closeMachineMenu(); closeNodeInformation(); }, true);
 $("#clear-selected").onclick = () => { state.selected.clear(); render(); };
 $("#docker-mode").onchange = dockerModeFields;
 $("#docker-settings-close").onclick = () => $("#docker-settings-dialog").close();
