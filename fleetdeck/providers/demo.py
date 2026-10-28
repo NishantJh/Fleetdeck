@@ -57,8 +57,9 @@ class DemoSnapshots:
 
 
 class DemoExecutor:
-    def __init__(self, pm: str, os_name: str, lines: list[str], app: str | None = None):
+    def __init__(self, pm: str, os_name: str, lines: list[str], app: str | None = None, phased: set[str] | None = None):
         self.pm, self.os_name, self.lines = pm, os_name, lines
+        self.phased = phased or set()
         # Made by a community-scripts helper script for this app.
         self.app = app
         self.boot_id = uuid.uuid4().hex
@@ -105,7 +106,10 @@ class DemoExecutor:
         """What the real check script prints, so the Activity log looks like a real run."""
         out = [("stdout", "__BEGIN__")]
         out += [("stdout", line) for line in body.splitlines()]
-        out += [("stdout", "__END__"), ("stdout", f"__REBOOT__={'yes' if self.reboot_pending else 'no'}")]
+        out += [("stdout", "__END__")]
+        if self.phased:
+            out.append(("stdout", f"__PHASED__={','.join(sorted(self.phased))}"))
+        out.append(("stdout", f"__REBOOT__={'yes' if self.reboot_pending else 'no'}"))
         if self.pm == "apt":
             out += [
                 ("stderr", "Hit:1 http://deb.debian.org/debian bookworm InRelease"),
@@ -144,19 +148,22 @@ class DemoExecutor:
             if on_line:
                 for line in self._check_output(body):
                     on_line(*line)
-            return ExecResult(rc=0, stdout=f"{head}__BEGIN__\n{body}\n__END__\n__REBOOT__={reboot}\n")
+            phased = f"__PHASED__={','.join(sorted(self.phased))}\n" if self.phased else ""
+            return ExecResult(rc=0, stdout=f"{head}__BEGIN__\n{body}\n__END__\n{phased}__REBOOT__={reboot}\n")
         if on_line and self.pm == "apt":
             on_line("stdout", "Reading package lists...")
             on_line("stdout", "Building dependency tree...")
-            on_line("stdout", f"The following packages will be upgraded: {' '.join(_name(x) for x in self.lines)}")
-        for line in self.lines:
+        installable = [line for line in self.lines if _name(line) not in self.phased]
+        if on_line and self.pm == "apt":
+            on_line("stdout", f"The following packages will be upgraded: {' '.join(_name(x) for x in installable)}")
+        for line in installable:
             name = line.split("/")[0].split(" ")[0]
             if on_line:
                 on_line("stdout", f"Unpacking {name} ...")
             await asyncio.sleep(0.4)
             if on_line:
                 on_line("stdout", f"Setting up {name} ...")
-        self.lines = []
+        self.lines = [line for line in self.lines if _name(line) in self.phased]
         return ExecResult(rc=0, stdout=f"{head}__REBOOT__={reboot}\n")
 
 
@@ -237,7 +244,13 @@ class DemoProvider:
             )
             if t.can_backup:
                 self.backup_runs[t.id] = DemoBackup(_DEMO_BACKUPS[name])
-            ex = DemoExecutor(pm, os_name, list(lines), app="pihole" if name == "pihole" else None)
+            ex = DemoExecutor(
+                pm,
+                os_name,
+                list(lines),
+                app="pihole" if name == "pihole" else None,
+                phased={"tzdata"} if name == "docker-vm" else None,
+            )
             if name == "docker-vm":
                 ex.stacks = {"arcane": (["arcane"], False), "media": (["jellyfin", "sonarr"], True)}
             elif name == "pi4":

@@ -4,13 +4,22 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
 
 ## What changes
 
-- Three summary cards: machines needing OS updates, security updates, and reboots.
-- A short toolbar: **Check OS updates**, with less frequent tasks in **…**.
-- Rows show machine/state, OS, backup age when available, update status and last check.
-- **Update OS** appears only where packages are pending. Check, reboot, host configuration
-  backup, hide and the optional command console move into a per-machine **…** menu.
+- Three compact summary cards: machines needing updates, machines with security updates,
+  and machines requiring a reboot. Labels use the correct singular/plural form, and the
+  overview shows when the next automatic check will run.
+- A short toolbar: **Check updates**, with less frequent tasks in the dashboard menu.
+- Single-line rows keep machine/state, type, OS, backup age, **Security**, **Package**,
+  **Phased**, **Reboot**, last check, relevant actions and **More** in separate columns.
+- Apt packages deferred by Ubuntu/Debian phasing are detected with a read-only simulation.
+  They are shown in green and are excluded from actionable package counts and update jobs.
+- **Update**, **Reboot** and **Retry check** appear in the Actions column only when relevant.
+  A reboot requirement also has a distinct gold status and restart icon. Empty cells do not
+  show placeholder dashes.
+- Per-machine **More** menus use icons and concise labels for checks, configuration backups,
+  hiding and any optional command-console or Docker actions that are actually available.
 - Selecting machines reveals the bulk-update bar. Updates and reboots retain their confirmation dialogs.
 - Platform/host groups and guest rows have a deterministic order, including after refreshes.
+  Hosts use **Node** for Proxmox, and a continuous rounded tree line keeps their guests visually grouped.
 - The Fleetdeck logo links home, and dashboard/setup/login pages have a favicon.
 
 Existing protections, snapshot defaults, authentication and CSRF protections remain in place.
@@ -103,8 +112,8 @@ Node dependencies are development-only and are not included in the runtime image
 
 ### Preview verification
 
-On the development Mac: 404 Python tests passed, 6 were skipped, and 7 platform/sandbox-dependent
-tests were deselected after confirming that the unchanged upstream version fails the same 7 tests.
-All 5 offline dashboard tests, JavaScript syntax checks and Ruff checks passed. Browser visual
-verification and a Docker image build were not completed in this environment. No real homelab
-machines were contacted or updated during development.
+On the development Mac: 405 Python tests passed, 6 were skipped, and 7 documented
+platform/sandbox-dependent tests were deselected after a full run reproduced those same failures.
+All 6 offline dashboard tests, JavaScript syntax checks and Ruff checks passed. Browser visual
+verification used only the built-in simulated machines; a Docker image build was not completed in
+this environment. No real homelab machines were contacted or updated during development.

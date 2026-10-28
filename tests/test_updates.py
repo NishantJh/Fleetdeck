@@ -92,6 +92,17 @@ def test_parse_check_full_output():
     assert res.error is None
 
 
+def test_parse_check_marks_only_packages_deferred_by_apt_phasing():
+    out = (
+        "__PM__=apt\n__OS__=Ubuntu 24.04 LTS\n__BEGIN__\n"
+        "curl/noble-updates 2 amd64 [upgradable from: 1]\n"
+        "tzdata/noble-updates 2025a all [upgradable from: 2024b]\n"
+        "__END__\n__PHASED__=tzdata\n__REBOOT__=no\n"
+    )
+    res = parse_check(ExecResult(rc=0, stdout=out))
+    assert [(p.name, p.phased) for p in res.packages] == [("curl", False), ("tzdata", True)]
+
+
 def test_parse_check_error():
     res = parse_check(ExecResult(rc=100, stdout="__PM__=apt\n", stderr="E: Could not get lock\n"))
     assert res.error and "Could not get lock" in res.error

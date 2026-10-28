@@ -57,6 +57,8 @@ class Package(BaseModel):
     current: str | None = None
     # Comes from a security repository (apt only: e.g. bookworm-security, jammy-security).
     security: bool = False
+    # Ubuntu apt has deferred this package for this machine while a phased rollout is in progress.
+    phased: bool = False
 
 
 class CheckResult(BaseModel):

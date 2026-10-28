@@ -22,7 +22,7 @@ function machine(id, options = {}) {
   };
 }
 
-async function dashboard({ docker = false, targets = [], rememberedView = "machines" } = {}) {
+async function dashboard({ docker = false, targets = [], rememberedView = "machines", schedule = null } = {}) {
   const { window, document } = parseHTML(read("index.html"));
   const calls = [], errors = [], storage = new Map([["dashboardView", JSON.stringify(rememberedView)]]);
   let activeElement = document.body;
@@ -44,7 +44,7 @@ async function dashboard({ docker = false, targets = [], rememberedView = "machi
       let body;
       if (path.startsWith("/api/targets")) body = data;
       else if (path === "/api/jobs") body = [];
-      else if (path === "/api/schedule") body = { check_every: null };
+      else if (path === "/api/schedule") body = schedule || { check_every: null };
       else if (path === "/api/actions") body = { jobs: [], rejected: {} };
       else if (path === "/api/session") body = { login: false };
       else throw new Error(`Unexpected request: ${path}`);
@@ -98,6 +98,9 @@ test("host panels and guest rows keep stable order across inventory refreshes", 
   assert.deepEqual(labels(), ["Proxmox pve1", "Proxmox pve2"]);
   const names = [...ui.document.querySelectorAll("#groups [data-machine-menu]")].map((el) => el.dataset.machineMenu);
   assert.deepEqual(names, ["pve1", "guest1", "guest2", "pve2"]);
+  assert.equal(ui.document.querySelector('[data-machine-row="pve1"]').classList.contains("has-guests"), true);
+  assert.equal(ui.document.querySelector('[data-machine-row="guest1"]').classList.contains("first-guest"), true);
+  assert.equal(ui.document.querySelector('[data-machine-row="guest2"]').classList.contains("last-guest"), true);
   const trigger = ui.click('[data-machine-menu="pve1"]');
   ui.state.targets.reverse();
   ui.render();
@@ -119,16 +122,60 @@ test("bulk actions appear only after selection; updates still require confirmati
   checkbox.checked = true;
   checkbox.dispatchEvent(new ui.window.Event("change", { bubbles: true }));
   assert.equal(doc.querySelector("#bulk-toolbar").hidden, false);
+  assert.equal(doc.querySelector('[data-machine-row="guest"]').classList.contains("is-selected"), true);
   ui.click('[data-toggle="guest"]');
   assert.equal(doc.querySelector(".pkgs img"), null);
   assert.match(doc.querySelector(".pkgs").textContent, /<img src=x/);
-  assert.equal(doc.querySelector(".pkgs td[colspan]").getAttribute("colspan"), "3");
+  assert.equal(doc.querySelector(".pkgs td[colspan]").getAttribute("colspan"), "10");
   ui.click('[data-act="upgrade"]');
   assert.equal(doc.querySelector("#confirm").open, true);
   assert.equal(doc.querySelector("#confirm-snapshot-row").hidden, false);
   assert.equal(ui.calls.some((call) => call.path === "/api/actions"), false);
   ui.click("#clear-selected");
   assert.equal(doc.querySelector("#bulk-toolbar").hidden, true);
+  assert.deepEqual(ui.errors, []);
+});
+
+test("update columns separate security, packages and phased updates with only relevant actions", async () => {
+  const ui = await dashboard({
+    schedule: { check_every: 21600, next_run: new Date(Date.now() + 2 * 3600 * 1000).toISOString(), notify_targets: 1 },
+    targets: [
+      machine("pve", { target: { can_backup: true }, check: { reboot_required: true, packages: [
+        { name: "openssl", current: "1", available: "2", security: true },
+        { name: "systemd", current: "1", available: "2" },
+        { name: "tzdata", current: "1", available: "2", phased: true },
+      ] } }),
+      machine("phased", { guest: true, parent: "pve", check: { reboot_required: false, packages: [
+        { name: "firmware", current: "1", available: "2", phased: true },
+      ] } }),
+      machine("failed", { guest: true, parent: "pve", check: { error: "timeout", packages: [] } }),
+      machine("current", { guest: true, parent: "pve", check: { reboot_required: false, packages: [] } }),
+    ],
+  });
+  const doc = ui.document;
+  const headers = [...doc.querySelectorAll(".machine-table > thead th")].map((el) => el.textContent.trim());
+  assert.deepEqual(headers, ["", "Machine", "Type", "OS", "Security", "Package", "Phased", "Reboot", "Last check", "Actions", "More"]);
+  assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Type"]').textContent.trim(), "Node");
+  assert.equal(doc.querySelector('[data-machine-row="pve"] [data-act="upgrade"] span').textContent, "Update");
+  assert.equal(doc.querySelector('[data-machine-row="pve"] [data-act="reboot"] span').textContent, "Reboot");
+  assert.equal(doc.querySelector('[data-machine-row="pve"] .reboot-status').textContent, "Required");
+  assert.ok(doc.querySelector('[data-machine-row="pve"] .reboot-status .ui-icon'));
+  assert.equal(doc.querySelector('[data-machine-row="phased"] [data-act="upgrade"]'), null);
+  assert.equal(doc.querySelector('[data-machine-row="phased"] .update-metric.phased').textContent.trim(), "1");
+  assert.equal(doc.querySelector('[data-machine-row="failed"] [data-act="check"] span').textContent, "Retry check");
+  assert.equal(doc.querySelector('[data-machine-row="current"] .actions button'), null);
+  assert.doesNotMatch(doc.querySelector("#groups").textContent, /—/);
+  assert.match(doc.querySelector("#summary").textContent, /1Machine needing updates/);
+  assert.match(doc.querySelector("#schedule-status").textContent, /Next check in 2 h/);
+
+  ui.click('[data-machine-row="pve"] .update-metric.security');
+  assert.deepEqual([...doc.querySelectorAll("#packages-pve .package-type")].map((el) => el.textContent.trim()), ["Security", "Package", "Phased"]);
+  ui.click('[data-machine-menu="pve"]');
+  assert.doesNotMatch(doc.querySelector("#machine-actions").textContent, /Reboot/);
+  assert.match(doc.querySelector("#machine-actions").textContent, /Check updates/);
+  assert.match(doc.querySelector("#machine-actions").textContent, /Back up configuration/);
+  assert.equal(doc.querySelectorAll("#machine-actions .ui-icon").length >= 3, true);
+  assert.doesNotMatch(doc.querySelector("#machine-actions").textContent, /…/);
   assert.deepEqual(ui.errors, []);
 });
 

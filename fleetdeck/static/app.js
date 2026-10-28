@@ -5,7 +5,25 @@ const $ = (sel) => document.querySelector(sel);
 const renderedHTML = new WeakMap();
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const PLATFORM = { proxmox: "Proxmox", incus: "Incus", ssh: "Standalone", demo: "Demo" };
-const KIND = { host: "host", lxc: "LXC", vm: "VM", container: "container" };
+const KIND = { host: "Host", lxc: "LXC", vm: "VM", container: "Container" };
+const ICON = {
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
+  reboot: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
+  refresh: '<path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3v8Z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
+  package: '<path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  backup: '<path d="M3 6h18"/><path d="M19 6v14H5V6"/><path d="M8 3h8l1 3H7Z"/><path d="M9 11h6"/>',
+  terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
+  eye: '<path d="M2.1 12a10.8 10.8 0 0 1 19.8 0 10.8 10.8 0 0 1-19.8 0Z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="m3 3 18 18"/><path d="M10.6 10.6A2 2 0 0 0 13.4 13.4"/><path d="M9.9 4.2A10.7 10.7 0 0 1 21.9 12a10.5 10.5 0 0 1-2.1 3.1"/><path d="M6.2 6.2A10.8 10.8 0 0 0 2.1 12a10.8 10.8 0 0 0 12 7.8"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>',
+  check: '<circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/>',
+  alert: '<path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+};
+const icon = (name) => `<svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
+const plural = (count, one, many) => count === 1 ? one : many;
+const kindLabel = (t) => t.kind === "host" && t.platform === "proxmox" ? "Node" : KIND[t.kind] || t.kind;
 // Status dot: Proxmox says online/offline for nodes, running/stopped for guests; anything else is grey.
 const DOT = { running: "on", online: "on", stopped: "off", offline: "off" };
 
@@ -53,7 +71,7 @@ function scheduleStat() {
   if (!sc?.check_every) return "Automatic checks off";
   const next = sc.next_run ? until(sc.next_run) : "running now";
   const notify = sc.notify_targets ? `notifies ${sc.notify_targets} target${sc.notify_targets > 1 ? "s" : ""}` : "no notifications set up";
-  return `<span title="Every ${every(sc.check_every)}; ${notify}">Next check ${next}</span>`;
+  return `<span class="schedule-next" title="Every ${every(sc.check_every)}; ${notify}">${icon("clock")}Next check ${next}</span>`;
 }
 
 function groupKey(t) {
@@ -75,23 +93,37 @@ function groups() {
 }
 
 const canUpgrade = (t) => t.updatable && !t.check_only;
-const selectable = (v) => canUpgrade(v.target) && !v.hidden && !v.blocked;
+const phasedPackages = (check) => check?.packages?.filter((p) => p.phased) || [];
+const actionablePackages = (check) => check?.packages?.filter((p) => !p.phased) || [];
+const securityPackages = (check) => actionablePackages(check).filter((p) => p.security);
+const regularPackages = (check) => actionablePackages(check).filter((p) => !p.security);
+const selectable = (v) => canUpgrade(v.target) && actionablePackages(v.check).length > 0 && !v.hidden && !v.blocked;
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
 const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "checking Docker", "stack-update": "updating Docker" };
 
-function updatesCell(v) {
+function metricButton(v, kind, count) {
+  if (!count) return "";
+  const id = esc(v.target.id), open = state.expanded.has(v.target.id);
+  const label = { security: "security", package: "package", phased: "phased" }[kind];
+  const iconName = { security: "shield", package: "package", phased: "clock" }[kind];
+  return `<button class="update-metric ${kind}" data-toggle="${id}" data-focus-key="updates:${id}:${kind}" aria-expanded="${open}" aria-controls="packages-${id}" aria-label="${count} ${label} update${count === 1 ? "" : "s"}; ${open ? "hide" : "show"} details">${icon(iconName)}<span>${count}</span></button>`;
+}
+
+function updateColumns(v) {
   const t = v.target;
-  if (v.active_job) return `<span class="spin"></span> ${BUSY[v.active_job.action] || v.active_job.action}…`;
-  if (!t.updatable) return `<span class="muted">${esc(t.note || "unavailable")}</span>`;
+  if (v.active_job) return `<td colspan="3" class="update-summary" data-label="Updates"><span class="spin"></span> ${BUSY[v.active_job.action] || v.active_job.action}…</td>`;
+  if (!t.updatable) return `<td colspan="3" class="update-summary muted" data-label="Updates">${esc(t.note || "Unavailable")}</td>`;
   const c = v.check;
-  if (!c) return `<span class="muted">not checked</span>`;
-  if (c.error) return `<span class="bad" title="${esc(c.error)}">error</span>`;
-  const n = c.packages.length;
-  if (n === 0) return `<span class="ok">up to date</span>`;
-  const open = state.expanded.has(t.id);
-  const sec = c.packages.filter((p) => p.security).length;
-  const secChip = sec ? ` <span class="chip sec" title="From a security repository">${sec} security</span>` : "";
-  return `<button class="small" data-toggle="${esc(t.id)}">${n} update${n > 1 ? "s" : ""} ${open ? "▴" : "▾"}</button>${secChip}`;
+  if (!c) return `<td colspan="3" class="update-summary muted" data-label="Updates">Not checked</td>`;
+  if (c.error) return `<td colspan="3" class="update-summary" data-label="Updates"><span class="status-inline bad" title="${esc(c.error)}">${icon("alert")}Check failed</span></td>`;
+  const security = securityPackages(c).length;
+  const regular = regularPackages(c).length;
+  const phased = phasedPackages(c).length;
+  if (!security && !regular && !phased) return `<td colspan="3" class="update-summary" data-label="Updates"><span class="status-inline ok">${icon("check")}Up to date</span></td>`;
+  if (!security && !regular && phased) {
+    return `<td colspan="2" class="update-summary" data-label="Updates"><span class="status-inline ok">${icon("check")}Up to date</span></td><td class="update-metric-cell" data-label="Phased">${metricButton(v, "phased", phased)}</td>`;
+  }
+  return `<td class="update-metric-cell" data-label="Security">${metricButton(v, "security", security)}</td><td class="update-metric-cell" data-label="Package">${metricButton(v, "package", regular)}</td><td class="update-metric-cell" data-label="Phased">${metricButton(v, "phased", phased)}</td>`;
 }
 
 function backupCell(t) {
@@ -134,7 +166,7 @@ function managerLink(v, label) {
 }
 
 function dockerCell(v) {
-  if (!hasDocker(v)) return `<span class="muted" title="${v.check?.docker_installed === false ? "Docker is not installed" : "Docker capability is discovered during OS checks"}">—</span>`;
+  if (!hasDocker(v)) return "";
   const policy = dockerSettings(v);
   if (policy.mode === "disabled") return `<span class="muted">disabled</span>`;
   if (policy.mode === "external") return managerLink(v, `Managed by ${policy.manager_name}`);
@@ -174,37 +206,65 @@ function stackPanel(v) {
   }
   return `<div class="group docker-host" id="docker-${id}"><div class="group-head"><span class="chip">Docker</span>${esc(v.target.name)}<span class="host-mode muted">${esc({ managed: "Managed by Fleetdeck", monitor: "Monitor only", external: `Managed by ${policy.manager_name}`, disabled: "Disabled" }[policy.mode])}</span><button class="small" data-docker-settings="${id}">Settings</button></div>
     ${dockerEnabled(v) ? `<div class="docker-head"><span class="muted">${r ? `Checked ${ago(r.checked_at)}` : "Not checked"}</span>
-      <button class="small" data-act="stacks" data-id="${id}" ${!busy && canUpgrade(v.target) ? "" : "disabled"}>Fetch image updates…</button>
+      <button class="small" data-act="stacks" data-id="${id}" ${!busy && canUpgrade(v.target) ? "" : "disabled"}>Fetch image updates</button>
       ${managed ? `<label class="muted" title="Runs docker image prune: removes all unused, untagged images on this machine, not only this stack's"><input type="checkbox" data-prune ${prune ? "checked" : ""}> remove unused, untagged images after updating</label>` : `<span class="chip">Stack deployments disabled</span>`}</div><p class="docker-check-note muted">Fetching downloads images. Updating a stack recreates its running services; OS packages are separate.</p>` : ""}
     ${body}</div>`;
 }
 
-function rowHtml(v, withBackup) {
+function rowHtml(v, withBackup, relation = {}) {
   const t = v.target, c = v.check;
   const busy = !!v.active_job;
-  const reboot = c?.reboot_required ? `<span class="chip warn" title="Reboot needed">reboot</span>` : "";
-  const notes = c?.notes?.length
-    ? ` <span class="chip ${c.notes.length > 1 ? "warn" : ""}" title="${esc(c.notes.join("\n"))}">${c.notes.length > 1 ? "repo warning" : "repos"}</span>`
-    : "";
-  const pending = c && !c.error && c.packages.length > 0;
+  const pending = c && !c.error && actionablePackages(c).length > 0;
   const self = v.runs_dashboard ? ` <span class="chip" title="This dashboard runs here">dashboard</span>` : "";
   const cs = c?.community_script
     ? ` <span class="chip" title="${esc(csTip(c.community_script))}">helper script</span>` : "";
-  let html = `<tr class="${t.kind === "host" ? "host" : "guest"}${v.hidden ? " is-hidden" : ""}">
+  const note = t.updatable && t.note
+    ? ` <span class="machine-note warn" title="${esc(t.note)}" aria-label="${esc(t.note)}">${icon("alert")}</span>` : "";
+  const repoNote = c?.notes?.length
+    ? `<span class="repo-note ${c.notes.length > 1 ? "warn" : "muted"}" title="${esc(c.notes.join("\n"))}" aria-label="Repository information">${icon("alert")}</span>` : "";
+  const rebootTitle = t.no_reboot || v.blocked || "Reboot needed";
+  const reboot = c?.reboot_required === true
+    ? `<span class="reboot-status required" title="${esc(rebootTitle)}">${icon("reboot")}Required</span>`
+    : c && c.reboot_required === false ? "" : `<span class="muted">Unknown</span>`;
+  const updateAction = pending && canUpgrade(t)
+    ? `<button class="small primary" data-act="upgrade" data-id="${esc(t.id)}" data-focus-key="upgrade:${esc(t.id)}" ${!busy && !v.blocked ? "" : "disabled"} title="${esc(v.blocked || "Install available OS packages")}">${icon("download")}<span>Update</span></button>` : "";
+  const rebootAction = c?.reboot_required === true && canReboot(t)
+    ? `<button class="small" data-act="reboot" data-id="${esc(t.id)}" data-focus-key="reboot:${esc(t.id)}" ${!busy && !v.blocked ? "" : "disabled"} title="${esc(v.blocked || "Reboot this machine")}">${icon("reboot")}<span>Reboot</span></button>` : "";
+  const checkAction = t.updatable && (c?.error || !c)
+    ? `<button class="small" data-act="check" data-id="${esc(t.id)}" data-focus-key="check:${esc(t.id)}" ${busy ? "disabled" : ""}>${icon("refresh")}<span>${c?.error ? "Retry check" : "Check"}</span></button>` : "";
+  const rowClasses = [t.kind === "host" ? "host" : "guest", "machine-row"];
+  if (relation.hasGuests) rowClasses.push("has-guests");
+  if (relation.firstGuest) rowClasses.push("first-guest");
+  if (relation.lastGuest) rowClasses.push("last-guest");
+  if (v.hidden) rowClasses.push("is-hidden");
+  if (state.selected.has(t.id)) rowClasses.push("is-selected");
+  let html = `<tr class="${rowClasses.join(" ")}" data-machine-row="${esc(t.id)}">
     <td><input type="checkbox" aria-label="Select ${esc(t.name)}" data-select="${esc(t.id)}" data-focus-key="select:${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) ? "" : "disabled"}></td>
-    <td class="name"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span>${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${self}${cs}<div class="cell-detail muted">${esc(c?.os || t.status)}</div>${t.updatable && t.note ? `<div class="cell-detail muted">${esc(t.note)}</div>` : ""}</td>
+    <td class="name machine-cell" data-label="Machine"><span class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name">${esc(t.name)}</span></span>${self}${cs}${note}</td>
+    <td data-label="Type"><span class="chip type-chip">${esc(kindLabel(t))}</span></td>
+    <td class="os-cell" data-label="OS">${esc(c?.os || t.status)}</td>
     ${withBackup ? `<td data-label="Last backup">${backupCell(t)}</td>` : ""}
-    <td data-label="OS updates">${updatesCell(v)} ${reboot}${notes}<div class="cell-detail muted">${c ? ago(c.checked_at) : ""}</div></td>
+    ${updateColumns(v)}
+    <td data-label="Reboot">${reboot}</td>
+    <td class="last-check" data-label="Last check"><span>${c ? ago(c.checked_at) : "Never"}</span>${repoNote}</td>
     ${state.settings.docker_enabled ? `<td data-label="Containers">${dockerCell(v)}</td>` : ""}
-    <td class="actions">
-      ${pending && canUpgrade(t) ? `<button class="small primary" data-act="upgrade" data-id="${esc(t.id)}" data-focus-key="upgrade:${esc(t.id)}" ${!busy && !v.blocked ? "" : "disabled"} title="${esc(v.blocked || "Update OS packages")}">Update OS</button>` : ""}
-      <button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="Actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button>
-    </td></tr>`;
-  if (pending && state.expanded.has(t.id)) {
+    <td class="actions" data-label="Actions">${updateAction}${rebootAction}${checkAction}</td>
+    <td class="more-cell"><button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="More actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button></td>
+  </tr>`;
+  if (c?.packages?.length && state.expanded.has(t.id)) {
     // Security updates first, so they stand out in a long list.
-    const pkgs = [...c.packages].sort((a, b) => b.security - a.security);
-    const rows = pkgs.map((p) => `<tr><td>${esc(p.name)}${p.security ? ` <span class="chip sec">security</span>` : ""}</td><td>${esc(p.current || "")}</td><td>→ ${esc(p.available)}</td></tr>`).join("");
-    html += `<tr class="pkgs"><td></td><td colspan="${3 + Number(!!withBackup) + Number(!!state.settings.docker_enabled)}"><table>${rows}</table></td></tr>`;
+    const rank = (p) => p.phased ? 2 : p.security ? 0 : 1;
+    const pkgs = [...c.packages].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+    const rows = pkgs.map((p) => {
+      const kind = p.phased ? "phased" : p.security ? "security" : "package";
+      const label = p.phased ? "Phased" : p.security ? "Security" : "Package";
+      const iconName = p.phased ? "clock" : p.security ? "shield" : "package";
+      return `<tr><td><span class="package-type ${kind}">${icon(iconName)}${label}</span></td><td class="package-name">${esc(p.name)}</td><td class="package-version">${esc(p.current || "—")}</td><td class="package-version">${esc(p.available)}</td></tr>`;
+    }).join("");
+    const detailClasses = ["pkgs"];
+    if (state.selected.has(t.id)) detailClasses.push("is-selected");
+    if (relation.hasGuests || (t.kind !== "host" && !relation.lastGuest)) detailClasses.push("tree-continues");
+    html += `<tr class="${detailClasses.join(" ")}" id="packages-${esc(t.id)}"><td></td><td colspan="${10 + Number(!!withBackup) + Number(!!state.settings.docker_enabled)}"><div class="packages-panel"><table class="packages-table"><thead><tr><th>Type</th><th>Package</th><th>Installed</th><th>Available</th></tr></thead><tbody>${rows}</tbody></table></div></td></tr>`;
   }
   return html;
 }
@@ -222,26 +282,19 @@ function render() {
     .map(([p, e]) => `<div class="error-banner"><b>${esc(p)}</b>: ${esc(e)}</div>`).join("");
 
   const updatable = active().filter((v) => v.target.updatable);
-  const pending = updatable.filter((v) => v.check && !v.check.error && v.check.packages.length);
-  const pkgCount = pending.reduce((n, v) => n + v.check.packages.length, 0);
-  const secMachines = pending.filter((v) => v.check.packages.some((p) => p.security)).length;
+  const pending = updatable.filter((v) => v.check && !v.check.error && actionablePackages(v.check).length);
+  const secMachines = pending.filter((v) => securityPackages(v.check).length).length;
   const reboot = updatable.filter((v) => v.check?.reboot_required).length;
-  const unchecked = updatable.filter((v) => !v.check).length;
-  // Leave out guests whose backups couldn't be read (a note but no date): unknown isn't "fine".
-  const withBackups = active().filter((v) => v.target.backup && (v.target.backup.last || !v.target.backup.note));
-  const staleBackups = withBackups.filter((v) => v.target.backup.stale || v.target.backup.verified === false).length;
   const hosts = dockerHosts();
   const images = hosts.reduce((n, v) => n + dockerBehind(v), 0);
   const imageErrors = hosts.reduce((n, v) => n + dockerErrors(v), 0);
   const imageUnchecked = hosts.filter((v) => dockerEnabled(v) && !v.stacks).length;
-  const osErrors = updatable.filter((v) => v.check?.error).length;
   html("#summary", `
-    <div class="stat"><b class="${pending.length ? "warn" : "ok"}">${pending.length}</b><span>machines need OS updates</span><small class="muted">${pkgCount} packages available</small></div>
-    <div class="stat"><b class="${secMachines ? "bad" : ""}">${secMachines}</b><span>machines with security updates</span><small class="${osErrors ? "bad" : "muted"}">${osErrors} failed OS checks · ${unchecked} unchecked</small></div>
-    ${state.settings.docker_enabled
-      ? `<div class="stat"><b class="${images ? "warn" : imageErrors ? "bad" : ""}">${images}</b><span>stacks have image updates</span><small class="muted">${imageErrors ? `${imageErrors} check failure(s) · ` : ""}${imageUnchecked ? `${imageUnchecked} host(s) not checked` : `${hosts.filter(dockerEnabled).length} Docker host(s) monitored`} · ${reboot} need reboot</small></div>`
-      : `<div class="stat"><b class="${reboot ? "warn" : "ok"}">${reboot}</b><span>machines need a reboot</span><small class="${staleBackups ? "warn" : "muted"}">${withBackups.length ? `${staleBackups} old / missing backups` : "Backup status shown per machine"}</small></div>`}`);
-  $("#overview-count").textContent = `${active().length} machines`;
+    <div class="stat"><b class="${pending.length ? "warn" : "ok"}">${pending.length}</b><span>${plural(pending.length, "Machine needing updates", "Machines needing updates")}</span></div>
+    <div class="stat"><b class="${secMachines ? "bad" : "ok"}">${secMachines}</b><span>${plural(secMachines, "Machine with security updates", "Machines with security updates")}</span></div>
+    <div class="stat"><b class="${reboot ? "reboot" : "ok"}">${reboot}</b><span>${plural(reboot, "Machine requiring reboot", "Machines requiring reboot")}</span></div>
+    ${state.settings.docker_enabled ? `<div class="stat"><b class="${images ? "warn" : imageErrors ? "bad" : "ok"}">${images}</b><span>${plural(images, "Stack with an image update", "Stacks with image updates")}${imageUnchecked ? ` · ${imageUnchecked} unchecked` : ""}</span></div>` : ""}`);
+  $("#overview-count").textContent = `${active().length} ${plural(active().length, "machine", "machines")}`;
   $("#schedule-status").innerHTML = scheduleStat();
   $("#test-notify").hidden = !state.schedule?.notify_targets;
 
@@ -252,17 +305,23 @@ function render() {
   toggle.setAttribute("aria-pressed", String(state.showHidden));
   html("#groups", groups().map((g) => {
     const withBackup = g.rows.some((v) => v.target.backup);
+    const guestIndexes = g.rows.map((v, index) => v.target.kind === "host" ? -1 : index).filter((index) => index >= 0);
+    const firstGuest = guestIndexes[0], lastGuest = guestIndexes.at(-1);
     return `
     <div class="group">
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
-      <div class="group-scroll"><table>
-        <thead><tr><th></th><th>Machine</th>${withBackup ? "<th>Last backup</th>" : ""}<th>OS updates</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th></th></tr></thead>
-        <tbody>${g.rows.map((v) => rowHtml(v, withBackup)).join("")}</tbody>
+      <div class="group-scroll"><table class="machine-table" aria-label="${esc(g.title)} machines">
+        <thead><tr><th></th><th>Machine</th><th>Type</th><th>OS</th>${withBackup ? "<th>Last backup</th>" : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th>Reboot</th><th>Last check</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Actions</th><th>More</th></tr></thead>
+        <tbody>${g.rows.map((v, index) => rowHtml(v, withBackup, {
+          hasGuests: v.target.kind === "host" && guestIndexes.length > 0,
+          firstGuest: index === firstGuest,
+          lastGuest: index === lastGuest,
+        })).join("")}</tbody>
       </table></div>
     </div>`;
   }).join("") || `<div class="empty"><h3>No machines yet</h3><p class="muted">Add a Proxmox node, an Incus server or any Linux host, and it shows up here with its updates, backups and state.</p><a class="button primary" href="/setup">Add machines</a></div>`);
   const unknown = active().filter((v) => v.target.updatable && v.check?.docker_installed == null && !v.stacks).length;
-  html("#containers", state.settings.docker_enabled ? `${hosts.some((v) => dockerEnabled(v) && canUpgrade(v.target)) ? `<div class="containers-toolbar"><span class="muted">OS packages and container deployments are managed separately.</span><button class="small" data-fetch-docker>Fetch image updates…</button></div>` : ""}${hosts.map(stackPanel).join("") || `<div class="empty"><h3>No Docker hosts discovered</h3><p class="muted">OS update checks also detect Docker without downloading images.</p></div>`}${unknown ? `<p class="muted discovery-note">Docker capability is not known on ${unknown} machine(s). <button class="small" data-discover-docker>Check OS updates to discover hosts</button></p>` : ""}` : "");
+  html("#containers", state.settings.docker_enabled ? `${hosts.some((v) => dockerEnabled(v) && canUpgrade(v.target)) ? `<div class="containers-toolbar"><span class="muted">OS packages and container deployments are managed separately.</span><button class="small" data-fetch-docker>Fetch image updates</button></div>` : ""}${hosts.map(stackPanel).join("") || `<div class="empty"><h3>No Docker hosts discovered</h3><p class="muted">Update checks also detect Docker without downloading images.</p></div>`}${unknown ? `<p class="muted discovery-note">Docker capability is not known on ${unknown} machine(s). <button class="small" data-discover-docker>Check updates to discover hosts</button></p>` : ""}` : "");
   $(".view-tabs").hidden = !state.settings.docker_enabled;
   $("#groups").hidden = state.view !== "machines";
   $("#containers").hidden = state.view !== "containers";
@@ -271,9 +330,9 @@ function render() {
 
   const btn = $("#update-selected");
   btn.disabled = state.selected.size === 0;
-  btn.textContent = `Update selected OS (${state.selected.size})`;
+  btn.textContent = `Update selected (${state.selected.size})`;
   $("#bulk-toolbar").hidden = state.selected.size === 0 || state.view !== "machines";
-  $("#selection-count").textContent = `${state.selected.size} machines selected`;
+  $("#selection-count").textContent = `${state.selected.size} ${plural(state.selected.size, "machine", "machines")} selected`;
   document.querySelectorAll("[data-machine-menu]").forEach((el) => el.setAttribute("aria-expanded", String(el.dataset.machineMenu === machineMenuId)));
 
   $("#jobs").innerHTML = state.jobs.map((j) => {
@@ -313,15 +372,15 @@ function openMachineMenu(id, trigger) {
   const v = state.targets.find((item) => item.target.id === id);
   if (!v) return;
   const t = v.target, busy = !!v.active_job;
-  const action = (kind, label, enabled, reason = "") => `<button data-act="${kind}" data-id="${esc(id)}" ${enabled ? "" : "disabled"} title="${esc(reason)}">${label}</button>`;
+  const action = (kind, label, iconName, enabled, reason = "") => `<button data-act="${kind}" data-id="${esc(id)}" ${enabled ? "" : "disabled"} title="${esc(reason)}">${icon(iconName)}${label}</button>`;
   const menu = $("#machine-actions");
   menu.innerHTML = `<div class="muted menu-caption">${esc(t.name)}</div>` +
-    action("check", "Check OS updates", t.updatable && !busy) +
-    action("reboot", "Reboot…", canReboot(t) && !busy && !v.blocked, t.no_reboot || v.blocked || t.note) +
-    (t.can_backup ? action("backup", "Back up configuration…", !busy) : "") +
-    (hasDocker(v) ? `<button data-docker-settings="${esc(id)}">Docker management…</button>` : "") +
-    (state.console?.enabled && !["stopped", "offline"].includes(t.status) ? `<button data-run="${esc(id)}">Run command…</button>` : "") +
-    `<button data-hide="${v.hidden ? "0" : "1"}" data-id="${esc(id)}">${v.hidden ? "Unhide machine" : "Hide machine"}</button>`;
+    action("check", "Check updates", "refresh", t.updatable && !busy) +
+    (v.check?.reboot_required === true ? "" : action("reboot", "Reboot", "reboot", canReboot(t) && !busy && !v.blocked, t.no_reboot || v.blocked || t.note)) +
+    (t.can_backup ? action("backup", "Back up configuration", "backup", !busy) : "") +
+    (hasDocker(v) ? `<button data-docker-settings="${esc(id)}">${icon("settings")}Docker management</button>` : "") +
+    (state.console?.enabled && !["stopped", "offline"].includes(t.status) ? `<button data-run="${esc(id)}">${icon("terminal")}Run command</button>` : "") +
+    `<button data-hide="${v.hidden ? "0" : "1"}" data-id="${esc(id)}">${icon(v.hidden ? "eye" : "eyeOff")}${v.hidden ? "Unhide machine" : "Hide machine"}</button>`;
   machineMenuId = id;
   trigger.setAttribute("aria-expanded", "true");
   menu.hidden = false;
@@ -437,8 +496,9 @@ function confirmAction(action, ids) {
   }
   $("#confirm-list").innerHTML = ids.map((id) => {
     const v = byId.get(id);
-    const n = v?.check?.packages?.length;
-    let detail = n != null ? `${n} package(s)` : "not checked";
+    const n = v?.check ? actionablePackages(v.check).length : null;
+    const phased = phasedPackages(v?.check).length;
+    let detail = n != null ? `${n} package${n === 1 ? "" : "s"}${phased ? ` · ${phased} phased, waiting` : ""}` : "not checked";
     if (action === "backup" || action === "stacks") detail = "";
     if (action === "reboot") {
       detail = v?.check?.reboot_required ? "reboot needed" : "";

@@ -11,6 +11,7 @@ Check output on stdout looks like::
     __BEGIN__
     <package manager's list of upgradable packages>
     __END__
+    __PHASED__=package-one,package-two  (apt packages deferred for this machine; optional)
     __REBOOT__=yes|no|unknown
     __SELF__=yes            (only on the machine whose Docker/Podman runs this dashboard)
     __CSAPP__=plex          (only in a container installed by the community-scripts helper scripts)
@@ -165,7 +166,15 @@ case "$PM" in
     apt-get $APT_OPTS update -q >&2 || rc=$?
     echo "__BEGIN__"
     apt list --upgradable 2>/dev/null | grep -v '^Listing'
-    echo "__END__" ;;
+    echo "__END__"
+    # Ubuntu apt reports packages held back specifically by its phased rollout in the simulation.
+    # This is read-only and deliberately excludes ordinary kept-back packages.
+    phased=$(apt-get $APT_OPTS -s -q upgrade 2>/dev/null | awk '
+      /^The following upgrades have been deferred due to phasing:$/ { collect=1; next }
+      collect && /^[[:space:]]/ { for (i=1; i<=NF; i++) print $i; next }
+      collect { exit }
+    ' | sort -u | tr '\n' ',')
+    [ -n "$phased" ] && echo "__PHASED__=${phased%,}" ;;
   dnf|yum)
     REFRESH=""; [ "$PM" = dnf ] && REFRESH="--refresh"  # yum has no --refresh
     echo "__BEGIN__"
@@ -386,6 +395,9 @@ def parse_check(result: ExecResult) -> CheckResult:
         error = f"exit code {result.rc}: {tail}" if tail else f"exit code {result.rc}"
     parser = PARSERS.get(pm or "")
     packages = parser(body) if parser else []
+    phased = {name for name in meta.get("PHASED", "").split(",") if name}
+    if phased:
+        packages = [p.model_copy(update={"phased": p.name in phased}) for p in packages]
     if parser is None and error is None:
         error = f"unsupported package manager: {pm or 'unknown'}"
     return CheckResult(

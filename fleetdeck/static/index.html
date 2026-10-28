@@ -5,14 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fleetdeck</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/style.css?v=12">
+  <link rel="stylesheet" href="/static/style.css?v=18">
   <script src="/static/theme.js?v=10"></script>
 </head>
 <body class="dashboard-page">
   <header>
     <h1>Fleetdeck</h1>
     <div class="toolbar">
-      <button id="check-all">Check OS updates</button>
+      <button id="check-all"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg><span>Check updates</span></button>
       <details class="dashboard-menu" id="dashboard-menu">
         <summary class="button" aria-label="Dashboard actions">⋯</summary>
         <div class="dashboard-menu-items">
@@ -61,7 +61,7 @@
       <button id="view-machines" data-view="machines" aria-pressed="true">Machines</button>
       <button id="view-containers" data-view="containers" aria-pressed="false">Containers <span id="docker-host-count" class="chip">0</span></button>
     </nav>
-    <div class="bulk-toolbar" id="bulk-toolbar" hidden><span id="selection-count" role="status"></span><button id="clear-selected" class="small">Clear</button><button id="update-selected" class="small primary" disabled>Update selected OS</button></div>
+    <div class="bulk-toolbar" id="bulk-toolbar" hidden><span id="selection-count" role="status"></span><button id="clear-selected" class="small">Clear</button><button id="update-selected" class="small primary" disabled>Update selected</button></div>
     <section id="groups"><div class="loading" role="status"><span class="spin"></span> Loading machines…</div></section>
     <section id="containers" hidden aria-label="Docker hosts and container updates"></section>
 
@@ -178,7 +178,7 @@
     </menu>
   </dialog>
 
-  <script src="/static/app.js?v=13"></script>
+  <script src="/static/app.js?v=15"></script>
   <script src="/static/console.js?v=2"></script>
 </body>
 </html>
