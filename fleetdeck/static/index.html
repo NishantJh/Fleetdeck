@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fleetdeck</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/style.css?v=19">
+  <link rel="stylesheet" href="/static/style.css?v=20">
   <script src="/static/theme.js?v=10"></script>
 </head>
 <body class="dashboard-page">
@@ -14,13 +14,14 @@
     <div class="toolbar">
       <button id="check-all"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg><span>Check updates</span></button>
       <details class="dashboard-menu" id="dashboard-menu">
-        <summary class="button" aria-label="Dashboard actions">⋯</summary>
+        <summary class="button" aria-label="More options" title="More options"><svg class="ui-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></summary>
         <div class="dashboard-menu-items">
-          <a class="button ghost" href="/setup">Add machines / settings</a>
-          <button id="refresh" class="ghost">Refresh inventory</button>
-          <button id="show-hidden" class="ghost" hidden>Show hidden</button>
-          <button id="backup" class="ghost">Back up / restore Fleetdeck</button>
-          <button id="test-notify" class="ghost" hidden>Test notification</button>
+          <a class="button ghost dashboard-menu-item" href="/setup"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg><span>Machines &amp; settings</span></a>
+          <button id="refresh" class="ghost dashboard-menu-item"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/></svg><span>Refresh inventory</span></button>
+          <button id="show-hidden" class="ghost dashboard-menu-item" hidden aria-pressed="false"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.1 12a10.8 10.8 0 0 1 19.8 0 10.8 10.8 0 0 1-19.8 0Z"/><circle cx="12" cy="12" r="3"/></svg><span class="menu-item-label">Show hidden machines</span><span id="hidden-count" class="menu-count">0</span><svg class="ui-icon menu-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg></button>
+          <div class="dashboard-menu-divider" role="separator"></div>
+          <button id="backup" class="ghost dashboard-menu-item"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14H5V6"/><path d="M8 3h8l1 3H7Z"/><path d="M9 11h6"/></svg><span>Back up &amp; restore</span></button>
+          <button id="test-notify" class="ghost dashboard-menu-item" hidden><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></svg><span>Test notifications</span></button>
         </div>
       </details>
     </div>
@@ -98,7 +99,7 @@
   </footer>
 
   <div id="machine-actions" class="context-actions" role="group" aria-label="Machine actions" hidden></div>
-  <div id="node-information" class="context-actions node-information" role="dialog" aria-label="Node information" tabindex="-1" hidden></div>
+  <div id="machine-information" class="context-actions machine-information" role="dialog" aria-label="Machine information" tabindex="-1" hidden></div>
 
   <dialog id="docker-settings-dialog" aria-labelledby="docker-settings-title">
     <form id="docker-settings-form">
@@ -179,7 +180,7 @@
     </menu>
   </dialog>
 
-  <script src="/static/app.js?v=16"></script>
+  <script src="/static/app.js?v=17"></script>
   <script src="/static/console.js?v=2"></script>
 </body>
 </html>

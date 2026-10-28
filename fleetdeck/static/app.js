@@ -26,6 +26,7 @@ const ICON = {
 const icon = (name) => `<svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
 const plural = (count, one, many) => count === 1 ? one : many;
 const kindLabel = (t) => t.kind === "host" && t.platform === "proxmox" ? "Node" : KIND[t.kind] || t.kind;
+const isProxmox = (t) => t.platform === "proxmox";
 const isProxmoxNode = (t) => t.kind === "host" && t.platform === "proxmox";
 // Status dot: Proxmox says online/offline for nodes, running/stopped for guests; anything else is grey.
 const DOT = { running: "on", online: "on", stopped: "off", offline: "off" };
@@ -163,7 +164,7 @@ function backupCell(t) {
     // Proxmox node configuration-backup context is available from the neutral node information popover.
     return "";
   } else if (b.not_set_up) {
-    html = `<span class="muted" title="${esc(b.note)}">not set up ⓘ</span>`;
+    html = `<span class="muted" title="${esc(b.note)}">not set up${isProxmox(t) ? "" : " ⓘ"}</span>`;
   } else if (b.note) {
     html = `<span class="muted" title="${esc(b.note)}">?</span>`;
   } else {
@@ -171,14 +172,14 @@ function backupCell(t) {
   }
   if (b.verified === false) html += ` <span class="chip bad" title="The newest backup failed verification">verify failed</span>`;
   if (b.in_job === false) html += ` <span class="chip warn" title="Not in any scheduled backup job">no job</span>`;
-  if (b.last && b.note) html += ` <span class="muted" title="${esc(b.note)}">ⓘ</span>`;
+  if (b.last && b.note && !isProxmox(t)) html += ` <span class="muted" title="${esc(b.note)}">ⓘ</span>`;
   return html;
 }
 
-function nodeInfoButton(t, c) {
-  if (!isProxmoxNode(t) || (!t.backup && !c?.notes?.length)) return "";
+function machineInfoButton(t, c) {
+  if (!isProxmox(t) || (!t.backup && !c?.notes?.length)) return "";
   const id = esc(t.id);
-  return `<button class="small ghost node-info-trigger" data-node-info="${id}" data-focus-key="node-info:${id}" aria-label="Information for ${esc(t.name)}" aria-controls="node-information" aria-expanded="false">${icon("info")}</button>`;
+  return `<button class="small ghost machine-info-trigger" data-machine-info="${id}" data-focus-key="machine-info:${id}" aria-label="Information for ${esc(t.name)}" aria-controls="machine-information" aria-expanded="false">${icon("info")}</button>`;
 }
 
 function csTip(app) {
@@ -254,9 +255,9 @@ function rowHtml(v, withBackup, relation = {}) {
     ? ` <span class="chip" title="${esc(csTip(c.community_script))}">helper script</span>` : "";
   const note = t.updatable && t.note
     ? ` <span class="machine-note warn" title="${esc(t.note)}" aria-label="${esc(t.note)}">${icon("alert")}</span>` : "";
-  const repoNote = !isProxmoxNode(t) && c?.notes?.length
+  const repoNote = !isProxmox(t) && c?.notes?.length
     ? `<span class="repo-note ${c.notes.length > 1 ? "warn" : "muted"}" title="${esc(c.notes.join("\n"))}" aria-label="Repository information">${icon("alert")}</span>` : "";
-  const nodeInfo = nodeInfoButton(t, c);
+  const machineInfo = machineInfoButton(t, c);
   const rebootTitle = t.no_reboot || v.blocked || "Reboot needed";
   const reboot = c?.reboot_required === true
     ? canReboot(t)
@@ -279,7 +280,7 @@ function rowHtml(v, withBackup, relation = {}) {
     <td class="update-action-cell" data-label="Update">${updateState(v)}</td>
     <td class="reboot-cell" data-label="Reboot">${reboot}</td>
     ${state.settings.docker_enabled ? `<td class="containers-cell" data-label="Containers">${dockerCell(v)}</td>` : ""}
-    <td class="last-check" data-label="Checked"><span>${c ? ago(c.checked_at) : "Never"}</span>${nodeInfo || repoNote}</td>
+    <td class="last-check" data-label="Checked"><span class="last-check-content"><span>${c ? ago(c.checked_at) : "Never"}</span>${machineInfo || repoNote}</span></td>
     <td class="more-cell"><button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="More actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button></td>
   </tr>`;
   if (c?.packages?.length && state.expanded.has(t.id)) {
@@ -333,7 +334,7 @@ function render() {
   const hiddenCount = state.targets.length - active().length;
   const toggle = $("#show-hidden");
   toggle.hidden = hiddenCount === 0;
-  toggle.textContent = `Show hidden (${hiddenCount})`;
+  $("#hidden-count").textContent = hiddenCount;
   toggle.setAttribute("aria-pressed", String(state.showHidden));
   html("#groups", groups().map((g) => {
     const withBackup = g.rows.some((v) => v.target.backup);
@@ -367,7 +368,7 @@ function render() {
   $("#bulk-toolbar").hidden = state.selected.size === 0 || state.view !== "machines";
   $("#selection-count").textContent = `${state.selected.size} ${plural(state.selected.size, "machine", "machines")} selected`;
   document.querySelectorAll("[data-machine-menu]").forEach((el) => el.setAttribute("aria-expanded", String(el.dataset.machineMenu === machineMenuId)));
-  document.querySelectorAll("[data-node-info]").forEach((el) => el.setAttribute("aria-expanded", String(el.dataset.nodeInfo === nodeInfoId)));
+  document.querySelectorAll("[data-machine-info]").forEach((el) => el.setAttribute("aria-expanded", String(el.dataset.machineInfo === machineInfoId)));
 
   $("#jobs").innerHTML = state.jobs.map((j) => {
     const cls = j.status === "failed" ? "bad" : j.status === "succeeded" ? "ok" : "";
@@ -384,7 +385,7 @@ function setView(view, hostId = null) {
   state.view = state.settings.docker_enabled && view === "containers" ? "containers" : "machines";
   remember.set("dashboardView", state.view);
   closeMachineMenu();
-  closeNodeInformation();
+  closeMachineInformation();
   render();
   if (hostId) document.getElementById(`docker-${hostId}`)?.scrollIntoView({ block: "start" });
 }
@@ -403,7 +404,7 @@ function closeMachineMenu(restoreFocus = false) {
 function openMachineMenu(id, trigger) {
   const open = machineMenuId === id;
   closeMachineMenu();
-  closeNodeInformation();
+  closeMachineInformation();
   if (open) return;
   const v = state.targets.find((item) => item.target.id === id);
   if (!v) return;
@@ -426,21 +427,21 @@ function openMachineMenu(id, trigger) {
   menu.querySelector("button:not(:disabled)")?.focus();
 }
 
-let nodeInfoId = null;
-function closeNodeInformation(restoreFocus = false) {
-  const panel = $("#node-information");
+let machineInfoId = null;
+function closeMachineInformation(restoreFocus = false) {
+  const panel = $("#machine-information");
   panel.hidden = true;
-  if (nodeInfoId) {
-    const trigger = [...document.querySelectorAll("[data-node-info]")].find((el) => el.dataset.nodeInfo === nodeInfoId);
+  if (machineInfoId) {
+    const trigger = [...document.querySelectorAll("[data-machine-info]")].find((el) => el.dataset.machineInfo === machineInfoId);
     trigger?.setAttribute("aria-expanded", "false");
     if (restoreFocus) trigger?.focus();
   }
-  nodeInfoId = null;
+  machineInfoId = null;
 }
 
-function nodeInfoSection(title, lines) {
+function machineInfoSection(title, lines) {
   if (!lines.length) return "";
-  return `<section class="node-info-section"><h3>${esc(title)}</h3>${lines.map((line) => `<p>${esc(line)}</p>`).join("")}</section>`;
+  return `<section class="machine-info-section"><h3>${esc(title)}</h3>${lines.map((line) => `<p>${esc(line)}</p>`).join("")}</section>`;
 }
 
 function backupInformation(t) {
@@ -450,31 +451,32 @@ function backupInformation(t) {
   if (b.last) {
     const count = `${b.count} backup${b.count === 1 ? "" : "s"} found`;
     lines.push(`Last backup ${new Date(b.last).toLocaleString()}${b.storage ? ` on ${b.storage}` : ""}; ${count}.`);
+    if (b.note) lines.push(b.note);
   } else if (b.note) {
     lines.push(b.note);
   } else if (b.not_set_up) {
-    lines.push("Fleetdeck backup is not configured for this Proxmox node.");
+    lines.push(`Fleetdeck backup is not configured for this Proxmox ${isProxmoxNode(t) ? "node" : "machine"}.`);
   } else {
-    lines.push("No backup was found for this Proxmox node.");
+    lines.push(`No backup was found for this Proxmox ${isProxmoxNode(t) ? "node" : "machine"}.`);
   }
   if (b.verified === false) lines.push("The newest backup failed verification.");
-  if (b.in_job === false) lines.push("This node is not in a scheduled backup job.");
+  if (b.in_job === false) lines.push(`This ${isProxmoxNode(t) ? "node" : "machine"} is not in a scheduled backup job.`);
   return lines;
 }
 
-function openNodeInformation(id, trigger) {
-  const open = nodeInfoId === id;
-  closeNodeInformation();
+function openMachineInformation(id, trigger) {
+  const open = machineInfoId === id;
+  closeMachineInformation();
   closeMachineMenu();
   if (open) return;
   const v = state.targets.find((item) => item.target.id === id);
-  if (!v || !isProxmoxNode(v.target)) return;
+  if (!v || !isProxmox(v.target)) return;
   const backup = backupInformation(v.target);
   const repositories = v.check?.notes || [];
   if (!backup.length && !repositories.length) return;
-  const panel = $("#node-information");
-  panel.innerHTML = `<div class="node-info-heading"><span>${icon("info")}<strong id="node-information-title">Node information</strong></span><span class="muted">${esc(v.target.name)}</span></div>${nodeInfoSection("Backup", backup)}${nodeInfoSection("Repositories", repositories)}`;
-  nodeInfoId = id;
+  const panel = $("#machine-information");
+  panel.innerHTML = `<div class="machine-info-heading"><span>${icon("info")}<strong id="machine-information-title">${isProxmoxNode(v.target) ? "Node" : "Machine"} information</strong></span><span class="muted">${esc(v.target.name)}</span></div>${machineInfoSection("Backup", backup)}${machineInfoSection("Repositories", repositories)}`;
+  machineInfoId = id;
   trigger.setAttribute("aria-expanded", "true");
   panel.hidden = false;
   const rect = trigger.getBoundingClientRect();
@@ -712,11 +714,11 @@ document.addEventListener("click", (e) => {
 
 document.addEventListener("click", (e) => {
   if (!e.target.closest("#dashboard-menu") || e.target.closest(".dashboard-menu-items button,.dashboard-menu-items a")) $("#dashboard-menu").open = false;
-  const el = e.target.closest("[data-machine-menu],[data-node-info],[data-open-docker],[data-docker-settings],[data-view],[data-fetch-docker],[data-discover-docker]");
+  const el = e.target.closest("[data-machine-menu],[data-machine-info],[data-open-docker],[data-docker-settings],[data-view],[data-fetch-docker],[data-discover-docker]");
   if (el?.dataset.machineMenu) { openMachineMenu(el.dataset.machineMenu, el); return; }
-  if (el?.dataset.nodeInfo) { openNodeInformation(el.dataset.nodeInfo, el); return; }
+  if (el?.dataset.machineInfo) { openMachineInformation(el.dataset.machineInfo, el); return; }
   if (!e.target.closest("#machine-actions")) closeMachineMenu();
-  if (!e.target.closest("#node-information")) closeNodeInformation();
+  if (!e.target.closest("#machine-information")) closeMachineInformation();
   if (!el || el.disabled) return;
   if (el.dataset.view) setView(el.dataset.view);
   else if (el.dataset.openDocker) setView("containers", el.dataset.openDocker);
@@ -729,10 +731,10 @@ document.addEventListener("click", (e) => {
   }
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeMachineMenu(true); closeNodeInformation(true); $("#dashboard-menu").open = false; }
+  if (e.key === "Escape") { closeMachineMenu(true); closeMachineInformation(true); $("#dashboard-menu").open = false; }
 });
-window.addEventListener("resize", () => { closeMachineMenu(); closeNodeInformation(); });
-window.addEventListener("scroll", () => { closeMachineMenu(); closeNodeInformation(); }, true);
+window.addEventListener("resize", () => { closeMachineMenu(); closeMachineInformation(); });
+window.addEventListener("scroll", () => { closeMachineMenu(); closeMachineInformation(); }, true);
 $("#clear-selected").onclick = () => { state.selected.clear(); render(); };
 $("#docker-mode").onchange = dockerModeFields;
 $("#docker-settings-close").onclick = () => $("#docker-settings-dialog").close();

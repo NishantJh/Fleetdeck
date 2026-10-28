@@ -188,8 +188,9 @@ test("update columns separate security, packages and phased updates with only re
   assert.deepEqual(ui.errors, []);
 });
 
-test("Proxmox node backup and repository context share one neutral information popover", async () => {
+test("Proxmox backup and repository context share neutral information popovers", async () => {
   const unsafeBackupNote = 'Not configured <img src=x onerror="alert(1)">';
+  const guestBackupNote = "Some storage details need attention";
   const ui = await dashboard({ targets: [
     machine("pve", {
       target: { backup: { last: null, not_set_up: true, note: unsafeBackupNote } },
@@ -198,24 +199,26 @@ test("Proxmox node backup and repository context share one neutral information p
     machine("guest", {
       guest: true,
       parent: "pve",
-      target: { backup: { last: null, not_set_up: true, note: "Guest backup is not configured" } },
+      target: { backup: { last: new Date(Date.now() - 3600 * 1000).toISOString(), storage: "backup", count: 2, note: guestBackupNote } },
     }),
   ] });
   const doc = ui.document;
   const node = doc.querySelector('[data-machine-row="pve"]');
   const guest = doc.querySelector('[data-machine-row="guest"]');
   assert.equal(node.querySelector(".backup-cell").textContent.trim(), "");
-  assert.match(guest.querySelector(".backup-cell").textContent, /not set up/);
+  assert.match(guest.querySelector(".backup-cell").textContent, /h ago/);
+  assert.doesNotMatch(guest.querySelector(".backup-cell").textContent, /ⓘ/);
   assert.equal(node.querySelector(".repo-note"), null);
+  assert.ok(node.querySelector(".last-check-content"));
 
-  const trigger = node.querySelector('[data-node-info="pve"]');
+  const trigger = node.querySelector('[data-machine-info="pve"]');
   assert.ok(trigger);
   assert.equal(trigger.classList.contains("warn"), false);
   assert.equal(trigger.classList.contains("bad"), false);
   assert.equal(trigger.hasAttribute("title"), false);
-  ui.click('[data-node-info="pve"]');
+  ui.click('[data-machine-info="pve"]');
 
-  const panel = doc.querySelector("#node-information");
+  const panel = doc.querySelector("#machine-information");
   assert.equal(panel.hidden, false);
   assert.ok(doc.activeElement === panel, "opening the popover moves focus to its content");
   assert.deepEqual([...panel.querySelectorAll("h3")].map((el) => el.textContent), ["Backup", "Repositories"]);
@@ -228,6 +231,37 @@ test("Proxmox node backup and repository context share one neutral information p
   assert.equal(panel.hidden, true);
   assert.ok(doc.activeElement === trigger, "Escape returns focus to the information button");
   assert.equal(trigger.getAttribute("aria-expanded"), "false");
+
+  const guestTrigger = guest.querySelector('[data-machine-info="guest"]');
+  assert.ok(guestTrigger);
+  ui.click('[data-machine-info="guest"]');
+  assert.equal(panel.querySelector("#machine-information-title").textContent, "Machine information");
+  assert.deepEqual([...panel.querySelectorAll("h3")].map((el) => el.textContent), ["Backup"]);
+  assert.match(panel.textContent, /Some storage details need attention/);
+  assert.deepEqual(ui.errors, []);
+});
+
+test("dashboard menu uses the compact simple list and preserves hidden-view state", async () => {
+  const ui = await dashboard({
+    schedule: { check_every: 21600, notify_targets: 1 },
+    targets: [machine("visible"), machine("hidden", { view: { hidden: true } })],
+  });
+  const doc = ui.document;
+  const summary = doc.querySelector("#dashboard-menu > summary");
+  assert.ok(summary.querySelector(".ui-icon"));
+  assert.doesNotMatch(summary.textContent, /⋯|…/);
+  assert.equal(summary.getAttribute("aria-label"), "More options");
+  assert.deepEqual(
+    [...doc.querySelectorAll(".dashboard-menu-item")].map((el) => el.textContent.trim().replace(/\s+/g, " ")),
+    ["Machines & settings", "Refresh inventory", "Show hidden machines1", "Back up & restore", "Test notifications"],
+  );
+  const toggle = doc.querySelector("#show-hidden");
+  assert.equal(toggle.hidden, false);
+  assert.equal(toggle.getAttribute("aria-pressed"), "false");
+  assert.equal(doc.querySelector('[data-machine-row="hidden"]'), null);
+  ui.click("#show-hidden");
+  assert.equal(toggle.getAttribute("aria-pressed"), "true");
+  assert.ok(doc.querySelector('[data-machine-row="hidden"]'));
   assert.deepEqual(ui.errors, []);
 });
 

@@ -7,7 +7,9 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
 - Three compact summary cards: machines needing updates, machines with security updates,
   and machines requiring a reboot. Labels use the correct singular/plural form, and the
   overview shows when the next automatic check will run.
-- A short toolbar: **Check updates**, with less frequent tasks in the dashboard menu.
+- A short toolbar: **Check updates**, with less frequent tasks in a compact icon-led menu.
+  The menu separates inventory tasks from backup and notification tools, and marks the
+  optional hidden-machine view without changing the menu label.
 - Single-line rows keep machine/state, type, OS, backup age, **Security**, **Package**,
   **Phased**, **Update**, **Reboot**, **Checked** and **More** in separate, left-aligned columns.
   Stable column proportions reserve flexible room for machine and OS names without letting
@@ -24,9 +26,9 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
   do not show placeholder dashes.
 - Per-machine **More** menus use icons and concise labels for checks, configuration backups,
   hiding and any optional command-console or Docker actions that are actually available.
-- Proxmox nodes combine configuration-backup and repository context in one neutral information
-  popover beside the checked time. A missing node configuration backup no longer adds a colored
-  or textual status to the backup column; real backup timestamps remain visible.
+- Proxmox machines move backup notes into one neutral information popover beside the checked
+  time; nodes also include repository context there. Backup-note icons are removed from the
+  backup column, while real backup timestamps and meaningful backup states remain visible.
 - Selecting machines reveals the bulk-update bar. Updates and reboots retain their confirmation dialogs.
 - Platform/host groups and guest rows have a deterministic order, including after refreshes.
   Hosts use **Node** for Proxmox. A centered 2 px tree line uses compact guest indentation,
