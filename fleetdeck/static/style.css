@@ -499,6 +499,8 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .reboot-status { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .dashboard-page .reboot-status .ui-icon { width: 13px; height: 13px; }
 .dashboard-page .reboot-status.required { padding: 3px 8px; border-radius: 999px; color: var(--reboot); background: color-mix(in srgb, var(--reboot) 13%, var(--panel)); font-weight: 650; }
+.dashboard-page button.reboot-action { padding-inline: 8px; border-color: color-mix(in srgb, var(--reboot) 45%, var(--border)); background: color-mix(in srgb, var(--reboot) 10%, var(--panel)); color: var(--reboot); box-shadow: none; font-weight: 650; }
+.dashboard-page button.reboot-action:hover:not(:disabled) { border-color: var(--reboot); background: color-mix(in srgb, var(--reboot) 16%, var(--panel)); }
 .dashboard-page .last-check { width: 105px; max-width: 105px; color: var(--muted); }
 .dashboard-page td.actions { min-width: 160px; padding-inline: 8px; text-align: left; white-space: nowrap; }
 .dashboard-page td.actions button.small { padding-inline: 8px; }

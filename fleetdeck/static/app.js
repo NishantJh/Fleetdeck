@@ -224,12 +224,12 @@ function rowHtml(v, withBackup, relation = {}) {
     ? `<span class="repo-note ${c.notes.length > 1 ? "warn" : "muted"}" title="${esc(c.notes.join("\n"))}" aria-label="Repository information">${icon("alert")}</span>` : "";
   const rebootTitle = t.no_reboot || v.blocked || "Reboot needed";
   const reboot = c?.reboot_required === true
-    ? `<span class="reboot-status required" title="${esc(rebootTitle)}">${icon("reboot")}Required</span>`
+    ? canReboot(t)
+      ? `<button class="small reboot-action" data-act="reboot" data-id="${esc(t.id)}" data-focus-key="reboot:${esc(t.id)}" ${!busy && !v.blocked ? "" : "disabled"} title="${esc(v.blocked || "Reboot required — reboot this machine")}">${icon("reboot")}<span>Reboot</span></button>`
+      : `<span class="reboot-status required" title="${esc(rebootTitle)}">${icon("reboot")}Required</span>`
     : c && c.reboot_required === false ? "" : `<span class="muted">Unknown</span>`;
   const updateAction = pending && canUpgrade(t)
     ? `<button class="small primary" data-act="upgrade" data-id="${esc(t.id)}" data-focus-key="upgrade:${esc(t.id)}" ${!busy && !v.blocked ? "" : "disabled"} title="${esc(v.blocked || "Install available OS packages")}">${icon("download")}<span>Update</span></button>` : "";
-  const rebootAction = c?.reboot_required === true && canReboot(t)
-    ? `<button class="small" data-act="reboot" data-id="${esc(t.id)}" data-focus-key="reboot:${esc(t.id)}" ${!busy && !v.blocked ? "" : "disabled"} title="${esc(v.blocked || "Reboot this machine")}">${icon("reboot")}<span>Reboot</span></button>` : "";
   const checkAction = t.updatable && (c?.error || !c)
     ? `<button class="small" data-act="check" data-id="${esc(t.id)}" data-focus-key="check:${esc(t.id)}" ${busy ? "disabled" : ""}>${icon("refresh")}<span>${c?.error ? "Retry check" : "Check"}</span></button>` : "";
   const rowClasses = [t.kind === "host" ? "host" : "guest", "machine-row"];
@@ -248,7 +248,7 @@ function rowHtml(v, withBackup, relation = {}) {
     <td data-label="Reboot">${reboot}</td>
     <td class="last-check" data-label="Last check"><span>${c ? ago(c.checked_at) : "Never"}</span>${repoNote}</td>
     ${state.settings.docker_enabled ? `<td data-label="Containers">${dockerCell(v)}</td>` : ""}
-    <td class="actions" data-label="Actions">${updateAction}${rebootAction}${checkAction}</td>
+    <td class="actions" data-label="Actions">${updateAction}${checkAction}</td>
     <td class="more-cell"><button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="More actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button></td>
   </tr>`;
   if (c?.packages?.length && state.expanded.has(t.id)) {

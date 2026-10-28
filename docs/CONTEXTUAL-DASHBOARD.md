@@ -12,9 +12,10 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
   **Phased**, **Reboot**, last check, relevant actions and **More** in separate columns.
 - Apt packages deferred by Ubuntu/Debian phasing are detected with a read-only simulation.
   They are shown in green and are excluded from actionable package counts and update jobs.
-- **Update**, **Reboot** and **Retry check** appear in the Actions column only when relevant.
-  A reboot requirement also has a distinct gold status and restart icon. Empty cells do not
-  show placeholder dashes.
+- **Update** and **Retry check** appear in the Actions column only when relevant. A reboot
+  requirement becomes a distinct gold **Reboot** button in its own column when the action is
+  allowed, or a non-clickable **Required** status when configuration blocks it. Empty cells
+  do not show placeholder dashes.
 - Per-machine **More** menus use icons and concise labels for checks, configuration backups,
   hiding and any optional command-console or Docker actions that are actually available.
 - Selecting machines reveals the bulk-update bar. Updates and reboots retain their confirmation dialogs.

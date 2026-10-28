@@ -157,9 +157,9 @@ test("update columns separate security, packages and phased updates with only re
   assert.deepEqual(headers, ["", "Machine", "Type", "OS", "Security", "Package", "Phased", "Reboot", "Last check", "Actions", "More"]);
   assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Type"]').textContent.trim(), "Node");
   assert.equal(doc.querySelector('[data-machine-row="pve"] [data-act="upgrade"] span').textContent, "Update");
-  assert.equal(doc.querySelector('[data-machine-row="pve"] [data-act="reboot"] span').textContent, "Reboot");
-  assert.equal(doc.querySelector('[data-machine-row="pve"] .reboot-status').textContent, "Required");
-  assert.ok(doc.querySelector('[data-machine-row="pve"] .reboot-status .ui-icon'));
+  assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Reboot"] [data-act="reboot"] span').textContent, "Reboot");
+  assert.equal(doc.querySelector('[data-machine-row="pve"] .actions [data-act="reboot"]'), null);
+  assert.ok(doc.querySelector('[data-machine-row="pve"] .reboot-action .ui-icon'));
   assert.equal(doc.querySelector('[data-machine-row="phased"] [data-act="upgrade"]'), null);
   assert.equal(doc.querySelector('[data-machine-row="phased"] .update-metric.phased').textContent.trim(), "1");
   assert.equal(doc.querySelector('[data-machine-row="failed"] [data-act="check"] span').textContent, "Retry check");
