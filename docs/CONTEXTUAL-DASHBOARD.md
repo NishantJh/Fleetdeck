@@ -9,13 +9,16 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
   overview shows when the next automatic check will run.
 - A short toolbar: **Check updates**, with less frequent tasks in the dashboard menu.
 - Single-line rows keep machine/state, type, OS, backup age, **Security**, **Package**,
-  **Phased**, **Update**, **Reboot**, **Checked** and **More** in separate columns.
+  **Phased**, **Update**, **Reboot**, **Checked** and **More** in separate, left-aligned columns.
+  Stable column proportions reserve flexible room for machine and OS names without letting
+  the compact status/action columns drift apart.
 - Apt packages deferred by Ubuntu/Debian phasing are detected with read-only simulations.
   Packages that apt lists separately as not upgrading, but which become installable when only
   the phase policy changes, are included in the green **Phased** count and identified as
   **Waiting** in the detail table. They are excluded from actionable counts and update jobs.
 - **Update**, **Check** and **Retry** share the Update column and appear only when relevant;
-  otherwise it shows a green **Up to date** state. A reboot
+  otherwise it shows a green **Up to date** state. A stopped guest shows a neutral
+  **Not running** state in that column. A reboot
   requirement becomes a distinct gold **Reboot** button in its own column when the action is
   allowed, or a non-clickable **Required** status when configuration blocks it. Empty cells
   do not show placeholder dashes.
@@ -23,7 +26,8 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
   hiding and any optional command-console or Docker actions that are actually available.
 - Selecting machines reveals the bulk-update bar. Updates and reboots retain their confirmation dialogs.
 - Platform/host groups and guest rows have a deterministic order, including after refreshes.
-  Hosts use **Node** for Proxmox, and a continuous rounded tree line keeps their guests visually grouped.
+  Hosts use **Node** for Proxmox. A centered 2 px tree line uses compact guest indentation,
+  rounded branches and an exact final endpoint to keep the hierarchy clear without wasting name space.
 - The Fleetdeck logo links home, and dashboard/setup/login pages have a favicon.
 
 Existing protections, snapshot defaults, authentication and CSRF protections remain in place.

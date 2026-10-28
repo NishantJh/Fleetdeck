@@ -9,6 +9,7 @@ const KIND = { host: "Host", lxc: "LXC", vm: "VM", container: "Container" };
 const ICON = {
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
   reboot: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
+  power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/>',
   refresh: '<path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/>',
   shield: '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3v8Z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
   package: '<path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/>',
@@ -111,7 +112,7 @@ function metricButton(v, kind, count) {
 
 function updateColumns(v) {
   const t = v.target;
-  if (!t.updatable) return `<td colspan="3" class="update-summary muted" data-label="Updates">${esc(t.note || "Unavailable")}</td>`;
+  if (!t.updatable) return `<td colspan="3" class="update-summary" data-label="Updates"></td>`;
   const c = v.check;
   if (!c) return `<td colspan="3" class="update-summary muted" data-label="Updates">Not checked</td>`;
   if (c.error) return `<td colspan="3" class="update-summary" data-label="Updates"><span class="status-inline bad" title="${esc(c.error)}">${icon("alert")}Check failed</span></td>`;
@@ -131,7 +132,12 @@ function updateState(v) {
   if (busy) {
     return `<span class="status-inline muted"><span class="spin"></span>${esc(BUSY[v.active_job.action] || v.active_job.action)}…</span>`;
   }
-  if (!t.updatable) return "";
+  if (!t.updatable) {
+    const stopped = t.status === "stopped" || t.note?.toLowerCase() === "not running";
+    const offline = t.status === "offline";
+    const label = stopped ? "Not running" : offline ? "Offline" : t.note || "Unavailable";
+    return `<span class="status-inline unavailable" title="${esc(t.note || label)}">${icon(stopped || offline ? "power" : "alert")}${esc(label)}</span>`;
+  }
   if (!c || c.error) {
     const retry = !!c?.error;
     return `<button class="small" data-act="check" data-id="${id}" data-focus-key="check:${id}" title="${retry ? "Retry the update check" : "Check for OS updates"}">${icon("refresh")}<span>${retry ? "Retry" : "Check"}</span></button>`;
@@ -254,13 +260,13 @@ function rowHtml(v, withBackup, relation = {}) {
   let html = `<tr class="${rowClasses.join(" ")}" data-machine-row="${esc(t.id)}">
     <td><input type="checkbox" aria-label="Select ${esc(t.name)}" data-select="${esc(t.id)}" data-focus-key="select:${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) ? "" : "disabled"}></td>
     <td class="name machine-cell" data-label="Machine"><span class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name">${esc(t.name)}</span></span>${self}${cs}${note}</td>
-    <td data-label="Type"><span class="chip type-chip">${esc(kindLabel(t))}</span></td>
+    <td class="type-cell" data-label="Type"><span class="chip type-chip">${esc(kindLabel(t))}</span></td>
     <td class="os-cell" data-label="OS">${esc(c?.os || t.status)}</td>
-    ${withBackup ? `<td data-label="Last backup">${backupCell(t)}</td>` : ""}
+    ${withBackup ? `<td class="backup-cell" data-label="Last backup">${backupCell(t)}</td>` : ""}
     ${updateColumns(v)}
     <td class="update-action-cell" data-label="Update">${updateState(v)}</td>
-    <td data-label="Reboot">${reboot}</td>
-    ${state.settings.docker_enabled ? `<td data-label="Containers">${dockerCell(v)}</td>` : ""}
+    <td class="reboot-cell" data-label="Reboot">${reboot}</td>
+    ${state.settings.docker_enabled ? `<td class="containers-cell" data-label="Containers">${dockerCell(v)}</td>` : ""}
     <td class="last-check" data-label="Checked"><span>${c ? ago(c.checked_at) : "Never"}</span>${repoNote}</td>
     <td class="more-cell"><button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="More actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button></td>
   </tr>`;
@@ -324,7 +330,8 @@ function render() {
     return `
     <div class="group">
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
-      <div class="group-scroll"><table class="machine-table" aria-label="${esc(g.title)} machines">
+      <div class="group-scroll"><table class="machine-table${withBackup ? " has-backup" : ""}${state.settings.docker_enabled ? " has-containers" : ""}" aria-label="${esc(g.title)} machines">
+        <colgroup><col class="col-select"><col class="col-machine"><col class="col-type"><col class="col-os">${withBackup ? '<col class="col-backup">' : ""}<col class="col-metric"><col class="col-metric"><col class="col-metric"><col class="col-update"><col class="col-reboot">${state.settings.docker_enabled ? '<col class="col-containers">' : ""}<col class="col-checked"><col class="col-more"></colgroup>
         <thead><tr><th></th><th>Machine</th><th>Type</th><th>OS</th>${withBackup ? "<th>Last backup</th>" : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th>Update</th><th>Reboot</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Checked</th><th>More</th></tr></thead>
         <tbody>${g.rows.map((v, index) => rowHtml(v, withBackup, {
           hasGuests: v.target.kind === "host" && guestIndexes.length > 0,

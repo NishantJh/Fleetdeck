@@ -150,12 +150,14 @@ test("update columns separate security, packages and phased updates with only re
         { name: "firmware", current: "1", available: "2", phased: true },
       ] } }),
       machine("failed", { guest: true, parent: "pve", check: { error: "timeout", packages: [] } }),
+      machine("offline", { guest: true, parent: "pve", target: { status: "stopped", updatable: false, note: "not running" } }),
       machine("current", { guest: true, parent: "pve", check: { reboot_required: false, packages: [] } }),
     ],
   });
   const doc = ui.document;
   const headers = [...doc.querySelectorAll(".machine-table > thead th")].map((el) => el.textContent.trim());
   assert.deepEqual(headers, ["", "Machine", "Type", "OS", "Security", "Package", "Phased", "Update", "Reboot", "Checked", "More"]);
+  assert.equal(doc.querySelectorAll(".machine-table > colgroup > col").length, 11);
   assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Type"]').textContent.trim(), "Node");
   assert.equal(doc.querySelector('[data-machine-row="pve"] .update-action-cell [data-act="upgrade"] span').textContent, "Update");
   assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Reboot"] [data-act="reboot"] span').textContent, "Reboot");
@@ -164,6 +166,10 @@ test("update columns separate security, packages and phased updates with only re
   assert.equal(doc.querySelector('[data-machine-row="phased"] .update-metric.phased').textContent.trim(), "1");
   assert.match(doc.querySelector('[data-machine-row="phased"] .update-action-cell').textContent, /Up to date/);
   assert.equal(doc.querySelector('[data-machine-row="failed"] .update-action-cell [data-act="check"] span').textContent, "Retry");
+  assert.equal(doc.querySelector('[data-machine-row="offline"] [data-label="Updates"]').textContent.trim(), "");
+  assert.match(doc.querySelector('[data-machine-row="offline"] .update-action-cell').textContent, /Not running/);
+  assert.ok(doc.querySelector('[data-machine-row="offline"] .update-action-cell .ui-icon'));
+  assert.equal(doc.querySelector('[data-machine-row="offline"] .update-action-cell .bad'), null);
   assert.equal(doc.querySelector('[data-machine-row="current"] .update-action-cell button'), null);
   assert.match(doc.querySelector('[data-machine-row="current"] .update-action-cell').textContent, /Up to date/);
   assert.doesNotMatch(doc.querySelector("#groups").textContent, /—/);
@@ -182,12 +188,23 @@ test("update columns separate security, packages and phased updates with only re
   assert.deepEqual(ui.errors, []);
 });
 
+test("cluster hierarchy uses the approved compact continuous tree geometry", () => {
+  const css = read("style.css");
+  assert.match(css, /--tree-line: 2px; --guest-indent: 26px; --guest-branch: 18px; --guest-curve: 11px;/);
+  assert.match(css, /tr\.guest\.last-guest \.machine-cell::after \{ bottom: calc\(50% \+ var\(--guest-curve\)\); \}/);
+  assert.match(css, /th\.update-heading, \.dashboard-page td\.update-metric-cell \{ padding-inline: 5px; text-align: left; \}/);
+});
+
 test("optional Docker status is separate, honest about failed checks, and never auto-pulls", async () => {
   const stacks = { docker: "yes", compose: "v2", checked_at: now, stacks: [
     { name: "unreachable", state: "running", error: "registry unavailable", services: [], update_available: true },
   ] };
-  const ui = await dashboard({ docker: true, targets: [machine("docker-vm", { check: { docker_installed: true }, view: { stacks } }), machine("plain", { check: { docker_installed: false } })] });
+  const ui = await dashboard({ docker: true, targets: [machine("docker-vm", { target: { backup: { last: now, storage: "/backup", count: 1, stale: false } }, check: { docker_installed: true }, view: { stacks } }), machine("plain", { check: { docker_installed: false } })] });
   assert.equal(ui.document.querySelector(".view-tabs").hidden, false);
+  const dockerTable = ui.document.querySelector('[data-machine-row="docker-vm"]').closest("table");
+  assert.equal(dockerTable.classList.contains("has-backup"), true);
+  assert.equal(dockerTable.classList.contains("has-containers"), true);
+  assert.equal(dockerTable.querySelectorAll("colgroup > col").length, 13);
   assert.equal(ui.document.querySelectorAll("[data-open-docker]").length, 1);
   ui.click('[data-open-docker="docker-vm"]');
   assert.equal(ui.document.querySelector("#groups").hidden, true);
