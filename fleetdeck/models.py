@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Literal
+from urllib.parse import urlsplit
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 Platform = Literal["proxmox", "incus", "ssh", "demo"]
 Kind = Literal["host", "lxc", "vm", "container"]
@@ -71,6 +72,36 @@ class CheckResult(BaseModel):
     runs_dashboard: bool = False
     # Installed by the Proxmox VE Helper-Scripts (community-scripts): the app's name, e.g. "plex".
     community_script: str | None = None
+    # Discovered without calling the daemon or downloading any images. None: not discovered yet.
+    docker_installed: bool | None = None
+
+
+class DockerSettings(BaseModel):
+    """Per-target Docker policy; OS update permissions are independent."""
+
+    mode: Literal["managed", "monitor", "external", "disabled"] = "managed"
+    manager_name: str = Field("Dockhand", min_length=1, max_length=80)
+    manager_url: str | None = Field(None, max_length=2048)
+
+    @field_validator("manager_name")
+    @classmethod
+    def _manager_name(cls, value: str) -> str:
+        value = value.strip()
+        if not value or any(ord(c) < 32 for c in value):
+            raise ValueError("manager name must be non-empty text")
+        return value
+
+    @field_validator("manager_url")
+    @classmethod
+    def _manager_url(cls, value: str | None) -> str | None:
+        if not value:
+            return None
+        url = urlsplit(value)
+        if url.scheme not in ("http", "https") or not url.hostname or url.username or url.password:
+            raise ValueError("manager URL must be an http(s) address without embedded credentials")
+        if any(ord(c) < 33 for c in value):
+            raise ValueError("manager URL must not contain spaces or control characters")
+        return value
 
 
 class ExecResult(BaseModel):

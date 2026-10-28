@@ -23,7 +23,7 @@ from .console import Console
 from .console_routes import add_console_routes
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
-from .models import CheckResult, Job, JobAction, StacksResult, Target
+from .models import CheckResult, DockerSettings, Job, JobAction, StacksResult, Target
 from .notify import Notifier
 from .onboarding import Paths
 from .providers.proxmox import PROTECTED_NOTE
@@ -50,6 +50,7 @@ class TargetView(BaseModel):
     stacks: StacksResult | None = None
     # Looks like the machine this dashboard runs on: shown with a "dashboard" tag.
     runs_dashboard: bool = False
+    docker_settings: DockerSettings = Field(default_factory=DockerSettings)
 
 
 class ActionRequest(BaseModel):
@@ -75,6 +76,10 @@ class BackupPlaceRequest(BaseModel):
 class HideRequest(BaseModel):
     target_ids: list[str] = Field(max_length=1000)
     hidden: bool = True
+
+
+class DockerSettingsRequest(DockerSettings):
+    target_id: str
 
 
 def _runs_dashboard(target: Target, check: CheckResult | None, hostname: str) -> bool:
@@ -122,6 +127,7 @@ def create_app(
         backup_folder,
         cfg.backup_age_recipient,
         cfg.backup_password,
+        docker_enabled=cfg.docker_enabled,
     )
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
     scheduler = Scheduler(
@@ -130,7 +136,7 @@ def create_app(
         jobs,
         notifier,
         store,
-        cfg.schedule.check_docker,
+        cfg.docker_enabled and cfg.schedule.check_docker,
         cfg.schedule.auto_security_updates,
     )
 
@@ -214,6 +220,7 @@ def create_app(
                 blocked=jobs.update_blocked(t),
                 stacks=jobs.stacks.get(t.id),
                 runs_dashboard=_runs_dashboard(t, check, hostname),
+                docker_settings=jobs.get_docker_settings(t.id),
             )
             for t, _ in inventory.targets.values()
         ]
@@ -225,8 +232,21 @@ def create_app(
             "settings": {
                 "snapshot_before_upgrade": cfg.snapshot_before_upgrade,
                 "community_scripts_update": cfg.community_scripts_update,
+                "docker_enabled": cfg.docker_enabled,
             },
         }
+
+    @app.put("/api/docker-settings")
+    async def set_docker_settings(req: DockerSettingsRequest):
+        await inventory.refresh()
+        try:
+            settings = DockerSettings.model_validate(req.model_dump(exclude={"target_id"}))
+            jobs.set_docker_settings(req.target_id, settings)
+        except KeyError:
+            raise HTTPException(404, "unknown target") from None
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from None
+        return {"docker_settings": settings}
 
     @app.post("/api/actions")
     async def run_action(req: ActionRequest):

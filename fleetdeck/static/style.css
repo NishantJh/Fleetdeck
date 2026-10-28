@@ -423,3 +423,85 @@ button.login-submit.busy .login-spinner { display: inline-block; }
 /* Softer in dark mode, so the panel does not glare next to the dark form. */
 :root[data-theme="dark"] .login-hero { box-shadow: inset 0 0 0 100vmax rgba(5, 8, 20, .22); }
 @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .login-hero { box-shadow: inset 0 0 0 100vmax rgba(5, 8, 20, .22); } }
+
+/* Contextual dashboard: status first, one primary action per machine. */
+a.brand { color: var(--text); text-decoration: none; }
+.dashboard-page .overview-heading { display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px; margin-bottom: 16px; }
+.overview-heading h2 { margin: 0; font-size: 23px; }
+#schedule-status { margin-left: auto; font-size: 12px; }
+.dashboard-page .summary { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 18px; }
+.dashboard-page .stat { padding: 13px 15px; }
+.stat small { font-size: 11px; line-height: 1.5; }
+.view-tabs { display: flex; gap: 5px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.view-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; box-shadow: none; padding: 10px 13px; color: var(--muted); }
+.view-tabs button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: transparent; }
+.dashboard-menu { position: relative; }
+.dashboard-menu > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; min-width: 35px; padding: 5px 10px; font-size: 20px; line-height: 22px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); cursor: pointer; background: var(--panel); }
+.dashboard-menu > summary::-webkit-details-marker { display: none; }
+.dashboard-menu-items { position: absolute; right: 0; top: calc(100% + 7px); z-index: 10; display: grid; min-width: 240px; max-width: calc(100vw - 24px); padding: 5px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); background: var(--panel); box-shadow: var(--shadow); }
+.dashboard-menu-items > button, .dashboard-menu-items > a { justify-content: flex-start; border: 0; box-shadow: none; text-align: left; white-space: normal; }
+.bulk-toolbar, .containers-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-bottom: 14px; }
+.bulk-toolbar { background: var(--accent-soft); padding: 10px 13px; border: 1px solid var(--accent); border-radius: var(--radius-sm); }
+.bulk-toolbar > span, .containers-toolbar > span { margin-right: auto; }
+.cell-detail { font-size: 11px; font-weight: 400; line-height: 1.5; margin-top: 3px; white-space: normal; overflow-wrap: anywhere; }
+.dashboard-page td.name { min-width: 160px; }
+.dashboard-page tr.guest td.name { padding-left: 24px; }
+.dashboard-page td.actions { min-width: 138px; }
+.dashboard-page .more-actions { font-size: 21px; line-height: 20px; min-width: 30px; padding: 3px 6px; }
+.docker-status-link { display: inline-flex; align-items: center; font: inherit; font-weight: 550; font-size: 12px; text-align: left; white-space: normal; color: var(--accent); background: none; border: 0; border-radius: 4px; box-shadow: none; padding: 0; text-decoration: none; }
+.docker-status-link:hover:not(:disabled) { background: transparent; text-decoration: underline; border: 0; }
+.docker-status-link.ok { color: var(--ok); } .docker-status-link.warn { color: var(--warn); } .docker-status-link.bad { color: var(--bad); }
+.docker-host .host-mode { margin-left: auto; font-weight: 400; font-size: 12px; }
+.docker-host > p { margin: 12px 18px; }
+.docker-host .docker-check-note { margin: 6px 18px 13px; font-size: 12px; }
+.docker-host .docker-head { padding: 12px 18px 4px; }
+.docker-host .docker-head label { white-space: normal; font-size: 12px; }
+.docker-host { scroll-margin-top: 80px; }
+.docker-host .cell-detail { max-width: 440px; }
+.docker-host td { overflow-wrap: anywhere; }
+.context-actions { position: fixed; z-index: 20; min-width: 220px; max-width: calc(100vw - 16px); padding: 5px; background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
+.context-actions > button { display: flex; width: 100%; text-align: left; justify-content: flex-start; white-space: normal; background: transparent; border: 0; box-shadow: none; }
+.menu-caption { padding: 7px 12px; border-bottom: 1px solid var(--border); margin-bottom: 4px; font-size: 12px; }
+#docker-settings-dialog .dlg-field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; }
+#docker-settings-dialog input, #docker-settings-dialog select { width: 100%; }
+.discovery-note { font-size: 12px; }
+.dashboard-page .group-head { padding: 11px 16px; }
+@media (max-width: 900px) {
+  .dashboard-page .group tr:not(.pkgs) { grid-template-columns: 22px minmax(0, 1fr) auto; gap: 5px 9px; padding: 13px; }
+  .dashboard-page .group tr:not(.pkgs) > td:first-child { grid-column: 1; grid-row: 1; }
+  .dashboard-page .group tr:not(.pkgs) > td.name { grid-column: 2; grid-row: 1; padding-left: 0; min-width: 0; font-size: 14px; }
+  .dashboard-page .group tr:not(.pkgs) > td.actions { grid-column: 3; grid-row: 1; display: flex; justify-content: flex-end; margin: 0; gap: 4px; }
+  .dashboard-page .group td.actions button { flex: none; padding: 5px 8px; }
+  .dashboard-page .group td[data-label] { grid-column: 2 / -1; }
+  .dashboard-page .group td[data-label]::before { min-width: 88px; }
+  .dashboard-page .group .cell-detail { max-width: 100%; }
+  .dashboard-page .docker-host .group-head { flex-wrap: wrap; }
+  .dashboard-page .docker-host tr:not(.pkgs) > td.name { grid-column: 1 / 3; }
+  .dashboard-page .docker-host tr:not(.pkgs) > td.actions { grid-column: 3; }
+  .dashboard-page .docker-host td[data-label] { grid-column: 1 / -1; }
+}
+@media (max-width: 520px) {
+  .dashboard-page > header { flex-wrap: wrap; padding: 10px; gap: 8px; }
+  .dashboard-page .toolbar { width: auto; flex-wrap: wrap; gap: 5px; margin-left: auto; }
+  .dashboard-page .toolbar > * { flex: none; }
+  .dashboard-page .toolbar > button { padding: 7px 8px; font-size: 12px; }
+  .dashboard-page header h1 { font-size: 15px; }
+  .dashboard-page .brand { gap: 7px; }
+  .dashboard-page .logo { width: 28px; height: 28px; }
+  .dashboard-page .summary { gap: 7px; }
+  .dashboard-page .stat { padding: 11px 9px; }
+  .dashboard-page .stat span { font-size: 11px; }
+  .dashboard-page .stat b { font-size: 23px; }
+  .dashboard-page .summary { grid-template-columns: 1fr; }
+  #schedule-status { width: 100%; margin: 0; }
+  .dashboard-page .group tr:not(.pkgs) { column-gap: 6px; padding: 12px 9px; }
+  .dashboard-page td.actions { min-width: 0; }
+  .dashboard-page .group td.actions button { padding: 5px 6px; font-size: 11px; }
+  .dashboard-menu-items { position: fixed; top: 57px; right: 10px; }
+  .dashboard-page .toolbar .icon { padding: 7px 5px; }
+  .dashboard-page .toolbar .icon svg { width: 15px; height: 15px; }
+  #docker-settings-dialog input, #docker-settings-dialog select { font-size: 16px; }
+}
+@media (pointer: coarse) {
+  .dashboard-page .more-actions, .dashboard-menu summary, .context-actions > button, .dashboard-page .docker-status-link { min-height: 44px; }
+}

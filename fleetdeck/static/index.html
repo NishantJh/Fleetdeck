@@ -4,21 +4,25 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fleetdeck</title>
-  <link rel="stylesheet" href="/static/style.css?v=11">
-  <script src="/static/theme.js?v=9"></script>
+  <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css?v=12">
+  <script src="/static/theme.js?v=10"></script>
 </head>
-<body>
+<body class="dashboard-page">
   <header>
     <h1>Fleetdeck</h1>
     <div class="toolbar">
-      <a class="button" href="/setup" title="Add or remove machines, edit the config">+ Add machines</a>
-      <button id="backup" title="Download or restore an encrypted backup of the config, keys and history">Backup</button>
-      <button id="refresh" title="Re-discover hosts and guests">Refresh inventory</button>
-      <button id="show-hidden" hidden title="Show or hide the machines you hid">Show hidden</button>
-      <button id="test-notify" hidden title="Send a test message to every notify target">Test notification</button>
-      <button id="check-all">Check all</button>
-      <button id="check-docker" title="Look for newer Docker images on every machine with Docker. This downloads them.">Check all Docker</button>
-      <button id="update-selected" class="primary" disabled>Update selected</button>
+      <button id="check-all">Check OS updates</button>
+      <details class="dashboard-menu" id="dashboard-menu">
+        <summary class="button" aria-label="Dashboard actions">⋯</summary>
+        <div class="dashboard-menu-items">
+          <a class="button ghost" href="/setup">Add machines / settings</a>
+          <button id="refresh" class="ghost">Refresh inventory</button>
+          <button id="show-hidden" class="ghost" hidden>Show hidden</button>
+          <button id="backup" class="ghost">Back up / restore Fleetdeck</button>
+          <button id="test-notify" class="ghost" hidden>Test notification</button>
+        </div>
+      </details>
     </div>
   </header>
 
@@ -51,8 +55,15 @@
 
   <main>
     <div id="errors"></div>
+    <div class="overview-heading"><h2>Overview</h2><span id="overview-count" class="muted"></span><span id="schedule-status" class="muted"></span></div>
     <section id="summary" class="summary"></section>
+    <nav class="view-tabs" aria-label="Infrastructure views" hidden>
+      <button id="view-machines" data-view="machines" aria-pressed="true">Machines</button>
+      <button id="view-containers" data-view="containers" aria-pressed="false">Containers <span id="docker-host-count" class="chip">0</span></button>
+    </nav>
+    <div class="bulk-toolbar" id="bulk-toolbar" hidden><span id="selection-count" role="status"></span><button id="clear-selected" class="small">Clear</button><button id="update-selected" class="small primary" disabled>Update selected OS</button></div>
     <section id="groups"><div class="loading" role="status"><span class="spin"></span> Loading machines…</div></section>
+    <section id="containers" hidden aria-label="Docker hosts and container updates"></section>
 
     <section class="activity">
       <div class="log-head">
@@ -85,6 +96,29 @@
       </a>
     </div>
   </footer>
+
+  <div id="machine-actions" class="context-actions" role="group" aria-label="Machine actions" hidden></div>
+
+  <dialog id="docker-settings-dialog" aria-labelledby="docker-settings-title">
+    <form id="docker-settings-form">
+      <h3 id="docker-settings-title">Docker management</h3>
+      <label class="dlg-field">Management mode
+        <select id="docker-mode">
+          <option value="managed">Managed by Fleetdeck</option>
+          <option value="monitor">Monitor only (no stack deployments)</option>
+          <option value="external">Managed externally</option>
+          <option value="disabled">Disabled</option>
+        </select>
+      </label>
+      <p class="muted">OS updates are independent. Image checks currently download newer images; they never restart containers. Disabled and externally managed hosts are excluded from Docker checks.</p>
+      <div id="docker-external-fields" hidden>
+        <label class="dlg-field">Manager name <input id="docker-manager-name" maxlength="80" placeholder="Dockhand"></label>
+        <label class="dlg-field">Manager URL (optional) <input id="docker-manager-url" type="url" maxlength="2048" placeholder="https://dockhand.example"></label>
+      </div>
+      <p id="docker-settings-error" class="bad" role="alert"></p>
+      <menu><button type="button" id="docker-settings-close">Cancel</button><button type="submit" id="docker-settings-save" class="primary">Save</button></menu>
+    </form>
+  </dialog>
 
   <dialog id="confirm">
     <form method="dialog">
@@ -144,7 +178,7 @@
     </menu>
   </dialog>
 
-  <script src="/static/app.js?v=12"></script>
+  <script src="/static/app.js?v=13"></script>
   <script src="/static/console.js?v=2"></script>
 </body>
 </html>

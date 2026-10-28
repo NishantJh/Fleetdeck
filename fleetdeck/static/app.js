@@ -1,14 +1,13 @@
 "use strict";
 
-const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), docker: new Set(), logJob: null, logLines: [], showHidden: false };
+const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), logJob: null, logLines: [], showHidden: false, view: "machines" };
 const $ = (sel) => document.querySelector(sel);
+const renderedHTML = new WeakMap();
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const PLATFORM = { proxmox: "Proxmox", incus: "Incus", ssh: "Standalone", demo: "Demo" };
 const KIND = { host: "host", lxc: "LXC", vm: "VM", container: "container" };
 // Status dot: Proxmox says online/offline for nodes, running/stopped for guests; anything else is grey.
 const DOT = { running: "on", online: "on", stopped: "off", offline: "off" };
-// Short state words keep the State column on one line; the full word is the tooltip.
-const SHORT = { running: "up", online: "up", stopped: "off", offline: "down" };
 
 // Per-browser conveniences only; the hidden machines themselves are kept on the server.
 const remember = {
@@ -16,6 +15,7 @@ const remember = {
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private window */ } },
 };
 state.showHidden = !!remember.get("showHidden");
+state.view = remember.get("dashboardView") === "containers" ? "containers" : "machines";
 // Hidden machines stay out of the counts, Check all and Update selected, even while shown.
 const active = () => state.targets.filter((v) => !v.hidden);
 
@@ -50,10 +50,10 @@ function every(seconds) {
 
 function scheduleStat() {
   const sc = state.schedule;
-  if (!sc?.check_every) return `<div class="stat" title="Set schedule.check_every in config.yaml"><b>off</b><span class="muted">auto-check</span></div>`;
+  if (!sc?.check_every) return "Automatic checks off";
   const next = sc.next_run ? until(sc.next_run) : "running now";
   const notify = sc.notify_targets ? `notifies ${sc.notify_targets} target${sc.notify_targets > 1 ? "s" : ""}` : "no notifications set up";
-  return `<div class="stat" title="Every ${every(sc.check_every)}; ${notify}"><b>${next}</b><span class="muted">next auto-check</span></div>`;
+  return `<span title="Every ${every(sc.check_every)}; ${notify}">Next check ${next}</span>`;
 }
 
 function groupKey(t) {
@@ -68,8 +68,10 @@ function groups() {
     if (!map.has(k)) map.set(k, { key: k, platform: v.target.platform, title: v.target.platform === "ssh" ? "Standalone hosts" : v.target.parent || v.target.name, rows: [] });
     map.get(k).rows.push(v);
   }
-  for (const g of map.values()) g.rows.sort((a, b) => (a.target.kind === "host" ? -1 : b.target.kind === "host" ? 1 : a.target.name.localeCompare(b.target.name)));
-  return [...map.values()];
+  const compare = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+  for (const g of map.values()) g.rows.sort((a, b) => Number(b.target.kind === "host") - Number(a.target.kind === "host") || compare(a.target.name, b.target.name) || compare(a.target.id, b.target.id));
+  const order = { proxmox: 0, incus: 1, ssh: 2, demo: 3 };
+  return [...map.values()].sort((a, b) => (order[a.platform] ?? 4) - (order[b.platform] ?? 4) || compare(a.title, b.title) || compare(a.key, b.key));
 }
 
 const canUpgrade = (t) => t.updatable && !t.check_only;
@@ -118,37 +120,63 @@ function csTip(app) {
     : `Its own update is turned off (community_scripts_update), so after an OS update run "update" inside it if ${app} misbehaves.`);
 }
 
-const dockerBehind = (v) => (v.stacks?.stacks || []).filter((s) => s.update_available && s.state !== "stopped" && !s.is_dashboard).length;
+const dockerSettings = (v) => v.docker_settings || { mode: "managed", manager_name: "Dockhand", manager_url: null };
+const dockerEnabled = (v) => !!state.settings.docker_enabled && ["managed", "monitor"].includes(dockerSettings(v).mode);
+const hasDocker = (v) => !!state.settings.docker_enabled && (v.check?.docker_installed === true || (v.stacks && v.stacks.docker !== "none") || dockerSettings(v).mode !== "managed");
+const dockerHosts = () => active().filter(hasDocker).sort((a, b) => a.target.name.localeCompare(b.target.name, undefined, { numeric: true }) || a.target.id.localeCompare(b.target.id));
+const dockerBehind = (v) => dockerEnabled(v) ? (v.stacks?.stacks || []).filter((s) => !s.error && s.update_available && s.state !== "stopped").length : 0;
+const dockerErrors = (v) => !dockerEnabled(v) ? 0 : v.stacks?.error && v.stacks.docker !== "none" ? 1 : (v.stacks?.stacks || []).filter((s) => s.error).length;
+function managerLink(v, label) {
+  const url = dockerSettings(v).manager_url;
+  // Treat stored values as untrusted too; never turn a javascript: URL into a link.
+  try { if (url && ["http:", "https:"].includes(new URL(url).protocol)) return `<a class="docker-status-link" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(label)} ↗</a>`; } catch { /* invalid old setting */ }
+  return `<button class="docker-status-link" data-docker-settings="${esc(v.target.id)}">${esc(label)}</button>`;
+}
+
+function dockerCell(v) {
+  if (!hasDocker(v)) return `<span class="muted" title="${v.check?.docker_installed === false ? "Docker is not installed" : "Docker capability is discovered during OS checks"}">—</span>`;
+  const policy = dockerSettings(v);
+  if (policy.mode === "disabled") return `<span class="muted">disabled</span>`;
+  if (policy.mode === "external") return managerLink(v, `Managed by ${policy.manager_name}`);
+  const r = v.stacks;
+  let label = "Not checked", cls = "muted";
+  if (v.active_job?.action === "stacks") label = "Fetching image updates…";
+  else if (r?.error) { label = r.docker === "none" ? "Not installed" : "Check failed"; cls = r.docker === "none" ? "muted" : "bad"; }
+  else if (r) { const n = dockerBehind(v); label = n ? `${n} stack update${n === 1 ? "" : "s"}` : dockerErrors(v) ? "Status unknown" : "Up to date"; cls = n ? "warn" : dockerErrors(v) ? "bad" : "ok"; }
+  return `<button class="docker-status-link ${cls}" data-open-docker="${esc(v.target.id)}" data-focus-key="docker:${esc(v.target.id)}">${label} →</button>${dockerErrors(v) ? `<div class="cell-detail bad">${dockerErrors(v)} check failure(s)</div>` : ""}${r ? `<div class="cell-detail muted">${ago(r.checked_at)}</div>` : ""}`;
+}
 
 function stackPanel(v) {
   const id = esc(v.target.id), r = v.stacks, busy = !!v.active_job;
+  const policy = dockerSettings(v), managed = policy.mode === "managed";
   const prune = !!remember.get("pruneImages");
   let body;
-  if (!r) body = `<p class="muted">Not checked yet.</p>`;
+  if (policy.mode === "disabled") body = `<p class="muted">Docker checks and deployments are disabled. OS updates remain independent.</p>`;
+  else if (policy.mode === "external") body = `<p class="muted">Docker checks and deployments are handled by ${esc(policy.manager_name)}. Fleetdeck continues to manage OS updates.</p><p>${managerLink(v, `Open ${policy.manager_name}`)}</p>`;
+  else if (!r) body = `<p class="muted">Image updates have not been checked. Fetch image updates to download newer images and compare them with the running containers. Nothing is restarted.</p>`;
   else if (r.error) body = `<p class="${r.docker === "none" ? "muted" : "bad"}">${esc(r.error)}</p>`;
   else if (!r.stacks.length) body = `<p class="muted">No Docker Compose stacks found on this machine.</p>`;
   else {
     const rows = r.stacks.map((s) => {
       const behind = s.services.filter((x) => x.outdated && s.state !== "stopped").map((x) => x.name);
       let status;
-      if (s.error) status = `<span class="bad" title="${esc(s.error)}">could not fetch images</span>`;
+      if (s.error) status = `<span class="bad" title="${esc(s.error)}">unknown · check failed</span><div class="cell-detail">${esc(s.error)}</div>`;
       else if (s.state === "stopped") status = `<span class="muted">stopped</span>`;
       else if (behind.length) status = `<span class="warn" title="${esc(behind.join(", "))}">update available</span>`;
       else status = `<span class="ok">up to date</span>`;
       const up = s.state === "partial" ? ` <span class="chip warn" title="Services that are stopped stay stopped">partly running</span>` : "";
       const self = s.is_dashboard ? ` <span class="chip" title="This dashboard runs in this stack. Updating it would stop the update itself: run docker compose pull && docker compose up -d in a terminal.">dashboard</span>` : "";
-      const can = !busy && s.state !== "stopped" && !s.is_dashboard && r.compose !== "none";
-      const btn = `<button class="small ${behind.length && can ? "primary" : ""}" data-stack="${esc(s.name)}" data-id="${id}" ${can ? "" : "disabled"}>Update</button>`;
-      return `<tr><td>${esc(s.name)}${self}${up}</td><td class="muted">${s.services.map((x) => esc(x.name)).join(", ")}</td><td>${status}</td><td>${btn}</td></tr>`;
+      const can = managed && canUpgrade(v.target) && !v.blocked && !busy && !s.error && s.state !== "stopped" && !s.is_dashboard && r.compose !== "none";
+      const btn = managed && behind.length && !s.is_dashboard ? `<button class="small primary" data-stack="${esc(s.name)}" data-id="${id}" ${can ? "" : "disabled"} title="${esc(v.blocked || s.error || "Download images and recreate running services")}">Update stack</button>` : s.is_dashboard ? `<span class="muted">update externally</span>` : "";
+      return `<tr><td class="name">${esc(s.name)}${self}${up}</td><td class="muted" data-label="Services">${s.services.map((x) => esc(x.name)).join(", ")}</td><td data-label="Image status">${status}</td><td class="actions">${btn}</td></tr>`;
     }).join("");
-    body = `<table>${rows}</table>`;
+    body = `<div class="group-scroll"><table><thead><tr><th>Stack</th><th>Services</th><th>Image status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
-  return `<tr class="pkgs"><td></td><td colspan="8">
-    <div class="docker-head"><b>Docker Compose stacks</b>
-      <span class="muted">${r ? `checked ${ago(r.checked_at)}` : ""}</span>
-      <button class="small" data-act="stacks" data-id="${id}" ${busy ? "disabled" : ""} title="Downloads newer images for every running stack. Nothing is restarted, but a later docker compose up on this machine will use them.">Check for new images</button>
-      <label class="muted" title="Runs docker image prune: removes all unused, untagged images on this machine, not only this stack's"><input type="checkbox" data-prune ${prune ? "checked" : ""}> remove old images after an update (all unused ones on this machine)</label></div>
-    ${body}</td></tr>`;
+  return `<div class="group docker-host" id="docker-${id}"><div class="group-head"><span class="chip">Docker</span>${esc(v.target.name)}<span class="host-mode muted">${esc({ managed: "Managed by Fleetdeck", monitor: "Monitor only", external: `Managed by ${policy.manager_name}`, disabled: "Disabled" }[policy.mode])}</span><button class="small" data-docker-settings="${id}">Settings</button></div>
+    ${dockerEnabled(v) ? `<div class="docker-head"><span class="muted">${r ? `Checked ${ago(r.checked_at)}` : "Not checked"}</span>
+      <button class="small" data-act="stacks" data-id="${id}" ${!busy && canUpgrade(v.target) ? "" : "disabled"}>Fetch image updates…</button>
+      ${managed ? `<label class="muted" title="Runs docker image prune: removes all unused, untagged images on this machine, not only this stack's"><input type="checkbox" data-prune ${prune ? "checked" : ""}> remove unused, untagged images after updating</label>` : `<span class="chip">Stack deployments disabled</span>`}</div><p class="docker-check-note muted">Fetching downloads images. Updating a stack recreates its running services; OS packages are separate.</p>` : ""}
+    ${body}</div>`;
 }
 
 function rowHtml(v, withBackup) {
@@ -163,33 +191,33 @@ function rowHtml(v, withBackup) {
   const cs = c?.community_script
     ? ` <span class="chip" title="${esc(csTip(c.community_script))}">helper script</span>` : "";
   let html = `<tr class="${t.kind === "host" ? "host" : "guest"}${v.hidden ? " is-hidden" : ""}">
-    <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) ? "" : "disabled"}></td>
-    <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${self}${cs}${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
-    <td class="muted os" data-label="OS">${esc(c?.os || "")}</td>
-    <td data-label="State"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span>${esc(SHORT[t.status] || t.status)}</span></td>
+    <td><input type="checkbox" aria-label="Select ${esc(t.name)}" data-select="${esc(t.id)}" data-focus-key="select:${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) ? "" : "disabled"}></td>
+    <td class="name"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span>${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${self}${cs}<div class="cell-detail muted">${esc(c?.os || t.status)}</div>${t.updatable && t.note ? `<div class="cell-detail muted">${esc(t.note)}</div>` : ""}</td>
     ${withBackup ? `<td data-label="Last backup">${backupCell(t)}</td>` : ""}
-    <td data-label="Updates">${updatesCell(v)} ${reboot}${notes}</td>
-    <td class="muted" data-label="Checked">${c ? ago(c.checked_at) : ""}</td>
+    <td data-label="OS updates">${updatesCell(v)} ${reboot}${notes}<div class="cell-detail muted">${c ? ago(c.checked_at) : ""}</div></td>
+    ${state.settings.docker_enabled ? `<td data-label="Containers">${dockerCell(v)}</td>` : ""}
     <td class="actions">
-      <button class="small" data-act="check" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Check</button>
-      <button class="small ${pending && !t.check_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy && !v.blocked ? "" : "disabled"} title="${t.check_only ? esc(t.note) : esc(v.blocked || "")}">Update</button>
-      <button class="small" data-act="reboot" data-id="${esc(t.id)}" ${canReboot(t) && !busy && !v.blocked ? "" : "disabled"} title="${esc(t.no_reboot || (t.check_only ? t.note : "") || v.blocked || "")}">Reboot</button>
-      ${canUpgrade(t) ? `<button class="small ${dockerBehind(v) ? "primary" : ""}" data-act="docker" data-id="${esc(t.id)}" title="Docker Compose stacks on this machine">Docker${dockerBehind(v) ? ` (${dockerBehind(v)} ↑)` : ""}</button>` : ""}
-      ${t.can_backup ? `<button class="small" data-act="backup" data-id="${esc(t.id)}" ${busy ? "disabled" : ""} title="Back up this machine">Back up</button>` : ""}
-      ${state.console?.enabled && t.status !== "stopped" && t.status !== "offline" ? `<button class="small" data-run="${esc(t.id)}" title="Run a command on this machine">Run command…</button>` : ""}
-      <button class="small ghost" data-hide="${v.hidden ? "0" : "1"}" data-id="${esc(t.id)}" title="${v.hidden ? "Show this machine on the dashboard again" : "Hide from the dashboard, Check all and scheduled checks"}">${v.hidden ? "Unhide" : "Hide"}</button>
+      ${pending && canUpgrade(t) ? `<button class="small primary" data-act="upgrade" data-id="${esc(t.id)}" data-focus-key="upgrade:${esc(t.id)}" ${!busy && !v.blocked ? "" : "disabled"} title="${esc(v.blocked || "Update OS packages")}">Update OS</button>` : ""}
+      <button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="Actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button>
     </td></tr>`;
   if (pending && state.expanded.has(t.id)) {
     // Security updates first, so they stand out in a long list.
     const pkgs = [...c.packages].sort((a, b) => b.security - a.security);
     const rows = pkgs.map((p) => `<tr><td>${esc(p.name)}${p.security ? ` <span class="chip sec">security</span>` : ""}</td><td>${esc(p.current || "")}</td><td>→ ${esc(p.available)}</td></tr>`).join("");
-    html += `<tr class="pkgs"><td></td><td colspan="${withBackup ? 7 : 6}"><table>${rows}</table></td></tr>`;
+    html += `<tr class="pkgs"><td></td><td colspan="${3 + Number(!!withBackup) + Number(!!state.settings.docker_enabled)}"><table>${rows}</table></td></tr>`;
   }
-  if (state.docker.has(t.id) && canUpgrade(t)) html += stackPanel(v);
   return html;
 }
 
 function render() {
+  if (!state.settings.docker_enabled) state.view = "machines";
+  const focused = document.activeElement?.dataset?.focusKey;
+  // Avoid replacing live controls on every poll when their rendered data did not change.
+  const html = (selector, content) => {
+    const el = $(selector);
+    // Compare our templates, not serialized DOM (browsers normalize boolean attributes, etc.).
+    if (renderedHTML.get(el) !== content) { el.innerHTML = content; renderedHTML.set(el, content); }
+  };
   $("#errors").innerHTML = Object.entries(state.errors)
     .map(([p, e]) => `<div class="error-banner"><b>${esc(p)}</b>: ${esc(e)}</div>`).join("");
 
@@ -202,14 +230,19 @@ function render() {
   // Leave out guests whose backups couldn't be read (a note but no date): unknown isn't "fine".
   const withBackups = active().filter((v) => v.target.backup && (v.target.backup.last || !v.target.backup.note));
   const staleBackups = withBackups.filter((v) => v.target.backup.stale || v.target.backup.verified === false).length;
-  $("#summary").innerHTML = `
-    <div class="stat"><b>${updatable.length}</b><span class="muted">machines</span></div>
-    <div class="stat"><b class="${pending.length ? "warn" : "ok"}">${pending.length}</b><span class="muted">need updates (${pkgCount} packages)</span></div>
-    <div class="stat"><b class="${secMachines ? "bad" : ""}">${secMachines}</b><span class="muted">have security updates</span></div>
-    <div class="stat"><b class="${reboot ? "warn" : ""}">${reboot}</b><span class="muted">need a reboot</span></div>
-    <div class="stat"><b>${unchecked}</b><span class="muted">not checked yet</span></div>
-    ${withBackups.length ? `<div class="stat"><b class="${staleBackups ? "warn" : "ok"}">${staleBackups}</b><span class="muted">machines with old or no backups</span></div>` : ""}
-    ${scheduleStat()}`;
+  const hosts = dockerHosts();
+  const images = hosts.reduce((n, v) => n + dockerBehind(v), 0);
+  const imageErrors = hosts.reduce((n, v) => n + dockerErrors(v), 0);
+  const imageUnchecked = hosts.filter((v) => dockerEnabled(v) && !v.stacks).length;
+  const osErrors = updatable.filter((v) => v.check?.error).length;
+  html("#summary", `
+    <div class="stat"><b class="${pending.length ? "warn" : "ok"}">${pending.length}</b><span>machines need OS updates</span><small class="muted">${pkgCount} packages available</small></div>
+    <div class="stat"><b class="${secMachines ? "bad" : ""}">${secMachines}</b><span>machines with security updates</span><small class="${osErrors ? "bad" : "muted"}">${osErrors} failed OS checks · ${unchecked} unchecked</small></div>
+    ${state.settings.docker_enabled
+      ? `<div class="stat"><b class="${images ? "warn" : imageErrors ? "bad" : ""}">${images}</b><span>stacks have image updates</span><small class="muted">${imageErrors ? `${imageErrors} check failure(s) · ` : ""}${imageUnchecked ? `${imageUnchecked} host(s) not checked` : `${hosts.filter(dockerEnabled).length} Docker host(s) monitored`} · ${reboot} need reboot</small></div>`
+      : `<div class="stat"><b class="${reboot ? "warn" : "ok"}">${reboot}</b><span>machines need a reboot</span><small class="${staleBackups ? "warn" : "muted"}">${withBackups.length ? `${staleBackups} old / missing backups` : "Backup status shown per machine"}</small></div>`}`);
+  $("#overview-count").textContent = `${active().length} machines`;
+  $("#schedule-status").innerHTML = scheduleStat();
   $("#test-notify").hidden = !state.schedule?.notify_targets;
 
   const hiddenCount = state.targets.length - active().length;
@@ -217,21 +250,31 @@ function render() {
   toggle.hidden = hiddenCount === 0;
   toggle.textContent = `Show hidden (${hiddenCount})`;
   toggle.setAttribute("aria-pressed", String(state.showHidden));
-  $("#groups").innerHTML = groups().map((g) => {
+  html("#groups", groups().map((g) => {
     const withBackup = g.rows.some((v) => v.target.backup);
     return `
     <div class="group">
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
       <div class="group-scroll"><table>
-        <thead><tr><th></th><th>Name</th><th>OS</th><th>State</th>${withBackup ? "<th>Last backup</th>" : ""}<th>Updates</th><th>Checked</th><th></th></tr></thead>
+        <thead><tr><th></th><th>Machine</th>${withBackup ? "<th>Last backup</th>" : ""}<th>OS updates</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th></th></tr></thead>
         <tbody>${g.rows.map((v) => rowHtml(v, withBackup)).join("")}</tbody>
       </table></div>
     </div>`;
-  }).join("") || `<div class="empty"><h3>No machines yet</h3><p class="muted">Add a Proxmox node, an Incus server or any Linux host, and it shows up here with its updates, backups and state.</p><a class="button primary" href="/setup">Add machines</a></div>`;
+  }).join("") || `<div class="empty"><h3>No machines yet</h3><p class="muted">Add a Proxmox node, an Incus server or any Linux host, and it shows up here with its updates, backups and state.</p><a class="button primary" href="/setup">Add machines</a></div>`);
+  const unknown = active().filter((v) => v.target.updatable && v.check?.docker_installed == null && !v.stacks).length;
+  html("#containers", state.settings.docker_enabled ? `${hosts.some((v) => dockerEnabled(v) && canUpgrade(v.target)) ? `<div class="containers-toolbar"><span class="muted">OS packages and container deployments are managed separately.</span><button class="small" data-fetch-docker>Fetch image updates…</button></div>` : ""}${hosts.map(stackPanel).join("") || `<div class="empty"><h3>No Docker hosts discovered</h3><p class="muted">OS update checks also detect Docker without downloading images.</p></div>`}${unknown ? `<p class="muted discovery-note">Docker capability is not known on ${unknown} machine(s). <button class="small" data-discover-docker>Check OS updates to discover hosts</button></p>` : ""}` : "");
+  $(".view-tabs").hidden = !state.settings.docker_enabled;
+  $("#groups").hidden = state.view !== "machines";
+  $("#containers").hidden = state.view !== "containers";
+  $("#docker-host-count").textContent = hosts.length;
+  document.querySelectorAll("[data-view]").forEach((el) => el.setAttribute("aria-pressed", String(el.dataset.view === state.view)));
 
   const btn = $("#update-selected");
   btn.disabled = state.selected.size === 0;
-  btn.textContent = state.selected.size ? `Update selected (${state.selected.size})` : "Update selected";
+  btn.textContent = `Update selected OS (${state.selected.size})`;
+  $("#bulk-toolbar").hidden = state.selected.size === 0 || state.view !== "machines";
+  $("#selection-count").textContent = `${state.selected.size} machines selected`;
+  document.querySelectorAll("[data-machine-menu]").forEach((el) => el.setAttribute("aria-expanded", String(el.dataset.machineMenu === machineMenuId)));
 
   $("#jobs").innerHTML = state.jobs.map((j) => {
     const cls = j.status === "failed" ? "bad" : j.status === "succeeded" ? "ok" : "";
@@ -239,6 +282,75 @@ function render() {
     return `<li data-job="${j.id}" class="${state.logJob === j.id ? "sel" : ""}">
       <span>${icon} ${esc(j.target_name)} · ${j.action}</span><span class="${cls}">${j.status}</span></li>`;
   }).join("") || `<li class="muted">No jobs yet. Checks, updates, reboots and backups you start show up here.</li>`;
+  if (focused && document.activeElement === document.body) {
+    [...document.querySelectorAll("[data-focus-key]")].find((el) => el.dataset.focusKey === focused)?.focus({ preventScroll: true });
+  }
+}
+
+function setView(view, hostId = null) {
+  state.view = state.settings.docker_enabled && view === "containers" ? "containers" : "machines";
+  remember.set("dashboardView", state.view);
+  closeMachineMenu();
+  render();
+  if (hostId) document.getElementById(`docker-${hostId}`)?.scrollIntoView({ block: "start" });
+}
+
+let machineMenuId = null;
+function closeMachineMenu(restoreFocus = false) {
+  $("#machine-actions").hidden = true;
+  if (machineMenuId) {
+    const trigger = [...document.querySelectorAll("[data-machine-menu]")].find((el) => el.dataset.machineMenu === machineMenuId);
+    trigger?.setAttribute("aria-expanded", "false");
+    if (restoreFocus) trigger?.focus();
+  }
+  machineMenuId = null;
+}
+
+function openMachineMenu(id, trigger) {
+  const open = machineMenuId === id;
+  closeMachineMenu();
+  if (open) return;
+  const v = state.targets.find((item) => item.target.id === id);
+  if (!v) return;
+  const t = v.target, busy = !!v.active_job;
+  const action = (kind, label, enabled, reason = "") => `<button data-act="${kind}" data-id="${esc(id)}" ${enabled ? "" : "disabled"} title="${esc(reason)}">${label}</button>`;
+  const menu = $("#machine-actions");
+  menu.innerHTML = `<div class="muted menu-caption">${esc(t.name)}</div>` +
+    action("check", "Check OS updates", t.updatable && !busy) +
+    action("reboot", "Reboot…", canReboot(t) && !busy && !v.blocked, t.no_reboot || v.blocked || t.note) +
+    (t.can_backup ? action("backup", "Back up configuration…", !busy) : "") +
+    (hasDocker(v) ? `<button data-docker-settings="${esc(id)}">Docker management…</button>` : "") +
+    (state.console?.enabled && !["stopped", "offline"].includes(t.status) ? `<button data-run="${esc(id)}">Run command…</button>` : "") +
+    `<button data-hide="${v.hidden ? "0" : "1"}" data-id="${esc(id)}">${v.hidden ? "Unhide machine" : "Hide machine"}</button>`;
+  machineMenuId = id;
+  trigger.setAttribute("aria-expanded", "true");
+  menu.hidden = false;
+  const rect = trigger.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(rect.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.max(8, rect.bottom + menu.offsetHeight < innerHeight ? rect.bottom + 6 : rect.top - menu.offsetHeight - 6)}px`;
+  menu.querySelector("button:not(:disabled)")?.focus();
+}
+
+function dockerModeFields() {
+  const external = $("#docker-mode").value === "external";
+  $("#docker-external-fields").hidden = !external;
+  $("#docker-manager-url").disabled = !external;
+  $("#docker-manager-name").disabled = !external;
+}
+
+function openDockerSettings(id) {
+  const v = state.targets.find((item) => item.target.id === id);
+  if (!v) return;
+  closeMachineMenu();
+  const policy = dockerSettings(v), dlg = $("#docker-settings-dialog");
+  dlg.dataset.targetId = id;
+  $("#docker-settings-title").textContent = `Docker management · ${v.target.name}`;
+  $("#docker-mode").value = policy.mode;
+  $("#docker-manager-name").value = policy.manager_name;
+  $("#docker-manager-url").value = policy.manager_url || "";
+  $("#docker-settings-error").textContent = "";
+  dockerModeFields();
+  dlg.showModal();
 }
 
 async function load(refresh = false) {
@@ -418,23 +530,18 @@ async function setHidden(id, hidden) {
 
 document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide],[data-stack]");
-  if (!el) return;
+  if (!el || el.disabled) return;
+  closeMachineMenu();
+  $("#dashboard-menu").open = false;
   if (el.dataset.stack) {
     const id = el.dataset.id, name = el.dataset.stack;
     const host = state.targets.find((v) => v.target.id === id)?.target.name || id;
     if (!confirm(`Update ${name} on ${host}?\n\nPulls newer images and restarts the containers that changed. Stopped services stay stopped.`)) return;
     act("stack-update", [id], { stack: name, prune: !!remember.get("pruneImages") });
   } else if (el.dataset.act === "docker") {
-    const id = el.dataset.id;
-    if (state.docker.has(id)) state.docker.delete(id);
-    else {
-      state.docker.add(id);
-      // Nothing known yet: look right away.
-      if (!state.targets.find((v) => v.target.id === id)?.stacks) act("stacks", [id]);
-    }
-    render();
+    setView("containers", el.dataset.id);
   } else if (el.dataset.act === "stacks") {
-    act("stacks", [el.dataset.id]);
+    confirmAction("stacks", [el.dataset.id]);
   } else if (el.dataset.hide) {
     setHidden(el.dataset.id, el.dataset.hide === "1");
   } else if (el.dataset.toggle) {
@@ -449,6 +556,49 @@ document.addEventListener("click", (e) => {
     confirmAction(el.dataset.act, [el.dataset.id]);
   }
 });
+
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#dashboard-menu") || e.target.closest(".dashboard-menu-items button,.dashboard-menu-items a")) $("#dashboard-menu").open = false;
+  const el = e.target.closest("[data-machine-menu],[data-open-docker],[data-docker-settings],[data-view],[data-fetch-docker],[data-discover-docker]");
+  if (el?.dataset.machineMenu) { openMachineMenu(el.dataset.machineMenu, el); return; }
+  if (!e.target.closest("#machine-actions")) closeMachineMenu();
+  if (!el || el.disabled) return;
+  if (el.dataset.view) setView(el.dataset.view);
+  else if (el.dataset.openDocker) setView("containers", el.dataset.openDocker);
+  else if (el.dataset.dockerSettings) openDockerSettings(el.dataset.dockerSettings);
+  else if (el.hasAttribute("data-fetch-docker")) {
+    const ids = dockerHosts().filter((v) => dockerEnabled(v) && canUpgrade(v.target) && !v.active_job).map((v) => v.target.id);
+    if (ids.length) confirmAction("stacks", ids);
+  } else if (el.hasAttribute("data-discover-docker")) {
+    act("check", active().filter((v) => v.target.updatable && !v.active_job).map((v) => v.target.id));
+  }
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeMachineMenu(true); $("#dashboard-menu").open = false; }
+});
+window.addEventListener("resize", () => closeMachineMenu());
+window.addEventListener("scroll", () => closeMachineMenu(), true);
+$("#clear-selected").onclick = () => { state.selected.clear(); render(); };
+$("#docker-mode").onchange = dockerModeFields;
+$("#docker-settings-close").onclick = () => $("#docker-settings-dialog").close();
+$("#docker-settings-form").onsubmit = async (e) => {
+  e.preventDefault();
+  const dlg = $("#docker-settings-dialog"), id = dlg.dataset.targetId;
+  const body = { target_id: id, mode: $("#docker-mode").value, manager_name: $("#docker-manager-name").value.trim() || "Dockhand", manager_url: $("#docker-manager-url").value.trim() || null };
+  $("#docker-settings-save").disabled = true;
+  $("#docker-settings-error").textContent = "";
+  try {
+    const res = await api("/api/docker-settings", { method: "PUT", body: JSON.stringify(body) });
+    const view = state.targets.find((v) => v.target.id === id);
+    if (view) view.docker_settings = res.docker_settings;
+    dlg.close();
+    render();
+  } catch (err) {
+    $("#docker-settings-error").textContent = err.message;
+  } finally {
+    $("#docker-settings-save").disabled = false;
+  }
+};
 
 document.addEventListener("change", (e) => {
   if (e.target.matches("[data-prune]")) { remember.set("pruneImages", e.target.checked); return; }
@@ -585,10 +735,6 @@ $("#restore-go").onclick = async () => {
 };
 
 $("#check-all").onclick = () => act("check", active().filter((v) => v.target.updatable).map((v) => v.target.id));
-$("#check-docker").onclick = () => {
-  const ids = active().filter((v) => canUpgrade(v.target) && v.stacks?.docker !== "none").map((v) => v.target.id);
-  if (ids.length) confirmAction("stacks", ids);
-};
 $("#update-selected").onclick = () => confirmAction("upgrade", [...state.selected]);
 
 // Poll fast while anything is running, slowly otherwise.

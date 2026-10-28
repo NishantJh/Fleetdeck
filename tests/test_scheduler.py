@@ -228,7 +228,7 @@ async def test_scheduled_docker_check_is_opt_in_and_skips_machines_without_docke
     async def run(**kw):
         inv = _inventory((_target("pi4"), PkgExecutor([])), (_target("vps"), PkgExecutor([])))
         inv.refresh = _noop_refresh
-        jobs = JobManager(inv)
+        jobs = JobManager(inv, docker_enabled=True)
         jobs.stacks["vps"] = StacksResult(docker="none", checked_at=datetime.now(UTC))
         asked = []
         real = jobs.submit

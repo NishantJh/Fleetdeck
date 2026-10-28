@@ -40,6 +40,9 @@ snapshot_keep: 3
 # update, the same as typing `update` in them, instead of the OS upgrade (which only runs if it fails). It fetches the latest script from
 # GitHub, runs it as root, and can upgrade the app itself. Set false and the job only warns.
 community_scripts_update: true
+# This fork defaults to an OS-only dashboard. Enable only if Fleetdeck should also manage Docker.
+# false hides Docker UI, skips capability/image checks, and rejects Docker API jobs.
+docker_enabled: false
 # Such a container then also gets the regular OS upgrade right after, even if the app's own update failed.
 # Encrypt the host config archives of the "Back up" button to this age public key (age1...). Only
 # the matching private key, which you keep in your password manager, opens them; the dashboard never
@@ -53,7 +56,7 @@ community_scripts_update: true
 # automatically unless you turn on auto_security_updates below; you get a notification when something new is pending.
 schedule:
   check_every: 6h
-  # Also look for newer Docker images on every machine with Docker. Off by default because it
+  # Requires docker_enabled: true. Also look for newer Docker images on every machine with Docker. Off by default because it
   # downloads (pulls) the images each time, which can use a lot of bandwidth and disk space.
   # check_docker: true
   # After each check, install the security updates it found, with no click: hosts first, then their

@@ -318,6 +318,9 @@ class AppConfig(BaseModel):
     # that fails. A plain OS upgrade can leave such an app broken. On by default; set false and the job only warns.
     # It runs the latest upstream script as root and can upgrade the app itself.
     community_scripts_update: bool = True
+    # Keep the dashboard OS-only unless Docker management is explicitly wanted.
+    # This also blocks Docker API jobs and overrides schedule.check_docker.
+    docker_enabled: bool = False
     # An `age` public key (age1...). When set, the host config archives made by the "Back up" button are
     # encrypted to it (.tar.gz.age); only the matching private key, which the dashboard never has, opens them.
     backup_age_recipient: str | None = None
