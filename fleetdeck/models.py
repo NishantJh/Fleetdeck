@@ -59,6 +59,8 @@ class Package(BaseModel):
     security: bool = False
     # Ubuntu apt has deferred this package for this machine while a phased rollout is in progress.
     phased: bool = False
+    # The package is not itself phased, but apt can upgrade it only when related phased packages are included.
+    phased_dependency: bool = False
 
 
 class CheckResult(BaseModel):

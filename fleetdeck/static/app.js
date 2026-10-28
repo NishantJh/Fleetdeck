@@ -111,7 +111,6 @@ function metricButton(v, kind, count) {
 
 function updateColumns(v) {
   const t = v.target;
-  if (v.active_job) return `<td colspan="3" class="update-summary" data-label="Updates"><span class="spin"></span> ${BUSY[v.active_job.action] || v.active_job.action}…</td>`;
   if (!t.updatable) return `<td colspan="3" class="update-summary muted" data-label="Updates">${esc(t.note || "Unavailable")}</td>`;
   const c = v.check;
   if (!c) return `<td colspan="3" class="update-summary muted" data-label="Updates">Not checked</td>`;
@@ -119,11 +118,30 @@ function updateColumns(v) {
   const security = securityPackages(c).length;
   const regular = regularPackages(c).length;
   const phased = phasedPackages(c).length;
-  if (!security && !regular && !phased) return `<td colspan="3" class="update-summary" data-label="Updates"><span class="status-inline ok">${icon("check")}Up to date</span></td>`;
+  if (!security && !regular && !phased) return `<td colspan="3" class="update-summary" data-label="Updates"></td>`;
   if (!security && !regular && phased) {
-    return `<td colspan="2" class="update-summary" data-label="Updates"><span class="status-inline ok">${icon("check")}Up to date</span></td><td class="update-metric-cell" data-label="Phased">${metricButton(v, "phased", phased)}</td>`;
+    return `<td colspan="2" class="update-summary" data-label="Updates"></td><td class="update-metric-cell" data-label="Phased">${metricButton(v, "phased", phased)}</td>`;
   }
   return `<td class="update-metric-cell" data-label="Security">${metricButton(v, "security", security)}</td><td class="update-metric-cell" data-label="Package">${metricButton(v, "package", regular)}</td><td class="update-metric-cell" data-label="Phased">${metricButton(v, "phased", phased)}</td>`;
+}
+
+function updateState(v) {
+  const t = v.target, c = v.check;
+  const id = esc(t.id), busy = !!v.active_job;
+  if (busy) {
+    return `<span class="status-inline muted"><span class="spin"></span>${esc(BUSY[v.active_job.action] || v.active_job.action)}…</span>`;
+  }
+  if (!t.updatable) return "";
+  if (!c || c.error) {
+    const retry = !!c?.error;
+    return `<button class="small" data-act="check" data-id="${id}" data-focus-key="check:${id}" title="${retry ? "Retry the update check" : "Check for OS updates"}">${icon("refresh")}<span>${retry ? "Retry" : "Check"}</span></button>`;
+  }
+  const pending = actionablePackages(c).length > 0;
+  if (pending && canUpgrade(t)) {
+    return `<button class="small primary" data-act="upgrade" data-id="${id}" data-focus-key="upgrade:${id}" ${v.blocked ? "disabled" : ""} title="${esc(v.blocked || "Install available OS packages")}">${icon("download")}<span>Update</span></button>`;
+  }
+  if (!pending) return `<span class="status-inline ok">${icon("check")}Up to date</span>`;
+  return "";
 }
 
 function backupCell(t) {
@@ -214,7 +232,6 @@ function stackPanel(v) {
 function rowHtml(v, withBackup, relation = {}) {
   const t = v.target, c = v.check;
   const busy = !!v.active_job;
-  const pending = c && !c.error && actionablePackages(c).length > 0;
   const self = v.runs_dashboard ? ` <span class="chip" title="This dashboard runs here">dashboard</span>` : "";
   const cs = c?.community_script
     ? ` <span class="chip" title="${esc(csTip(c.community_script))}">helper script</span>` : "";
@@ -228,10 +245,6 @@ function rowHtml(v, withBackup, relation = {}) {
       ? `<button class="small reboot-action" data-act="reboot" data-id="${esc(t.id)}" data-focus-key="reboot:${esc(t.id)}" ${!busy && !v.blocked ? "" : "disabled"} title="${esc(v.blocked || "Reboot required — reboot this machine")}">${icon("reboot")}<span>Reboot</span></button>`
       : `<span class="reboot-status required" title="${esc(rebootTitle)}">${icon("reboot")}Required</span>`
     : c && c.reboot_required === false ? "" : `<span class="muted">Unknown</span>`;
-  const updateAction = pending && canUpgrade(t)
-    ? `<button class="small primary" data-act="upgrade" data-id="${esc(t.id)}" data-focus-key="upgrade:${esc(t.id)}" ${!busy && !v.blocked ? "" : "disabled"} title="${esc(v.blocked || "Install available OS packages")}">${icon("download")}<span>Update</span></button>` : "";
-  const checkAction = t.updatable && (c?.error || !c)
-    ? `<button class="small" data-act="check" data-id="${esc(t.id)}" data-focus-key="check:${esc(t.id)}" ${busy ? "disabled" : ""}>${icon("refresh")}<span>${c?.error ? "Retry check" : "Check"}</span></button>` : "";
   const rowClasses = [t.kind === "host" ? "host" : "guest", "machine-row"];
   if (relation.hasGuests) rowClasses.push("has-guests");
   if (relation.firstGuest) rowClasses.push("first-guest");
@@ -245,21 +258,22 @@ function rowHtml(v, withBackup, relation = {}) {
     <td class="os-cell" data-label="OS">${esc(c?.os || t.status)}</td>
     ${withBackup ? `<td data-label="Last backup">${backupCell(t)}</td>` : ""}
     ${updateColumns(v)}
+    <td class="update-action-cell" data-label="Update">${updateState(v)}</td>
     <td data-label="Reboot">${reboot}</td>
-    <td class="last-check" data-label="Last check"><span>${c ? ago(c.checked_at) : "Never"}</span>${repoNote}</td>
     ${state.settings.docker_enabled ? `<td data-label="Containers">${dockerCell(v)}</td>` : ""}
-    <td class="actions" data-label="Actions">${updateAction}${checkAction}</td>
+    <td class="last-check" data-label="Checked"><span>${c ? ago(c.checked_at) : "Never"}</span>${repoNote}</td>
     <td class="more-cell"><button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="More actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button></td>
   </tr>`;
   if (c?.packages?.length && state.expanded.has(t.id)) {
     // Security updates first, so they stand out in a long list.
-    const rank = (p) => p.phased ? 2 : p.security ? 0 : 1;
+    const rank = (p) => p.phased_dependency ? 3 : p.phased ? 2 : p.security ? 0 : 1;
     const pkgs = [...c.packages].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
     const rows = pkgs.map((p) => {
       const kind = p.phased ? "phased" : p.security ? "security" : "package";
-      const label = p.phased ? "Phased" : p.security ? "Security" : "Package";
+      const label = p.phased_dependency ? "Waiting" : p.phased ? "Phased" : p.security ? "Security" : "Package";
       const iconName = p.phased ? "clock" : p.security ? "shield" : "package";
-      return `<tr><td><span class="package-type ${kind}">${icon(iconName)}${label}</span></td><td class="package-name">${esc(p.name)}</td><td class="package-version">${esc(p.current || "—")}</td><td class="package-version">${esc(p.available)}</td></tr>`;
+      const reason = p.phased_dependency ? ` title="Waiting on related phased packages"` : "";
+      return `<tr><td><span class="package-type ${kind}"${reason}>${icon(iconName)}${label}</span></td><td class="package-name">${esc(p.name)}</td><td class="package-version">${esc(p.current || "—")}</td><td class="package-version">${esc(p.available)}</td></tr>`;
     }).join("");
     const detailClasses = ["pkgs"];
     if (state.selected.has(t.id)) detailClasses.push("is-selected");
@@ -311,7 +325,7 @@ function render() {
     <div class="group">
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
       <div class="group-scroll"><table class="machine-table" aria-label="${esc(g.title)} machines">
-        <thead><tr><th></th><th>Machine</th><th>Type</th><th>OS</th>${withBackup ? "<th>Last backup</th>" : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th>Reboot</th><th>Last check</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Actions</th><th>More</th></tr></thead>
+        <thead><tr><th></th><th>Machine</th><th>Type</th><th>OS</th>${withBackup ? "<th>Last backup</th>" : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th>Update</th><th>Reboot</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Checked</th><th>More</th></tr></thead>
         <tbody>${g.rows.map((v, index) => rowHtml(v, withBackup, {
           hasGuests: v.target.kind === "host" && guestIndexes.length > 0,
           firstGuest: index === firstGuest,

@@ -9,10 +9,13 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
   overview shows when the next automatic check will run.
 - A short toolbar: **Check updates**, with less frequent tasks in the dashboard menu.
 - Single-line rows keep machine/state, type, OS, backup age, **Security**, **Package**,
-  **Phased**, **Reboot**, last check, relevant actions and **More** in separate columns.
-- Apt packages deferred by Ubuntu/Debian phasing are detected with a read-only simulation.
-  They are shown in green and are excluded from actionable package counts and update jobs.
-- **Update** and **Retry check** appear in the Actions column only when relevant. A reboot
+  **Phased**, **Update**, **Reboot**, **Checked** and **More** in separate columns.
+- Apt packages deferred by Ubuntu/Debian phasing are detected with read-only simulations.
+  Packages that apt lists separately as not upgrading, but which become installable when only
+  the phase policy changes, are included in the green **Phased** count and identified as
+  **Waiting** in the detail table. They are excluded from actionable counts and update jobs.
+- **Update**, **Check** and **Retry** share the Update column and appear only when relevant;
+  otherwise it shows a green **Up to date** state. A reboot
   requirement becomes a distinct gold **Reboot** button in its own column when the action is
   allowed, or a non-clickable **Required** status when configuration blocks it. Empty cells
   do not show placeholder dashes.
@@ -113,7 +116,7 @@ Node dependencies are development-only and are not included in the runtime image
 
 ### Preview verification
 
-On the development Mac: 405 Python tests passed, 6 were skipped, and 7 documented
+On the development Mac: 407 Python tests passed, 6 were skipped, and 7 documented
 platform/sandbox-dependent tests were deselected after a full run reproduced those same failures.
 All 6 offline dashboard tests, JavaScript syntax checks and Ruff checks passed. Browser visual
 verification used only the built-in simulated machines; a Docker image build was not completed in

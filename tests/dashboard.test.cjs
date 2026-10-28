@@ -144,6 +144,7 @@ test("update columns separate security, packages and phased updates with only re
         { name: "openssl", current: "1", available: "2", security: true },
         { name: "systemd", current: "1", available: "2" },
         { name: "tzdata", current: "1", available: "2", phased: true },
+        { name: "libsystemd0", current: "1", available: "2", phased: true, phased_dependency: true },
       ] } }),
       machine("phased", { guest: true, parent: "pve", check: { reboot_required: false, packages: [
         { name: "firmware", current: "1", available: "2", phased: true },
@@ -154,27 +155,29 @@ test("update columns separate security, packages and phased updates with only re
   });
   const doc = ui.document;
   const headers = [...doc.querySelectorAll(".machine-table > thead th")].map((el) => el.textContent.trim());
-  assert.deepEqual(headers, ["", "Machine", "Type", "OS", "Security", "Package", "Phased", "Reboot", "Last check", "Actions", "More"]);
+  assert.deepEqual(headers, ["", "Machine", "Type", "OS", "Security", "Package", "Phased", "Update", "Reboot", "Checked", "More"]);
   assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Type"]').textContent.trim(), "Node");
-  assert.equal(doc.querySelector('[data-machine-row="pve"] [data-act="upgrade"] span').textContent, "Update");
+  assert.equal(doc.querySelector('[data-machine-row="pve"] .update-action-cell [data-act="upgrade"] span').textContent, "Update");
   assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Reboot"] [data-act="reboot"] span').textContent, "Reboot");
-  assert.equal(doc.querySelector('[data-machine-row="pve"] .actions [data-act="reboot"]'), null);
   assert.ok(doc.querySelector('[data-machine-row="pve"] .reboot-action .ui-icon'));
   assert.equal(doc.querySelector('[data-machine-row="phased"] [data-act="upgrade"]'), null);
   assert.equal(doc.querySelector('[data-machine-row="phased"] .update-metric.phased').textContent.trim(), "1");
-  assert.equal(doc.querySelector('[data-machine-row="failed"] [data-act="check"] span').textContent, "Retry check");
-  assert.equal(doc.querySelector('[data-machine-row="current"] .actions button'), null);
+  assert.match(doc.querySelector('[data-machine-row="phased"] .update-action-cell').textContent, /Up to date/);
+  assert.equal(doc.querySelector('[data-machine-row="failed"] .update-action-cell [data-act="check"] span').textContent, "Retry");
+  assert.equal(doc.querySelector('[data-machine-row="current"] .update-action-cell button'), null);
+  assert.match(doc.querySelector('[data-machine-row="current"] .update-action-cell').textContent, /Up to date/);
   assert.doesNotMatch(doc.querySelector("#groups").textContent, /—/);
   assert.match(doc.querySelector("#summary").textContent, /1Machine needing updates/);
   assert.match(doc.querySelector("#schedule-status").textContent, /Next check in 2 h/);
 
   ui.click('[data-machine-row="pve"] .update-metric.security');
-  assert.deepEqual([...doc.querySelectorAll("#packages-pve .package-type")].map((el) => el.textContent.trim()), ["Security", "Package", "Phased"]);
+  assert.deepEqual([...doc.querySelectorAll("#packages-pve .package-type")].map((el) => el.textContent.trim()), ["Security", "Package", "Phased", "Waiting"]);
   ui.click('[data-machine-menu="pve"]');
   assert.doesNotMatch(doc.querySelector("#machine-actions").textContent, /Reboot/);
   assert.match(doc.querySelector("#machine-actions").textContent, /Check updates/);
   assert.match(doc.querySelector("#machine-actions").textContent, /Back up configuration/);
   assert.equal(doc.querySelectorAll("#machine-actions .ui-icon").length >= 3, true);
+  assert.equal(doc.querySelector("#machine-actions .menu-caption").textContent.trim(), "pve");
   assert.doesNotMatch(doc.querySelector("#machine-actions").textContent, /…/);
   assert.deepEqual(ui.errors, []);
 });
