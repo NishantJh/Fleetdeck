@@ -10,7 +10,7 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
 - A short toolbar: **Check updates**, with less frequent tasks in a compact icon-led menu.
   The menu separates inventory tasks from backup and notification tools, and marks the
   optional hidden-machine view without changing the menu label.
-- Single-line rows keep machine/state, type, OS, backup age, **Security**, **Package**,
+- Single-line rows keep machine/state, type, OS, backup age and job coverage, **Security**, **Package**,
   **Phased**, **Update**, **Reboot**, **Checked** and **More** in separate, left-aligned columns.
   Stable column proportions reserve flexible room for machine and OS names without letting
   the compact status/action columns drift apart.
@@ -26,10 +26,10 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
   do not show placeholder dashes.
 - Per-machine **More** menus use icons and concise labels for checks, configuration backups,
   hiding and any optional command-console or Docker actions that are actually available.
-- All machines move backup notes into one neutral information popover beside the checked time;
-  Proxmox nodes also include repository context there. Backup-note icons are removed from the
-  backup column, while real backup timestamps and clear states such as **Not set up** and
-  **Not scheduled** remain visible.
+- Backup age and job coverage use separate compact columns: a neutral calendar icon appears only
+  when a backup job covers the machine, while a neutral X replaces ambiguous missing values.
+  Exact dates, storage, counts, verification, job coverage and backup notes live in one neutral
+  information popover beside the checked time; Proxmox nodes also include repository context there.
 - Selecting machines reveals the bulk-update bar. Updates and reboots retain their confirmation dialogs.
 - Platform/host groups and guest rows have a deterministic order, including after refreshes.
   Hosts use **Node** for Proxmox. A centered 2 px tree line uses compact guest indentation,

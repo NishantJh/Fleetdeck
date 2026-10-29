@@ -490,9 +490,9 @@ a.brand { color: var(--text); text-decoration: none; }
 .discovery-note { font-size: 12px; }
 .dashboard-page .group-head { padding: 11px 16px; }
 .dashboard-page .machine-table { min-width: 1160px; table-layout: fixed; }
-.dashboard-page .machine-table.has-backup { min-width: 1280px; }
+.dashboard-page .machine-table.has-backup { min-width: 1300px; }
 .dashboard-page .machine-table.has-containers { min-width: 1320px; }
-.dashboard-page .machine-table.has-backup.has-containers { min-width: 1440px; }
+.dashboard-page .machine-table.has-backup.has-containers { min-width: 1470px; }
 .dashboard-page .machine-table col.col-select { width: 3.5%; }
 .dashboard-page .machine-table col.col-machine { width: 21%; }
 .dashboard-page .machine-table col.col-type { width: 7%; }
@@ -503,14 +503,15 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .machine-table col.col-checked { width: 9%; }
 .dashboard-page .machine-table col.col-more { width: 4%; }
 .dashboard-page .machine-table.has-backup col.col-select { width: 3%; }
-.dashboard-page .machine-table.has-backup col.col-machine { width: 21.5%; }
+.dashboard-page .machine-table.has-backup col.col-machine { width: 20.5%; }
 .dashboard-page .machine-table.has-backup col.col-type { width: 6%; }
-.dashboard-page .machine-table.has-backup col.col-os { width: 14.5%; }
-.dashboard-page .machine-table.has-backup col.col-backup { width: 11%; }
+.dashboard-page .machine-table.has-backup col.col-os { width: 13%; }
+.dashboard-page .machine-table.has-backup col.col-backup { width: 9%; }
+.dashboard-page .machine-table.has-backup col.col-backup-job { width: 4%; }
 .dashboard-page .machine-table.has-backup col.col-metric { width: 5%; }
 .dashboard-page .machine-table.has-backup col.col-update { width: 10%; }
 .dashboard-page .machine-table.has-backup col.col-reboot { width: 7%; }
-.dashboard-page .machine-table.has-backup col.col-checked { width: 8%; }
+.dashboard-page .machine-table.has-backup col.col-checked { width: 8.5%; }
 .dashboard-page .machine-table.has-backup col.col-more { width: 4%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-select { width: 3%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-machine { width: 20%; }
@@ -523,14 +524,15 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-checked { width: 9%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-more { width: 4%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-select { width: 3%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-machine { width: 18%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-machine { width: 17.5%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-type { width: 6%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-os { width: 13%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-backup { width: 9%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-os { width: 11.5%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-backup { width: 8%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-backup-job { width: 3.5%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-metric { width: 4.5%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-update { width: 9%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-reboot { width: 7%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-containers { width: 10%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-containers { width: 9.5%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-checked { width: 8%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-more { width: 3.5%; }
 .dashboard-page .machine-table > thead > tr > th { white-space: nowrap; }
@@ -546,6 +548,8 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .machine-note .ui-icon, .dashboard-page .repo-note .ui-icon { width: 13px; height: 13px; }
 .dashboard-page .type-chip { color: var(--text-2); font-weight: 600; }
 .dashboard-page .os-cell { overflow: hidden; text-overflow: ellipsis; }
+.dashboard-page .backup-missing, .dashboard-page .backup-job { display: inline-flex; align-items: center; }
+.dashboard-page .backup-cell .ui-icon, .dashboard-page .backup-job-cell .ui-icon { width: 15px; height: 15px; }
 .dashboard-page th.update-heading, .dashboard-page td.update-metric-cell { padding-inline: 5px; text-align: left; }
 .dashboard-page .update-metric {
   min-width: 34px; min-height: 28px; margin: 0; padding: 3px 6px; border: 0; border-radius: 6px;

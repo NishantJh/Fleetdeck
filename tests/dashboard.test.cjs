@@ -199,7 +199,7 @@ test("machine backup context uses neutral information popovers", async () => {
     machine("guest", {
       guest: true,
       parent: "pve",
-      target: { backup: { last: new Date(Date.now() - 3600 * 1000).toISOString(), storage: "backup", count: 2, note: guestBackupNote } },
+      target: { backup: { last: new Date(Date.now() - 3600 * 1000).toISOString(), storage: "backup", count: 2, in_job: true, note: guestBackupNote } },
     }),
     machine("unscheduled", {
       guest: true,
@@ -217,12 +217,14 @@ test("machine backup context uses neutral information popovers", async () => {
   const unscheduled = doc.querySelector('[data-machine-row="unscheduled"]');
   const standalone = doc.querySelector('[data-machine-row="standalone"]');
   assert.equal(node.querySelector(".backup-cell").textContent.trim(), "");
+  assert.equal(node.querySelector(".backup-job-cell").textContent.trim(), "");
   assert.match(guest.querySelector(".backup-cell").textContent, /h ago/);
-  assert.doesNotMatch(guest.querySelector(".backup-cell").textContent, /ⓘ/);
-  assert.equal(unscheduled.querySelector(".backup-cell").textContent.trim(), "Not scheduled");
-  assert.doesNotMatch(unscheduled.querySelector(".backup-cell").textContent, /\?|no job/i);
-  assert.equal(standalone.querySelector(".backup-cell").textContent.trim(), "Not set up");
-  assert.doesNotMatch(standalone.querySelector(".backup-cell").textContent, /ⓘ/);
+  assert.equal(guest.querySelector(".backup-cell").hasAttribute("title"), false);
+  assert.equal(guest.querySelector(".backup-job").getAttribute("aria-label"), "Covered by a backup job");
+  assert.equal(unscheduled.querySelector(".backup-missing").getAttribute("aria-label"), "No backup found");
+  assert.equal(unscheduled.querySelector(".backup-job-cell").textContent.trim(), "");
+  assert.equal(standalone.querySelector(".backup-missing").getAttribute("aria-label"), "No backup found");
+  assert.equal(standalone.querySelector(".backup-job-cell").textContent.trim(), "");
   assert.ok(standalone.querySelector(".repo-note"));
   assert.equal(node.querySelector(".repo-note"), null);
   assert.ok(node.querySelector(".last-check-content"));
@@ -254,6 +256,14 @@ test("machine backup context uses neutral information popovers", async () => {
   assert.equal(panel.querySelector("#machine-information-title").textContent, "Machine information");
   assert.deepEqual([...panel.querySelectorAll("h3")].map((el) => el.textContent), ["Backup"]);
   assert.match(panel.textContent, /Some storage details need attention/);
+  assert.match(panel.textContent, /2 backups found/);
+  assert.match(panel.textContent, /Covered by a backup job/);
+
+  const unscheduledTrigger = unscheduled.querySelector('[data-machine-info="unscheduled"]');
+  assert.ok(unscheduledTrigger);
+  ui.click('[data-machine-info="unscheduled"]');
+  assert.match(panel.textContent, /No matching backup job/);
+  assert.match(panel.textContent, /No backup job covers this machine/);
 
   const standaloneTrigger = standalone.querySelector('[data-machine-info="standalone"]');
   assert.ok(standaloneTrigger);
@@ -305,7 +315,7 @@ test("optional Docker status is separate, honest about failed checks, and never 
   const dockerTable = ui.document.querySelector('[data-machine-row="docker-vm"]').closest("table");
   assert.equal(dockerTable.classList.contains("has-backup"), true);
   assert.equal(dockerTable.classList.contains("has-containers"), true);
-  assert.equal(dockerTable.querySelectorAll("colgroup > col").length, 13);
+  assert.equal(dockerTable.querySelectorAll("colgroup > col").length, 14);
   assert.equal(ui.document.querySelectorAll("[data-open-docker]").length, 1);
   ui.click('[data-open-docker="docker-vm"]');
   assert.equal(ui.document.querySelector("#groups").hidden, true);

@@ -20,6 +20,8 @@ const ICON = {
   eyeOff: '<path d="m3 3 18 18"/><path d="M10.6 10.6A2 2 0 0 0 13.4 13.4"/><path d="M9.9 4.2A10.7 10.7 0 0 1 21.9 12a10.5 10.5 0 0 1-2.1 3.1"/><path d="M6.2 6.2A10.8 10.8 0 0 0 2.1 12a10.8 10.8 0 0 0 12 7.8"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>',
   check: '<circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/>',
+  backupJob: '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/>',
+  noBackup: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6"/><path d="m15 9-6 6"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/>',
   alert: '<path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
 };
@@ -156,25 +158,20 @@ function updateState(v) {
 function backupCell(t) {
   const b = t.backup;
   if (!b) return "";
-  let html;
   if (b.last) {
-    const tip = `${new Date(b.last).toLocaleString()} on ${b.storage} · ${b.count} backup${b.count > 1 ? "s" : ""}`;
-    html = `<span class="${b.stale ? "warn" : ""}" title="${esc(tip)}">${ago(b.last)}</span>`;
-  } else if (isProxmoxNode(t)) {
+    return `<span class="${b.stale ? "warn" : ""}">${ago(b.last)}</span>`;
+  }
+  if (isProxmoxNode(t)) {
     // Proxmox node configuration-backup context is available from the neutral information popover.
     return "";
-  } else if (b.not_set_up) {
-    html = `<span class="muted" title="${esc(b.note)}">Not set up</span>`;
-  } else if (b.in_job === false) {
-    html = `<span class="chip warn" title="${esc(b.note || "Not in a scheduled backup job")}">Not scheduled</span>`;
-  } else if (b.note) {
-    html = `<span class="muted" title="${esc(b.note)}">Unavailable</span>`;
-  } else {
-    html = `<span class="bad">None</span>`;
   }
-  if (b.verified === false) html += ` <span class="chip bad" title="The newest backup failed verification">verify failed</span>`;
-  if (b.last && b.in_job === false) html += ` <span class="chip warn" title="Not in a scheduled backup job">Not scheduled</span>`;
-  return html;
+  const label = b.note && !b.stale && !b.not_set_up ? "Backup information unavailable" : "No backup found";
+  return `<span class="backup-missing muted" role="img" aria-label="${label}">${icon("noBackup")}</span>`;
+}
+
+function backupJobCell(t) {
+  if (!t.backup || isProxmoxNode(t) || t.backup.in_job !== true) return "";
+  return `<span class="backup-job muted" role="img" aria-label="Covered by a backup job">${icon("backupJob")}</span>`;
 }
 
 function machineInfoButton(t, c) {
@@ -276,7 +273,7 @@ function rowHtml(v, withBackup, relation = {}) {
     <td class="name machine-cell" data-label="Machine"><span class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name">${esc(t.name)}</span></span>${self}${cs}${note}</td>
     <td class="type-cell" data-label="Type"><span class="chip type-chip">${esc(kindLabel(t))}</span></td>
     <td class="os-cell" data-label="OS">${esc(c?.os || t.status)}</td>
-    ${withBackup ? `<td class="backup-cell" data-label="Last backup">${backupCell(t)}</td>` : ""}
+    ${withBackup ? `<td class="backup-cell" data-label="Last backup">${backupCell(t)}</td><td class="backup-job-cell" data-label="Job">${backupJobCell(t)}</td>` : ""}
     ${updateColumns(v)}
     <td class="update-action-cell" data-label="Update">${updateState(v)}</td>
     <td class="reboot-cell" data-label="Reboot">${reboot}</td>
@@ -298,7 +295,7 @@ function rowHtml(v, withBackup, relation = {}) {
     const detailClasses = ["pkgs"];
     if (state.selected.has(t.id)) detailClasses.push("is-selected");
     if (relation.hasGuests || (t.kind !== "host" && !relation.lastGuest)) detailClasses.push("tree-continues");
-    html += `<tr class="${detailClasses.join(" ")}" id="packages-${esc(t.id)}"><td></td><td colspan="${10 + Number(!!withBackup) + Number(!!state.settings.docker_enabled)}"><div class="packages-panel"><table class="packages-table"><thead><tr><th>Type</th><th>Package</th><th>Installed</th><th>Available</th></tr></thead><tbody>${rows}</tbody></table></div></td></tr>`;
+    html += `<tr class="${detailClasses.join(" ")}" id="packages-${esc(t.id)}"><td></td><td colspan="${10 + (2 * Number(!!withBackup)) + Number(!!state.settings.docker_enabled)}"><div class="packages-panel"><table class="packages-table"><thead><tr><th>Type</th><th>Package</th><th>Installed</th><th>Available</th></tr></thead><tbody>${rows}</tbody></table></div></td></tr>`;
   }
   return html;
 }
@@ -345,8 +342,8 @@ function render() {
     <div class="group">
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
       <div class="group-scroll"><table class="machine-table${withBackup ? " has-backup" : ""}${state.settings.docker_enabled ? " has-containers" : ""}" aria-label="${esc(g.title)} machines">
-        <colgroup><col class="col-select"><col class="col-machine"><col class="col-type"><col class="col-os">${withBackup ? '<col class="col-backup">' : ""}<col class="col-metric"><col class="col-metric"><col class="col-metric"><col class="col-update"><col class="col-reboot">${state.settings.docker_enabled ? '<col class="col-containers">' : ""}<col class="col-checked"><col class="col-more"></colgroup>
-        <thead><tr><th></th><th>Machine</th><th>Type</th><th>OS</th>${withBackup ? "<th>Last backup</th>" : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th>Update</th><th>Reboot</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Checked</th><th>More</th></tr></thead>
+        <colgroup><col class="col-select"><col class="col-machine"><col class="col-type"><col class="col-os">${withBackup ? '<col class="col-backup"><col class="col-backup-job">' : ""}<col class="col-metric"><col class="col-metric"><col class="col-metric"><col class="col-update"><col class="col-reboot">${state.settings.docker_enabled ? '<col class="col-containers">' : ""}<col class="col-checked"><col class="col-more"></colgroup>
+        <thead><tr><th></th><th>Machine</th><th>Type</th><th>OS</th>${withBackup ? "<th>Last backup</th><th>Job</th>" : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th>Update</th><th>Reboot</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Checked</th><th>More</th></tr></thead>
         <tbody>${g.rows.map((v, index) => rowHtml(v, withBackup, {
           hasGuests: v.target.kind === "host" && guestIndexes.length > 0,
           firstGuest: index === firstGuest,
@@ -461,7 +458,8 @@ function backupInformation(t) {
     lines.push("No backup was found for this machine.");
   }
   if (b.verified === false) lines.push("The newest backup failed verification.");
-  if (b.in_job === false) lines.push("This machine is not scheduled for backups.");
+  if (b.in_job === true) lines.push("Covered by a backup job.");
+  if (b.in_job === false) lines.push("No backup job covers this machine.");
   return lines;
 }
 
