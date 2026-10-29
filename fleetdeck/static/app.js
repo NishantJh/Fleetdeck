@@ -20,7 +20,7 @@ const ICON = {
   eyeOff: '<path d="m3 3 18 18"/><path d="M10.6 10.6A2 2 0 0 0 13.4 13.4"/><path d="M9.9 4.2A10.7 10.7 0 0 1 21.9 12a10.5 10.5 0 0 1-2.1 3.1"/><path d="M6.2 6.2A10.8 10.8 0 0 0 2.1 12a10.8 10.8 0 0 0 12 7.8"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>',
   check: '<circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/>',
-  backupJob: '<path d="M8 2v4"/><path d="M16 2v4"/><rect width="18" height="18" x="3" y="4" rx="2"/><path d="M3 10h18"/><path d="m9 16 2 2 4-4"/>',
+  backupJob: '<path d="M8 2v4"/><path d="M16 2v4"/><path d="M21 11V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/><path d="M3 10h18"/><circle cx="17" cy="17" r="5"/><path d="M17 14v3l2 1"/>',
   noBackup: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6"/><path d="m15 9-6 6"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/>',
   alert: '<path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
@@ -55,7 +55,8 @@ function ago(iso) {
   if (s < 60) return "just now";
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return `${Math.round(s / 86400)} d ago`;
+  if (s < 604800) return `${Math.round(s / 86400)} d ago`;
+  return `${Math.round(s / 604800)} w ago`;
 }
 
 function until(iso) {
@@ -103,7 +104,10 @@ const phasedPackages = (check) => check?.packages?.filter((p) => p.phased) || []
 const actionablePackages = (check) => check?.packages?.filter((p) => !p.phased) || [];
 const securityPackages = (check) => actionablePackages(check).filter((p) => p.security);
 const regularPackages = (check) => actionablePackages(check).filter((p) => !p.security);
-const selectable = (v) => canUpgrade(v.target) && actionablePackages(v.check).length > 0 && !v.hidden && !v.blocked;
+const displayCheck = (v) => v.check?.error ? v.check.last_successful : v.check;
+const staleCheck = (v) => !!displayCheck(v) && (!v.target.updatable || !!v.check?.error);
+const needsRecheck = (v) => !v.target.updatable || !v.check || !!v.check.error;
+const selectable = (v) => canUpgrade(v.target) && !v.check?.error && actionablePackages(v.check).length > 0 && !v.hidden && !v.blocked && !v.active_job;
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
 const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "checking Docker", "stack-update": "updating Docker" };
 
@@ -112,28 +116,20 @@ function metricButton(v, kind, count) {
   const id = esc(v.target.id), open = state.expanded.has(v.target.id);
   const label = { security: "security", package: "package", phased: "phased" }[kind];
   const iconName = { security: "shield", package: "package", phased: "clock" }[kind];
-  return `<button class="update-metric ${kind}" data-toggle="${id}" data-focus-key="updates:${id}:${kind}" aria-expanded="${open}" aria-controls="packages-${id}" aria-label="${count} ${label} update${count === 1 ? "" : "s"}; ${open ? "hide" : "show"} details">${icon(iconName)}<span>${count}</span></button>`;
+  return `<button class="update-metric ${kind}${staleCheck(v) ? " stale" : ""}" data-toggle="${id}" data-focus-key="updates:${id}:${kind}" aria-expanded="${open}" aria-controls="packages-${id}" aria-label="${count} ${label} update${count === 1 ? "" : "s"}${staleCheck(v) ? " from the last successful check" : ""}; ${open ? "hide" : "show"} details">${icon(iconName)}<span>${count}</span></button>`;
 }
 
 function updateColumns(v) {
-  const t = v.target;
-  if (!t.updatable) return `<td colspan="3" class="update-summary" data-label="Updates"></td>`;
-  const c = v.check;
-  if (!c) return `<td colspan="3" class="update-summary muted" data-label="Updates">Not checked</td>`;
-  if (c.error) return `<td colspan="3" class="update-summary" data-label="Updates"><span class="status-inline bad" title="${esc(c.error)}">${icon("alert")}Check failed</span></td>`;
+  const c = displayCheck(v);
   const security = securityPackages(c).length;
   const regular = regularPackages(c).length;
   const phased = phasedPackages(c).length;
-  if (!security && !regular && !phased) return `<td colspan="3" class="update-summary" data-label="Updates"></td>`;
-  if (!security && !regular && phased) {
-    return `<td colspan="2" class="update-summary" data-label="Updates"></td><td class="update-metric-cell" data-label="Phased">${metricButton(v, "phased", phased)}</td>`;
-  }
   return `<td class="update-metric-cell" data-label="Security">${metricButton(v, "security", security)}</td><td class="update-metric-cell" data-label="Package">${metricButton(v, "package", regular)}</td><td class="update-metric-cell" data-label="Phased">${metricButton(v, "phased", phased)}</td>`;
 }
 
 function updateState(v) {
   const t = v.target, c = v.check;
-  const id = esc(t.id), busy = !!v.active_job;
+  const busy = !!v.active_job;
   if (busy) {
     return `<span class="status-inline muted"><span class="spin"></span>${esc(BUSY[v.active_job.action] || v.active_job.action)}…</span>`;
   }
@@ -143,16 +139,25 @@ function updateState(v) {
     const label = stopped ? "Not running" : offline ? "Offline" : t.note || "Unavailable";
     return `<span class="status-inline unavailable" title="${esc(t.note || label)}">${icon(stopped || offline ? "power" : "alert")}${esc(label)}</span>`;
   }
-  if (!c || c.error) {
-    const retry = !!c?.error;
-    return `<button class="small" data-act="check" data-id="${id}" data-focus-key="check:${id}" title="${retry ? "Retry the update check" : "Check for OS updates"}">${icon("refresh")}<span>${retry ? "Retry" : "Check"}</span></button>`;
-  }
+  if (!c) return `<span class="status-inline muted">Not checked</span>`;
+  if (c.error) return `<span class="status-inline bad" title="${esc(c.error)}">${icon("alert")}Check failed</span>`;
   const pending = actionablePackages(c).length > 0;
-  if (pending && canUpgrade(t)) {
-    return `<button class="small primary" data-act="upgrade" data-id="${id}" data-focus-key="upgrade:${id}" ${v.blocked ? "disabled" : ""} title="${esc(v.blocked || "Install available OS packages")}">${icon("download")}<span>Update</span></button>`;
-  }
+  if (pending) return `<span class="status-inline">Updates available</span>`;
   if (!pending) return `<span class="status-inline ok">${icon("check")}Up to date</span>`;
   return "";
+}
+
+function nextAction(v) {
+  const t = v.target, c = v.check, id = esc(t.id);
+  if (!t.updatable || v.active_job) return "";
+  if (!c || c.error) return `<button class="small" data-act="check" data-id="${id}" data-focus-key="check:${id}">${icon("refresh")}<span>${c?.error ? "Retry" : "Check"}</span></button>`;
+  if (actionablePackages(c).length && canUpgrade(t)) return `<button class="small primary" data-act="upgrade" data-id="${id}" data-focus-key="upgrade:${id}" ${v.blocked ? "disabled" : ""} title="${esc(v.blocked || "Install available OS packages")}">${icon("download")}<span>Update</span></button>`;
+  if (c.reboot_required && canReboot(t)) return `<button class="small reboot-action" data-act="reboot" data-id="${id}" data-focus-key="reboot:${id}" ${v.blocked ? "disabled" : ""} title="${esc(v.blocked || "Reboot required — reboot this machine")}">${icon("reboot")}<span>Reboot</span></button>`;
+  return "";
+}
+
+function compactOS(os) {
+  return String(os || "").replace(/^Debian GNU\/Linux /, "Debian ").replace(/^Proxmox VE /, "PVE ").replace(/\s*\([^)]*\)/g, "").replace(/ LTS$/, "");
 }
 
 function backupCell(t) {
@@ -165,6 +170,7 @@ function backupCell(t) {
     // Proxmox node configuration-backup context is available from the neutral information popover.
     return "";
   }
+  if (b.in_job === true) return `<span class="muted">No backup found</span>`;
   const label = b.note && !b.stale && !b.not_set_up ? "Backup information unavailable" : "No backup found";
   return `<span class="backup-missing muted" role="img" aria-label="${label}">${icon("noBackup")}</span>`;
 }
@@ -175,7 +181,7 @@ function backupJobCell(t) {
 }
 
 function machineInfoButton(t, c) {
-  if (!t.backup && !(isProxmox(t) && c?.notes?.length)) return "";
+  if (!t.backup && !(isProxmox(t) && c?.notes?.length) && !c?.error && t.updatable) return "";
   const id = esc(t.id);
   return `<button class="small ghost machine-info-trigger" data-machine-info="${id}" data-focus-key="machine-info:${id}" aria-label="Information for ${esc(t.name)}" aria-controls="machine-information" aria-expanded="false">${icon("info")}</button>`;
 }
@@ -247,7 +253,7 @@ function stackPanel(v) {
 
 function rowHtml(v, withBackup, relation = {}) {
   const t = v.target, c = v.check;
-  const busy = !!v.active_job;
+  const shown = displayCheck(v);
   const self = v.runs_dashboard ? ` <span class="chip" title="This dashboard runs here">dashboard</span>` : "";
   const cs = c?.community_script
     ? ` <span class="chip" title="${esc(csTip(c.community_script))}">helper script</span>` : "";
@@ -258,11 +264,8 @@ function rowHtml(v, withBackup, relation = {}) {
   const machineInfo = machineInfoButton(t, c);
   const information = `${machineInfo}${repoNote}`;
   const rebootTitle = t.no_reboot || v.blocked || "Reboot needed";
-  const reboot = c?.reboot_required === true
-    ? canReboot(t)
-      ? `<button class="small reboot-action" data-act="reboot" data-id="${esc(t.id)}" data-focus-key="reboot:${esc(t.id)}" ${!busy && !v.blocked ? "" : "disabled"} title="${esc(v.blocked || "Reboot required — reboot this machine")}">${icon("reboot")}<span>Reboot</span></button>`
-      : `<span class="reboot-status required" title="${esc(rebootTitle)}">${icon("reboot")}Required</span>`
-    : c && c.reboot_required === false ? "" : `<span class="muted">Unknown</span>`;
+  const reboot = !needsRecheck(v) && c?.reboot_required === true
+    ? `<span class="reboot-status required" role="img" aria-label="Reboot required" title="${esc(rebootTitle)}">${icon("reboot")}</span>` : "";
   const rowClasses = [t.kind === "host" ? "host" : "guest", "machine-row"];
   if (relation.hasGuests) rowClasses.push("has-guests");
   if (relation.firstGuest) rowClasses.push("first-guest");
@@ -271,22 +274,21 @@ function rowHtml(v, withBackup, relation = {}) {
   if (state.selected.has(t.id)) rowClasses.push("is-selected");
   let html = `<tr class="${rowClasses.join(" ")}" data-machine-row="${esc(t.id)}">
     <td><input type="checkbox" aria-label="Select ${esc(t.name)}" data-select="${esc(t.id)}" data-focus-key="select:${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) ? "" : "disabled"}></td>
-    <td class="name machine-cell" data-label="Machine"><span class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name">${esc(t.name)}</span></span>${self}${cs}${note}</td>
-    <td class="type-cell" data-label="Type"><span class="chip type-chip">${esc(kindLabel(t))}</span></td>
-    <td class="os-cell" data-label="OS">${esc(c?.os || t.status)}</td>
+    <td class="name machine-cell" data-label="Machine"><span class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name" title="${esc(t.name)}">${esc(t.name)}</span><span class="chip type-chip">${esc(kindLabel(t))}</span>${c?.os ? `<span class="machine-os" title="${esc(c.os)}">${esc(compactOS(c.os))}</span>` : ""}${self}${cs}${note}</span></td>
     ${withBackup ? `<td class="backup-cell" data-label="Last backup">${backupCell(t)}</td><td class="backup-job-cell" data-label="Job">${backupJobCell(t)}</td>` : ""}
     ${updateColumns(v)}
-    <td class="update-action-cell" data-label="Update">${updateState(v)}</td>
     <td class="reboot-cell" data-label="Reboot">${reboot}</td>
+    <td class="update-status-cell" data-label="Status">${updateState(v)}</td>
+    <td class="update-action-cell" data-label="Actions">${nextAction(v)}</td>
     ${state.settings.docker_enabled ? `<td class="containers-cell" data-label="Containers">${dockerCell(v)}</td>` : ""}
     <td class="last-check" data-label="Checked">${c ? ago(c.checked_at) : "Never"}</td>
     <td class="info-cell" data-label="Info">${information ? `<span class="info-cell-content">${information}</span>` : ""}</td>
     <td class="more-cell"><button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="More actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button></td>
   </tr>`;
-  if (c?.packages?.length && state.expanded.has(t.id)) {
+  if (shown?.packages?.length && state.expanded.has(t.id)) {
     // Security updates first, so they stand out in a long list.
     const rank = (p) => p.phased_dependency ? 3 : p.phased ? 2 : p.security ? 0 : 1;
-    const pkgs = [...c.packages].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+    const pkgs = [...shown.packages].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
     const rows = pkgs.map((p) => {
       const kind = p.phased ? "phased" : p.security ? "security" : "package";
       const label = p.phased_dependency ? "Waiting" : p.phased ? "Phased" : p.security ? "Security" : "Package";
@@ -297,7 +299,8 @@ function rowHtml(v, withBackup, relation = {}) {
     const detailClasses = ["pkgs"];
     if (state.selected.has(t.id)) detailClasses.push("is-selected");
     if (relation.hasGuests || (t.kind !== "host" && !relation.lastGuest)) detailClasses.push("tree-continues");
-    html += `<tr class="${detailClasses.join(" ")}" id="packages-${esc(t.id)}"><td></td><td colspan="${11 + (2 * Number(!!withBackup)) + Number(!!state.settings.docker_enabled)}"><div class="packages-panel"><table class="packages-table"><thead><tr><th>Type</th><th>Package</th><th>Installed</th><th>Available</th></tr></thead><tbody>${rows}</tbody></table></div></td></tr>`;
+    const history = staleCheck(v) ? `<p class="last-known-note">Last successful check: ${esc(ago(shown.checked_at))}. These updates need to be checked again before installation.</p>` : "";
+    html += `<tr class="${detailClasses.join(" ")}" id="packages-${esc(t.id)}"><td></td><td colspan="${10 + (2 * Number(!!withBackup)) + Number(!!state.settings.docker_enabled)}"><div class="packages-panel">${history}<table class="packages-table"><thead><tr><th>Type</th><th>Package</th><th>Installed</th><th>Available</th></tr></thead><tbody>${rows}</tbody></table></div></td></tr>`;
   }
   return html;
 }
@@ -317,7 +320,8 @@ function render() {
   const updatable = active().filter((v) => v.target.updatable);
   const pending = updatable.filter((v) => v.check && !v.check.error && actionablePackages(v.check).length);
   const secMachines = pending.filter((v) => securityPackages(v.check).length).length;
-  const reboot = updatable.filter((v) => v.check?.reboot_required).length;
+  const reboot = updatable.filter((v) => !v.check?.error && v.check?.reboot_required).length;
+  const recheck = active().filter(needsRecheck).length;
   const hosts = dockerHosts();
   const images = hosts.reduce((n, v) => n + dockerBehind(v), 0);
   const imageErrors = hosts.reduce((n, v) => n + dockerErrors(v), 0);
@@ -326,6 +330,7 @@ function render() {
     <div class="stat"><b class="${pending.length ? "warn" : "ok"}">${pending.length}</b><span>${plural(pending.length, "Machine needing updates", "Machines needing updates")}</span></div>
     <div class="stat"><b class="${secMachines ? "bad" : "ok"}">${secMachines}</b><span>${plural(secMachines, "Machine with security updates", "Machines with security updates")}</span></div>
     <div class="stat"><b class="${reboot ? "reboot" : "ok"}">${reboot}</b><span>${plural(reboot, "Machine requiring reboot", "Machines requiring reboot")}</span></div>
+    <div class="stat"><b class="${recheck ? "muted" : "ok"}">${recheck}</b><span>${plural(recheck, "Machine needing recheck", "Machines needing recheck")}</span></div>
     ${state.settings.docker_enabled ? `<div class="stat"><b class="${images ? "warn" : imageErrors ? "bad" : "ok"}">${images}</b><span>${plural(images, "Stack with an image update", "Stacks with image updates")}${imageUnchecked ? ` · ${imageUnchecked} unchecked` : ""}</span></div>` : ""}`);
   $("#overview-count").textContent = `${active().length} ${plural(active().length, "machine", "machines")}`;
   $("#schedule-status").innerHTML = scheduleStat();
@@ -344,8 +349,8 @@ function render() {
     <div class="group">
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
       <div class="group-scroll"><table class="machine-table${withBackup ? " has-backup" : ""}${state.settings.docker_enabled ? " has-containers" : ""}" aria-label="${esc(g.title)} machines">
-        <colgroup><col class="col-select"><col class="col-machine"><col class="col-type"><col class="col-os">${withBackup ? '<col class="col-backup"><col class="col-backup-job">' : ""}<col class="col-metric"><col class="col-metric"><col class="col-metric"><col class="col-update"><col class="col-reboot">${state.settings.docker_enabled ? '<col class="col-containers">' : ""}<col class="col-checked"><col class="col-info"><col class="col-more"></colgroup>
-        <thead><tr><th></th><th>Machine</th><th>Type</th><th>OS</th>${withBackup ? '<th>Last backup</th><th class="backup-job-heading">Job</th>' : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th>Update</th><th>Reboot</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Checked</th><th class="info-heading">Info</th><th class="more-heading">More</th></tr></thead>
+        <colgroup><col class="col-select"><col class="col-machine">${withBackup ? '<col class="col-backup"><col class="col-backup-job">' : ""}<col class="col-metric"><col class="col-metric"><col class="col-metric"><col class="col-reboot"><col class="col-status"><col class="col-update">${state.settings.docker_enabled ? '<col class="col-containers">' : ""}<col class="col-checked"><col class="col-info"><col class="col-more"></colgroup>
+        <thead><tr class="column-groups"><th colspan="2" scope="colgroup">Inventory</th>${withBackup ? '<th colspan="2" scope="colgroup">Backup</th>' : ""}<th colspan="4" scope="colgroup">Updates</th><th colspan="2" scope="colgroup">Maintenance</th>${state.settings.docker_enabled ? '<th scope="colgroup">Containers</th>' : ""}<th colspan="3" scope="colgroup">Activity</th></tr><tr class="column-headings"><th></th><th>Machine</th>${withBackup ? '<th>Last backup</th><th class="backup-job-heading">Job</th>' : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th class="reboot-heading">Reboot</th><th>Status</th><th>Actions</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Checked</th><th class="info-heading">Info</th><th class="more-heading">More</th></tr></thead>
         <tbody>${g.rows.map((v, index) => rowHtml(v, withBackup, {
           hasGuests: v.target.kind === "host" && guestIndexes.length > 0,
           firstGuest: index === firstGuest,
@@ -413,7 +418,7 @@ function openMachineMenu(id, trigger) {
   const menu = $("#machine-actions");
   menu.innerHTML = `<div class="muted menu-caption">${esc(t.name)}</div>` +
     action("check", "Check updates", "refresh", t.updatable && !busy) +
-    (v.check?.reboot_required === true ? "" : action("reboot", "Reboot", "reboot", canReboot(t) && !busy && !v.blocked, t.no_reboot || v.blocked || t.note)) +
+    (nextAction(v).includes('data-act="reboot"') ? "" : action("reboot", "Reboot", "reboot", canReboot(t) && !busy && !v.blocked, t.no_reboot || v.blocked || t.note)) +
     (t.can_backup ? action("backup", "Back up configuration", "backup", !busy) : "") +
     (hasDocker(v) ? `<button data-docker-settings="${esc(id)}">${icon("settings")}Docker management</button>` : "") +
     (state.console?.enabled && !["stopped", "offline"].includes(t.status) ? `<button data-run="${esc(id)}">${icon("terminal")}Run command</button>` : "") +
@@ -474,9 +479,19 @@ function openMachineInformation(id, trigger) {
   if (!v) return;
   const backup = backupInformation(v.target);
   const repositories = isProxmox(v.target) ? v.check?.notes || [] : [];
-  if (!backup.length && !repositories.length) return;
+  const updates = [];
+  if (v.check?.os) updates.push(`Operating system: ${v.check.os}`);
+  if (!v.target.updatable) updates.push(`Machine unavailable: ${v.target.note || v.target.status}`);
+  if (v.check?.error) updates.push(`Latest check failed: ${v.check.error}`);
+  if (v.check) updates.push(`Last attempt: ${new Date(v.check.checked_at).toLocaleString()}`);
+  if (staleCheck(v)) {
+    const last = displayCheck(v);
+    updates.push(`Displayed counts are from the last successful check: ${new Date(last.checked_at).toLocaleString()}`);
+    if (last.reboot_required) updates.push("A reboot was required at that check; this needs to be verified again.");
+  }
+  if (!backup.length && !repositories.length && !updates.length) return;
   const panel = $("#machine-information");
-  panel.innerHTML = `<div class="machine-info-heading"><span>${icon("info")}<strong id="machine-information-title">${isProxmoxNode(v.target) ? "Node" : "Machine"} information</strong></span><span class="muted">${esc(v.target.name)}</span></div>${machineInfoSection("Backup", backup)}${machineInfoSection("Repositories", repositories)}`;
+  panel.innerHTML = `<div class="machine-info-heading"><span>${icon("info")}<strong id="machine-information-title">${isProxmoxNode(v.target) ? "Node" : "Machine"} information</strong></span><span class="muted">${esc(v.target.name)}</span></div>${machineInfoSection("Updates", updates)}${machineInfoSection("Backup", backup)}${machineInfoSection("Repositories", repositories)}`;
   machineInfoId = id;
   trigger.setAttribute("aria-expanded", "true");
   panel.hidden = false;

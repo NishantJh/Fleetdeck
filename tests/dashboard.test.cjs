@@ -126,7 +126,7 @@ test("bulk actions appear only after selection; updates still require confirmati
   ui.click('[data-toggle="guest"]');
   assert.equal(doc.querySelector(".pkgs img"), null);
   assert.match(doc.querySelector(".pkgs").textContent, /<img src=x/);
-  assert.equal(doc.querySelector(".pkgs td[colspan]").getAttribute("colspan"), "11");
+  assert.equal(doc.querySelector(".pkgs td[colspan]").getAttribute("colspan"), "10");
   ui.click('[data-act="upgrade"]');
   assert.equal(doc.querySelector("#confirm").open, true);
   assert.equal(doc.querySelector("#confirm-snapshot-row").hidden, false);
@@ -155,25 +155,26 @@ test("update columns separate security, packages and phased updates with only re
     ],
   });
   const doc = ui.document;
-  const headers = [...doc.querySelectorAll(".machine-table > thead th")].map((el) => el.textContent.trim());
-  assert.deepEqual(headers, ["", "Machine", "Type", "OS", "Security", "Package", "Phased", "Update", "Reboot", "Checked", "Info", "More"]);
-  assert.equal(doc.querySelectorAll(".machine-table > colgroup > col").length, 12);
+  const headers = [...doc.querySelectorAll(".machine-table > thead .column-headings th")].map((el) => el.textContent.trim());
+  assert.deepEqual(headers, ["", "Machine", "Security", "Package", "Phased", "Reboot", "Status", "Actions", "Checked", "Info", "More"]);
+  assert.deepEqual([...doc.querySelectorAll(".column-groups th")].map((el) => el.textContent), ["Inventory", "Updates", "Maintenance", "Activity"]);
+  assert.equal(doc.querySelectorAll(".machine-table > colgroup > col").length, 11);
   assert.equal(doc.querySelector(".more-heading").textContent, "More");
   assert.match(read("style.css"), /\.more-heading, \.dashboard-page td\.more-cell \{ padding-inline: 4px; text-align: center; \}/);
-  assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Type"]').textContent.trim(), "Node");
+  assert.equal(doc.querySelector('[data-machine-row="pve"] .type-chip').textContent.trim(), "Node");
   assert.equal(doc.querySelector('[data-machine-row="pve"] .update-action-cell [data-act="upgrade"] span').textContent, "Update");
-  assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Reboot"] [data-act="reboot"] span').textContent, "Reboot");
-  assert.ok(doc.querySelector('[data-machine-row="pve"] .reboot-action .ui-icon'));
+  assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Reboot"] [data-act="reboot"]'), null);
+  assert.ok(doc.querySelector('[data-machine-row="pve"] .reboot-status .ui-icon'));
   assert.equal(doc.querySelector('[data-machine-row="phased"] [data-act="upgrade"]'), null);
   assert.equal(doc.querySelector('[data-machine-row="phased"] .update-metric.phased').textContent.trim(), "1");
-  assert.match(doc.querySelector('[data-machine-row="phased"] .update-action-cell').textContent, /Up to date/);
+  assert.match(doc.querySelector('[data-machine-row="phased"] .update-status-cell').textContent, /Up to date/);
   assert.equal(doc.querySelector('[data-machine-row="failed"] .update-action-cell [data-act="check"] span').textContent, "Retry");
-  assert.equal(doc.querySelector('[data-machine-row="offline"] [data-label="Updates"]').textContent.trim(), "");
-  assert.match(doc.querySelector('[data-machine-row="offline"] .update-action-cell').textContent, /Not running/);
-  assert.ok(doc.querySelector('[data-machine-row="offline"] .update-action-cell .ui-icon'));
-  assert.equal(doc.querySelector('[data-machine-row="offline"] .update-action-cell .bad'), null);
+  assert.equal(doc.querySelector('[data-machine-row="offline"] .update-metric'), null);
+  assert.match(doc.querySelector('[data-machine-row="offline"] .update-status-cell').textContent, /Not running/);
+  assert.ok(doc.querySelector('[data-machine-row="offline"] .update-status-cell .ui-icon'));
+  assert.equal(doc.querySelector('[data-machine-row="offline"] .update-status-cell .bad'), null);
   assert.equal(doc.querySelector('[data-machine-row="current"] .update-action-cell button'), null);
-  assert.match(doc.querySelector('[data-machine-row="current"] .update-action-cell').textContent, /Up to date/);
+  assert.match(doc.querySelector('[data-machine-row="current"] .update-status-cell').textContent, /Up to date/);
   assert.doesNotMatch(doc.querySelector("#groups").textContent, /—/);
   assert.match(doc.querySelector("#summary").textContent, /1Machine needing updates/);
   assert.match(doc.querySelector("#schedule-status").textContent, /Next check in 2 h/);
@@ -181,12 +182,64 @@ test("update columns separate security, packages and phased updates with only re
   ui.click('[data-machine-row="pve"] .update-metric.security');
   assert.deepEqual([...doc.querySelectorAll("#packages-pve .package-type")].map((el) => el.textContent.trim()), ["Security", "Package", "Phased", "Waiting"]);
   ui.click('[data-machine-menu="pve"]');
-  assert.doesNotMatch(doc.querySelector("#machine-actions").textContent, /Reboot/);
+  assert.match(doc.querySelector("#machine-actions").textContent, /Reboot/);
   assert.match(doc.querySelector("#machine-actions").textContent, /Check updates/);
   assert.match(doc.querySelector("#machine-actions").textContent, /Back up configuration/);
   assert.equal(doc.querySelectorAll("#machine-actions .ui-icon").length >= 3, true);
   assert.equal(doc.querySelector("#machine-actions .menu-caption").textContent.trim(), "pve");
   assert.doesNotMatch(doc.querySelector("#machine-actions").textContent, /…/);
+  assert.deepEqual(ui.errors, []);
+});
+
+test("last-known results stay visible without stale update or reboot actions", async () => {
+  const last = { checked_at: new Date(Date.now() - 3 * 3600000).toISOString(), reboot_required: true,
+    packages: [{ name: '<script>unsafe</script>', current: "1", available: "2", security: true },
+      { name: "systemd", current: "1", available: "2", phased: true }] };
+  const ui = await dashboard({ targets: [
+    machine("failed", { check: { error: "agent <script>unavailable</script>", last_successful: last } }),
+    machine("offline", { target: { status: "stopped", updatable: false }, check: last }),
+    machine("reboot", { check: { reboot_required: true } }),
+    machine("both", { target: { backup: { last: new Date(Date.now() - 14 * 86400000).toISOString(), in_job: true } }, check: { os: "Debian GNU/Linux 13 (trixie)", reboot_required: true, packages: [{ name: "curl", available: "2" }] } }),
+    machine("scheduled", { guest: true, target: { backup: { in_job: true, last: null } } }),
+  ] });
+  const doc = ui.document;
+  for (const id of ["failed", "offline"]) {
+    const row = doc.querySelector(`[data-machine-row="${id}"]`);
+    assert.equal(row.querySelectorAll(".update-metric.stale").length, 2);
+    assert.equal(row.querySelector('[data-act="upgrade"]'), null);
+    assert.equal(row.querySelector('[data-act="reboot"]'), null);
+    assert.equal(row.querySelector(".reboot-status"), null);
+    assert.equal(row.querySelector("[data-select]").disabled, true);
+  }
+  ui.click('[data-machine-row="failed"] .update-metric.security');
+  assert.match(doc.querySelector("#packages-failed").textContent, /Last successful check/);
+  assert.equal(doc.querySelector("#packages-failed script"), null);
+  ui.click('[data-machine-info="failed"]');
+  assert.match(doc.querySelector("#machine-information").textContent, /agent <script>unavailable/);
+  assert.equal(doc.querySelector("#machine-information script"), null);
+  assert.match(doc.querySelector("#summary").textContent, /2Machines needing recheck/);
+  assert.equal(doc.querySelectorAll('[data-machine-row="both"] .update-action-cell button').length, 1);
+  assert.ok(doc.querySelector('[data-machine-row="both"] [data-act="upgrade"]'));
+  assert.ok(doc.querySelector('[data-machine-row="both"] .reboot-status'));
+  assert.equal(doc.querySelector('[data-machine-row="both"] .backup-cell').textContent.trim(), "2 w ago");
+  assert.equal(doc.querySelector('[data-machine-row="both"] .machine-os').textContent, "Debian 13");
+  assert.equal(doc.querySelector('[data-machine-row="both"] .machine-os').getAttribute("title"), "Debian GNU/Linux 13 (trixie)");
+  ui.click('[data-machine-menu="both"]');
+  assert.ok(doc.querySelector('#machine-actions [data-act="reboot"]'));
+  ui.click('[data-machine-row="reboot"] [data-act="reboot"]');
+  assert.equal(doc.querySelector("#confirm").open, true);
+  assert.equal(ui.calls.some((call) => call.path === "/api/actions"), false);
+  const scheduled = doc.querySelector('[data-machine-row="scheduled"]');
+  assert.equal(scheduled.querySelector(".backup-cell").textContent, "No backup found");
+  assert.ok(scheduled.querySelector(".backup-job"));
+  assert.ok(scheduled.querySelector(".machine-os"));
+  for (const table of doc.querySelectorAll(".machine-table")) {
+    const columns = table.querySelectorAll("colgroup col").length;
+    for (const row of table.querySelectorAll(":scope > thead > tr, :scope > tbody > tr")) {
+      const span = [...row.children].reduce((n, cell) => n + Number(cell.getAttribute("colspan") || 1), 0);
+      assert.equal(span, columns, "header, rows and detail panels span the same columns");
+    }
+  }
   assert.deepEqual(ui.errors, []);
 });
 
@@ -246,7 +299,7 @@ test("machine backup context uses neutral information popovers", async () => {
   const panel = doc.querySelector("#machine-information");
   assert.equal(panel.hidden, false);
   assert.ok(doc.activeElement === panel, "opening the popover moves focus to its content");
-  assert.deepEqual([...panel.querySelectorAll("h3")].map((el) => el.textContent), ["Backup", "Repositories"]);
+  assert.deepEqual([...panel.querySelectorAll("h3")].map((el) => el.textContent), ["Updates", "Backup", "Repositories"]);
   assert.match(panel.textContent, /Not configured <img src=x onerror="alert\(1\)">/);
   assert.match(panel.textContent, /Repositories \(from PVE\): No-Subscription/);
   assert.equal(panel.querySelector("img"), null, "information remains escaped");
@@ -261,7 +314,7 @@ test("machine backup context uses neutral information popovers", async () => {
   assert.ok(guestTrigger);
   ui.click('[data-machine-info="guest"]');
   assert.equal(panel.querySelector("#machine-information-title").textContent, "Machine information");
-  assert.deepEqual([...panel.querySelectorAll("h3")].map((el) => el.textContent), ["Backup"]);
+  assert.deepEqual([...panel.querySelectorAll("h3")].map((el) => el.textContent), ["Updates", "Backup"]);
   assert.match(panel.textContent, /Some storage details need attention/);
   assert.match(panel.textContent, /2 backups found/);
   assert.match(panel.textContent, /Covered by a backup job/);
@@ -276,7 +329,7 @@ test("machine backup context uses neutral information popovers", async () => {
   assert.ok(standaloneTrigger);
   ui.click('[data-machine-info="standalone"]');
   assert.equal(panel.querySelector("#machine-information-title").textContent, "Machine information");
-  assert.deepEqual([...panel.querySelectorAll("h3")].map((el) => el.textContent), ["Backup"]);
+  assert.deepEqual([...panel.querySelectorAll("h3")].map((el) => el.textContent), ["Updates", "Backup"]);
   assert.match(panel.textContent, /Configure a host backup first/);
   assert.deepEqual(ui.errors, []);
 });
@@ -322,7 +375,7 @@ test("optional Docker status is separate, honest about failed checks, and never 
   const dockerTable = ui.document.querySelector('[data-machine-row="docker-vm"]').closest("table");
   assert.equal(dockerTable.classList.contains("has-backup"), true);
   assert.equal(dockerTable.classList.contains("has-containers"), true);
-  assert.equal(dockerTable.querySelectorAll("colgroup > col").length, 15);
+  assert.equal(dockerTable.querySelectorAll("colgroup > col").length, 14);
   assert.equal(ui.document.querySelectorAll("[data-open-docker]").length, 1);
   ui.click('[data-open-docker="docker-vm"]');
   assert.equal(ui.document.querySelector("#groups").hidden, true);

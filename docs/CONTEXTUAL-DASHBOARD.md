@@ -4,30 +4,40 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
 
 ## What changes
 
-- Three compact summary cards: machines needing updates, machines with security updates,
-  and machines requiring a reboot. Labels use the correct singular/plural form, and the
+- Four compact summary cards: machines needing updates, machines with security updates,
+  machines requiring a reboot, and machines needing recheck. The first three use current,
+  successful results; offline, failed and unchecked machines count toward recheck. Labels use the correct singular/plural form, and the
   overview shows when the next automatic check will run.
 - A short toolbar: **Check updates**, with less frequent tasks in a compact icon-led menu.
   The menu separates inventory tasks from backup and notification tools, and marks the
   optional hidden-machine view without changing the menu label.
-- Single-line rows keep machine/state, type, OS, backup age and job coverage, **Security**, **Package**,
-  **Phased**, **Update**, **Reboot**, **Checked** and **More** in separate, left-aligned columns.
-  Stable column proportions reserve flexible room for machine and OS names without letting
-  the compact status/action columns drift apart.
+- Single-line rows combine machine/state, type and a compact OS label in one flexible cell;
+  the full OS name remains available on the label and in machine information. Backup age and
+  job coverage retain separate columns. Left-aligned group headings organize Inventory, Backup,
+  Updates, Maintenance and Activity. Security, Package, Phased and the icon-only Reboot indicator
+  sit under Updates; their compact cells are centered. Status and Actions are separate and left-aligned.
 - Apt packages deferred by Ubuntu/Debian phasing are detected with read-only simulations.
   Packages that apt lists separately as not upgrading, but which become installable when only
   the phase policy changes, are included in the green **Phased** count and identified as
   **Waiting** in the detail table. They are excluded from actionable counts and update jobs.
-- **Update**, **Check** and **Retry** share the Update column and appear only when relevant;
-  otherwise it shows a green **Up to date** state. A stopped guest shows a neutral
-  **Not running** state in that column. A reboot
-  requirement becomes a distinct gold **Reboot** button in its own column when the action is
-  allowed, or a non-clickable **Required** status when configuration blocks it. Empty cells
-  do not show placeholder dashes.
+- Status shows **Up to date**, **Updates available**, **Check failed**, **Not running** or **Offline**.
+  Actions shows one next action: **Update**, **Check**, **Retry**, or **Reboot**. When updates and a
+  reboot are both needed, Update takes priority; manual reboot remains in More and the existing
+  update confirmation can request reboot afterwards. A current reboot requirement uses a small
+  gold box in the Reboot column, including when configuration prevents rebooting. Empty cells
+  do not show placeholder dashes or an ambiguous Unknown reboot value.
+- Failed checks preserve the last successful package/reboot snapshot separately in persistent
+  state. Offline or failed machines show muted last-known package counts, expandable with a
+  historical-result notice. These counts are excluded from selection and current KPIs; a stale
+  reboot requirement is explained in Info rather than presented as current. Info also includes
+  the latest error, attempt time and last successful check time. A successful check clears the snapshot.
+  Historical results lost before this version cannot be recovered.
 - Per-machine **More** menus use icons and concise labels for checks, configuration backups,
   hiding and any optional command-console or Docker actions that are actually available.
 - Backup age and job coverage use separate compact columns: a neutral calendar icon appears only
   when a backup job covers the machine, while a neutral X replaces ambiguous missing values.
+  If a job exists but no backup is found, Last backup says **No backup found** and Job still shows
+  its calendar icon. Ages use hours, days and weeks without changing job coverage.
   Exact dates, storage, counts, verification, job coverage and backup notes live in one neutral
   information popover in a dedicated compact **Info** column; Proxmox nodes also include repository context there.
 - Selecting machines reveals the bulk-update bar. Updates and reboots retain their confirmation dialogs.
@@ -126,6 +136,14 @@ use an offline DOM with synthetic API responses; they do not open a browser or c
 Node dependencies are development-only and are not included in the runtime image.
 
 ### Preview verification
+
+For the status/actions and last-known-results revision: all 10 offline dashboard tests pass,
+including failed/offline history, update/reboot priority, confirmation dialogs, selection,
+backup-job coverage, column spans, escaped content and Docker-disabled behavior. The focused
+Python suite passes 121 tests, skips 1 and deselects 2 after reproducing their existing macOS
+incompatibilities (GNU `script` options and Linux `/proc` boot information). Ruff checks pass.
+Browser access to the loopback demo was declined for this revision, so its rendered appearance
+was not verified in a browser. No homelab machines were contacted.
 
 In the restricted development environment: 398 Python tests passed, 6 were skipped, and 16 documented
 platform/sandbox-dependent tests were deselected after a full run reproduced those same failures.

@@ -489,60 +489,61 @@ a.brand { color: var(--text); text-decoration: none; }
 #docker-settings-dialog input, #docker-settings-dialog select { width: 100%; }
 .discovery-note { font-size: 12px; }
 .dashboard-page .group-head { padding: 11px 16px; }
-.dashboard-page .machine-table { min-width: 1160px; table-layout: fixed; }
-.dashboard-page .machine-table.has-backup { min-width: 1300px; }
-.dashboard-page .machine-table.has-containers { min-width: 1320px; }
-.dashboard-page .machine-table.has-backup.has-containers { min-width: 1470px; }
-.dashboard-page .machine-table col.col-select { width: 3.5%; }
-.dashboard-page .machine-table col.col-machine { width: 20%; }
-.dashboard-page .machine-table col.col-type { width: 7%; }
-.dashboard-page .machine-table col.col-os { width: 16.5%; }
+.dashboard-page .machine-table { min-width: 1100px; table-layout: fixed; }
+.dashboard-page .machine-table.has-backup { min-width: 1280px; }
+.dashboard-page .machine-table.has-containers { min-width: 1240px; }
+.dashboard-page .machine-table.has-backup.has-containers { min-width: 1420px; }
+.dashboard-page .machine-table col.col-select { width: 3%; }
+.dashboard-page .machine-table col.col-machine { width: 36%; }
 .dashboard-page .machine-table col.col-metric { width: 6%; }
-.dashboard-page .machine-table col.col-update { width: 12%; }
-.dashboard-page .machine-table col.col-reboot { width: 8%; }
+.dashboard-page .machine-table col.col-status { width: 13%; }
+.dashboard-page .machine-table col.col-update { width: 9%; }
+.dashboard-page .machine-table col.col-reboot { width: 6%; }
 .dashboard-page .machine-table col.col-checked { width: 8%; }
 .dashboard-page .machine-table col.col-info { width: 3.5%; }
 .dashboard-page .machine-table col.col-more { width: 3.5%; }
-.dashboard-page .machine-table.has-backup col.col-select { width: 3%; }
-.dashboard-page .machine-table.has-backup col.col-machine { width: 19%; }
-.dashboard-page .machine-table.has-backup col.col-type { width: 6%; }
-.dashboard-page .machine-table.has-backup col.col-os { width: 12.5%; }
-.dashboard-page .machine-table.has-backup col.col-backup { width: 9%; }
+.dashboard-page .machine-table.has-backup col.col-select { width: 2.5%; }
+.dashboard-page .machine-table.has-backup col.col-machine { width: 30%; }
+.dashboard-page .machine-table.has-backup col.col-backup { width: 10%; }
 .dashboard-page .machine-table.has-backup col.col-backup-job { width: 4%; }
 .dashboard-page .machine-table.has-backup col.col-metric { width: 5%; }
-.dashboard-page .machine-table.has-backup col.col-update { width: 10%; }
-.dashboard-page .machine-table.has-backup col.col-reboot { width: 7%; }
-.dashboard-page .machine-table.has-backup col.col-checked { width: 7.5%; }
+.dashboard-page .machine-table.has-backup col.col-status { width: 11%; }
+.dashboard-page .machine-table.has-backup col.col-update { width: 8%; }
+.dashboard-page .machine-table.has-backup col.col-reboot { width: 5%; }
+.dashboard-page .machine-table.has-backup col.col-checked { width: 7%; }
 .dashboard-page .machine-table.has-backup col.col-more { width: 3.5%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-select { width: 3%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-machine { width: 19%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-type { width: 6%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-os { width: 14%; }
+.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-machine { width: 32%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-metric { width: 5%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-update { width: 10%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-reboot { width: 7%; }
+.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-status { width: 12%; }
+.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-update { width: 9%; }
+.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-reboot { width: 5%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-containers { width: 11%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-checked { width: 8%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-more { width: 3.5%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-select { width: 3%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-machine { width: 16.5%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-type { width: 6%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-os { width: 11%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-select { width: 2.5%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-machine { width: 27%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-backup { width: 8%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-backup-job { width: 3.5%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-metric { width: 4.5%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-update { width: 9%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-reboot { width: 7%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-status { width: 11%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-update { width: 8%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-reboot { width: 4%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-containers { width: 9%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-checked { width: 7%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-more { width: 3%; }
 .dashboard-page .machine-table > thead > tr > th { white-space: nowrap; }
+.dashboard-page .machine-table .column-groups th { padding: 7px 12px 2px; border-bottom: 0; background: var(--panel); color: var(--muted); text-align: left; font-size: 11px; font-weight: 500; }
+.dashboard-page .machine-table .column-headings th { padding-top: 5px; }
 .dashboard-page .machine-table > tbody > .machine-row > td { height: 56px; padding-top: 8px; padding-bottom: 8px; white-space: nowrap; }
 .dashboard-page .machine-table > tbody > .machine-row > td:first-child { padding-left: 14px; padding-right: 5px; }
 .dashboard-page .machine-table .machine-cell { overflow: visible; font-weight: 600; }
 .dashboard-page .machine-table tr.guest td.machine-cell { padding-left: 12px; }
 .dashboard-page .machine-main { position: relative; z-index: 2; display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
 .dashboard-page .machine-main .state { display: inline-flex; align-items: center; }
+.dashboard-page .machine-main .state, .dashboard-page .machine-main .chip, .dashboard-page .machine-main .machine-note { flex: none; }
+.dashboard-page .machine-os { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12px; font-weight: 400; }
+.dashboard-page .machine-name { flex: 0 1 auto; }
 .dashboard-page .machine-main .dot { width: 10px; height: 10px; margin: 0; }
 .dashboard-page .machine-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard-page .machine-note, .dashboard-page .repo-note { display: inline-flex; align-items: center; margin-left: 5px; }
@@ -562,16 +563,22 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .update-metric.security { color: var(--bad); background: color-mix(in srgb, var(--bad) 11%, var(--panel)); }
 .dashboard-page .update-metric.package { color: var(--text); }
 .dashboard-page .update-metric.phased { color: var(--ok); }
+.dashboard-page .update-metric.stale { opacity: .54; }
+.dashboard-page .last-known-note { margin: 10px 12px; color: var(--muted); font-size: 12px; }
 .dashboard-page .update-metric .ui-icon { width: 14px; height: 14px; }
 .dashboard-page .update-summary { color: var(--text-2); }
 .dashboard-page .status-inline { display: inline-flex; align-items: center; gap: 6px; font-weight: 550; }
 .dashboard-page .status-inline.unavailable { max-width: 100%; overflow: hidden; color: var(--muted); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard-page .status-inline.unavailable .ui-icon { flex: none; }
-.dashboard-page .update-action-cell { min-width: 112px; padding-inline: 8px; text-align: left; }
+.dashboard-page .update-action-cell { padding-inline: 8px; text-align: left; }
+.dashboard-page .update-status-cell { overflow: hidden; text-overflow: ellipsis; }
+.dashboard-page .update-status-cell .status-inline { max-width: 100%; }
+.dashboard-page .update-status-cell .ui-icon { flex: none; }
+.dashboard-page .reboot-heading, .dashboard-page .reboot-cell { text-align: center; padding-inline: 5px; }
 .dashboard-page .update-action-cell .status-inline.ok { white-space: nowrap; }
 .dashboard-page .reboot-status { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
 .dashboard-page .reboot-status .ui-icon { width: 13px; height: 13px; }
-.dashboard-page .reboot-status.required { padding: 3px 8px; border-radius: 999px; color: var(--reboot); background: color-mix(in srgb, var(--reboot) 13%, var(--panel)); font-weight: 650; }
+.dashboard-page .reboot-status.required { width: 28px; height: 28px; justify-content: center; border-radius: 6px; color: var(--reboot); background: color-mix(in srgb, var(--reboot) 11%, var(--panel)); }
 .dashboard-page button.reboot-action { padding-inline: 8px; border-color: color-mix(in srgb, var(--reboot) 45%, var(--border)); background: color-mix(in srgb, var(--reboot) 10%, var(--panel)); color: var(--reboot); box-shadow: none; font-weight: 650; }
 .dashboard-page button.reboot-action:hover:not(:disabled) { border-color: var(--reboot); background: color-mix(in srgb, var(--reboot) 16%, var(--panel)); }
 .dashboard-page .last-check { color: var(--muted); }
@@ -610,6 +617,7 @@ a.brand { color: var(--text); text-decoration: none; }
     width: var(--tree-line); transform: translateX(-50%); border-radius: 999px; background: var(--tree-color);
   }
   .dashboard-page .machine-table tr.guest .machine-main { margin-left: var(--guest-indent); }
+  .dashboard-page .machine-table tr.guest .machine-main { max-width: calc(100% - var(--guest-indent)); }
   .dashboard-page .machine-table tr.guest .machine-cell::before {
     content: ""; position: absolute; z-index: 1; left: calc(var(--tree-x) - 1px); top: calc(50% - var(--guest-curve));
     width: var(--guest-branch); height: var(--guest-curve); border-left: var(--tree-line) solid var(--tree-color);

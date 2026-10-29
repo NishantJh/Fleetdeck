@@ -5,7 +5,7 @@ import pytest
 
 from fleetdeck.inventory import Inventory
 from fleetdeck.jobs import JobManager
-from fleetdeck.models import CheckResult, ExecResult, Job, Target
+from fleetdeck.models import CheckResult, ExecResult, Job, Package, Target
 from fleetdeck.updates import CHECK_SCRIPT, COMMUNITY_UPDATE_SCRIPT, UPGRADE_SCRIPT
 
 
@@ -65,6 +65,35 @@ async def test_failed_check_replaces_stale_result():
     await _finish(jobs)
     assert "connection refused" in jobs.checks["t1"].error
     assert jobs.checks["t1"].os == "Debian"
+
+
+async def test_failed_checks_keep_a_separate_successful_snapshot(tmp_path):
+    from fleetdeck.store import Store
+
+    store = Store(tmp_path / "state.db")
+    jobs = JobManager(_inventory((_target(), FakeExecutor())), store=store)
+    good = CheckResult(
+        checked_at=datetime.now(UTC),
+        os="Debian",
+        reboot_required=True,
+        packages=[Package(name="openssl", available="2", security=True)],
+    )
+    jobs._set_check("t1", good)
+    # A parsed failure and a transport failure both keep the same last good result.
+    jobs._set_check("t1", CheckResult(checked_at=datetime.now(UTC), error="agent unavailable"))
+    jobs._record_check_error("t1", "agent unavailable")
+    failed = jobs.checks["t1"]
+    assert failed.packages == [] and failed.reboot_required is None
+    assert failed.last_successful.packages == good.packages
+    assert failed.last_successful.reboot_required is True
+    assert failed.last_successful.checked_at == good.checked_at
+    assert failed.checked_at > good.checked_at
+    loaded = store.load_checks()["t1"]
+    assert loaded == failed
+    # A fresh successful result clears the history and becomes authoritative.
+    jobs._set_check("t1", CheckResult(checked_at=datetime.now(UTC), reboot_required=False))
+    assert jobs.checks["t1"].last_successful is None
+    store.close()
 
 
 async def test_failed_recheck_does_not_fail_successful_upgrade():
