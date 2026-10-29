@@ -225,7 +225,10 @@ test("machine backup context uses neutral information popovers", async () => {
   assert.equal(unscheduled.querySelector(".backup-job-cell").textContent.trim(), "");
   assert.equal(standalone.querySelector(".backup-missing").getAttribute("aria-label"), "No backup found");
   assert.equal(standalone.querySelector(".backup-job-cell").textContent.trim(), "");
-  assert.match(read("style.css"), /\.backup-job \{ width: 34px; min-height: 28px; justify-content: center; \}/);
+  assert.equal(guest.closest("table").querySelector(".backup-job-heading").textContent, "Job");
+  const css = read("style.css");
+  assert.match(css, /\.backup-job \{ width: 34px; min-height: 28px; justify-content: center; \}/);
+  assert.match(css, /\.backup-job-heading, \.dashboard-page \.backup-job-cell \{ padding-inline: 5px; text-align: center; \}/);
   assert.ok(standalone.querySelector(".repo-note"));
   assert.equal(node.querySelector(".repo-note"), null);
   assert.ok(node.querySelector(".last-check-content"));

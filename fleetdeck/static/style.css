@@ -550,6 +550,7 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .os-cell { overflow: hidden; text-overflow: ellipsis; }
 .dashboard-page .backup-missing, .dashboard-page .backup-job { display: inline-flex; align-items: center; }
 .dashboard-page .backup-job { width: 34px; min-height: 28px; justify-content: center; }
+.dashboard-page .backup-job-heading, .dashboard-page .backup-job-cell { padding-inline: 5px; text-align: center; }
 .dashboard-page .backup-cell .ui-icon, .dashboard-page .backup-job-cell .ui-icon { width: 15px; height: 15px; }
 .dashboard-page th.update-heading, .dashboard-page td.update-metric-cell { padding-inline: 5px; text-align: left; }
 .dashboard-page .update-metric {
@@ -634,7 +635,7 @@ a.brand { color: var(--text); text-decoration: none; }
   .dashboard-page .group td.actions button { flex: none; padding: 5px 8px; }
   .dashboard-page .group td[data-label] { grid-column: 2 / -1; }
   .dashboard-page .group td[data-label]::before { min-width: 88px; }
-  .dashboard-page .group td.update-metric-cell { text-align: left; }
+  .dashboard-page .group td.update-metric-cell, .dashboard-page .group td.backup-job-cell { text-align: left; }
   .dashboard-page .group .update-metric { margin: 0; }
   .dashboard-page .group .cell-detail { max-width: 100%; }
   .dashboard-page .packages-panel { margin-left: 0; }

@@ -343,7 +343,7 @@ function render() {
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
       <div class="group-scroll"><table class="machine-table${withBackup ? " has-backup" : ""}${state.settings.docker_enabled ? " has-containers" : ""}" aria-label="${esc(g.title)} machines">
         <colgroup><col class="col-select"><col class="col-machine"><col class="col-type"><col class="col-os">${withBackup ? '<col class="col-backup"><col class="col-backup-job">' : ""}<col class="col-metric"><col class="col-metric"><col class="col-metric"><col class="col-update"><col class="col-reboot">${state.settings.docker_enabled ? '<col class="col-containers">' : ""}<col class="col-checked"><col class="col-more"></colgroup>
-        <thead><tr><th></th><th>Machine</th><th>Type</th><th>OS</th>${withBackup ? "<th>Last backup</th><th>Job</th>" : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th>Update</th><th>Reboot</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Checked</th><th>More</th></tr></thead>
+        <thead><tr><th></th><th>Machine</th><th>Type</th><th>OS</th>${withBackup ? '<th>Last backup</th><th class="backup-job-heading">Job</th>' : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th>Update</th><th>Reboot</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Checked</th><th>More</th></tr></thead>
         <tbody>${g.rows.map((v, index) => rowHtml(v, withBackup, {
           hasGuests: v.target.kind === "host" && guestIndexes.length > 0,
           firstGuest: index === firstGuest,
