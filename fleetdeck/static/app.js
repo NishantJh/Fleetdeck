@@ -7,6 +7,8 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "
 const PLATFORM = { proxmox: "Proxmox", incus: "Incus", ssh: "Standalone", demo: "Demo" };
 const KIND = { host: "Host", lxc: "LXC", vm: "VM", container: "Container" };
 const ICON = {
+  monitor: '<rect x="3" y="3" width="18" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
+  server: '<rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
   reboot: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
   power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/>',
@@ -663,7 +665,9 @@ function confirmAction(action, ids) {
         : ` · ${app}'s own update is off: run "update" in it if it misbehaves`;
     }
     if (upgradeAction) {
-      return `<li class="confirm-machine"><span class="confirm-machine-name">${icon("package")}<strong>${esc(v?.target.name || id)}</strong>${v ? `<span class="chip">${esc(kindLabel(v.target))}</span>` : ""}</span><span class="confirm-machine-detail muted">${esc(detail)}</span></li>`;
+      const machineIcon = v?.target.kind === "host" ? "server" : "monitor";
+      const countIcon = securityPackages(v?.check).length ? "shield" : "package";
+      return `<li class="confirm-machine"><span class="confirm-machine-name">${icon(machineIcon)}<strong>${esc(v?.target.name || id)}</strong>${v ? `<span class="chip">${esc(kindLabel(v.target))}</span>` : ""}</span><span class="confirm-machine-detail muted">${icon(countIcon)}<span>${esc(detail)}</span></span></li>`;
     }
     return `<li>${esc(v?.target.name || id)} <span class="muted">${esc(detail)}</span></li>`;
   }).join("");

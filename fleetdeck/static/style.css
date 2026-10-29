@@ -183,7 +183,7 @@ dialog input[type="text"] { margin: 2px 0 6px; }
 #confirm .confirm-machine-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
 #confirm .confirm-machine-name strong { font-weight: 550; overflow-wrap: anywhere; }
 #confirm .confirm-machine-name .ui-icon { color: var(--muted); }
-#confirm .confirm-machine-detail { font-size: 12px; overflow-wrap: anywhere; }
+#confirm .confirm-machine-detail { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
 #confirm .confirm-option { display: flex; flex-direction: row; align-items: flex-start; gap: 11px; margin: 18px 0; text-align: left; }
 #confirm .confirm-option input { flex: none; width: 17px; height: 17px; margin: 2px 0 0; }
 #confirm .confirm-option strong { display: block; font-weight: 550; }
