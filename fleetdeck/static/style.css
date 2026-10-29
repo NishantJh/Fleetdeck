@@ -123,7 +123,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--accent); width
 td[data-label] > span, th, td.actions { white-space: nowrap; }
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 7px; vertical-align: 1px; }
 .dot.on { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 20%, transparent); }
-.dot.off { background: var(--bad); }
+.dot.off { background: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 20%, transparent); }
 .pkgs > td { background: var(--panel-2); }
 .docker-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; padding: 10px 10px 4px; }
 .docker-head label { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; white-space: nowrap; }

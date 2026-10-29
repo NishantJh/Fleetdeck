@@ -188,7 +188,7 @@ test("update columns separate security, packages and phased updates with only re
   assert.deepEqual(ui.errors, []);
 });
 
-test("Proxmox backup and repository context share neutral information popovers", async () => {
+test("machine backup context uses neutral information popovers", async () => {
   const unsafeBackupNote = 'Not configured <img src=x onerror="alert(1)">';
   const guestBackupNote = "Some storage details need attention";
   const ui = await dashboard({ targets: [
@@ -201,13 +201,29 @@ test("Proxmox backup and repository context share neutral information popovers",
       parent: "pve",
       target: { backup: { last: new Date(Date.now() - 3600 * 1000).toISOString(), storage: "backup", count: 2, note: guestBackupNote } },
     }),
+    machine("unscheduled", {
+      guest: true,
+      parent: "pve",
+      target: { backup: { last: null, stale: true, in_job: false, note: "No matching backup job" } },
+    }),
+    machine("standalone", {
+      target: { platform: "ssh", kind: "host", parent: null, backup: { last: null, not_set_up: true, note: "Configure a host backup first" } },
+      check: { notes: ["Repository refresh needs attention"] },
+    }),
   ] });
   const doc = ui.document;
   const node = doc.querySelector('[data-machine-row="pve"]');
   const guest = doc.querySelector('[data-machine-row="guest"]');
+  const unscheduled = doc.querySelector('[data-machine-row="unscheduled"]');
+  const standalone = doc.querySelector('[data-machine-row="standalone"]');
   assert.equal(node.querySelector(".backup-cell").textContent.trim(), "");
   assert.match(guest.querySelector(".backup-cell").textContent, /h ago/);
   assert.doesNotMatch(guest.querySelector(".backup-cell").textContent, /ⓘ/);
+  assert.equal(unscheduled.querySelector(".backup-cell").textContent.trim(), "Not scheduled");
+  assert.doesNotMatch(unscheduled.querySelector(".backup-cell").textContent, /\?|no job/i);
+  assert.equal(standalone.querySelector(".backup-cell").textContent.trim(), "Not set up");
+  assert.doesNotMatch(standalone.querySelector(".backup-cell").textContent, /ⓘ/);
+  assert.ok(standalone.querySelector(".repo-note"));
   assert.equal(node.querySelector(".repo-note"), null);
   assert.ok(node.querySelector(".last-check-content"));
 
@@ -238,6 +254,13 @@ test("Proxmox backup and repository context share neutral information popovers",
   assert.equal(panel.querySelector("#machine-information-title").textContent, "Machine information");
   assert.deepEqual([...panel.querySelectorAll("h3")].map((el) => el.textContent), ["Backup"]);
   assert.match(panel.textContent, /Some storage details need attention/);
+
+  const standaloneTrigger = standalone.querySelector('[data-machine-info="standalone"]');
+  assert.ok(standaloneTrigger);
+  ui.click('[data-machine-info="standalone"]');
+  assert.equal(panel.querySelector("#machine-information-title").textContent, "Machine information");
+  assert.deepEqual([...panel.querySelectorAll("h3")].map((el) => el.textContent), ["Backup"]);
+  assert.match(panel.textContent, /Configure a host backup first/);
   assert.deepEqual(ui.errors, []);
 });
 
@@ -270,6 +293,7 @@ test("cluster hierarchy uses the approved compact continuous tree geometry", () 
   assert.match(css, /--tree-line: 2px; --guest-indent: 26px; --guest-branch: 18px; --guest-curve: 11px;/);
   assert.match(css, /tr\.guest\.last-guest \.machine-cell::after \{ bottom: calc\(50% \+ var\(--guest-curve\)\); \}/);
   assert.match(css, /th\.update-heading, \.dashboard-page td\.update-metric-cell \{ padding-inline: 5px; text-align: left; \}/);
+  assert.match(css, /\.dot\.off \{ background: var\(--bad\); box-shadow: 0 0 0 3px color-mix\(in srgb, var\(--bad\) 20%, transparent\); \}/);
 });
 
 test("optional Docker status is separate, honest about failed checks, and never auto-pulls", async () => {

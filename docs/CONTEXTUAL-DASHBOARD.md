@@ -26,13 +26,15 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
   do not show placeholder dashes.
 - Per-machine **More** menus use icons and concise labels for checks, configuration backups,
   hiding and any optional command-console or Docker actions that are actually available.
-- Proxmox machines move backup notes into one neutral information popover beside the checked
-  time; nodes also include repository context there. Backup-note icons are removed from the
-  backup column, while real backup timestamps and meaningful backup states remain visible.
+- All machines move backup notes into one neutral information popover beside the checked time;
+  Proxmox nodes also include repository context there. Backup-note icons are removed from the
+  backup column, while real backup timestamps and clear states such as **Not set up** and
+  **Not scheduled** remain visible.
 - Selecting machines reveals the bulk-update bar. Updates and reboots retain their confirmation dialogs.
 - Platform/host groups and guest rows have a deterministic order, including after refreshes.
   Hosts use **Node** for Proxmox. A centered 2 px tree line uses compact guest indentation,
-  rounded branches and an exact final endpoint to keep the hierarchy clear without wasting name space.
+  rounded branches and an exact final endpoint to keep the hierarchy clear without wasting name
+  space. Online and offline dots use matching green or red halos.
 - The Fleetdeck logo links home, and dashboard/setup/login pages have a favicon.
 
 Existing protections, snapshot defaults, authentication and CSRF protections remain in place.

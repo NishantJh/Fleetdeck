@@ -161,23 +161,24 @@ function backupCell(t) {
     const tip = `${new Date(b.last).toLocaleString()} on ${b.storage} · ${b.count} backup${b.count > 1 ? "s" : ""}`;
     html = `<span class="${b.stale ? "warn" : ""}" title="${esc(tip)}">${ago(b.last)}</span>`;
   } else if (isProxmoxNode(t)) {
-    // Proxmox node configuration-backup context is available from the neutral node information popover.
+    // Proxmox node configuration-backup context is available from the neutral information popover.
     return "";
   } else if (b.not_set_up) {
-    html = `<span class="muted" title="${esc(b.note)}">not set up${isProxmox(t) ? "" : " ⓘ"}</span>`;
+    html = `<span class="muted" title="${esc(b.note)}">Not set up</span>`;
+  } else if (b.in_job === false) {
+    html = `<span class="chip warn" title="${esc(b.note || "Not in a scheduled backup job")}">Not scheduled</span>`;
   } else if (b.note) {
-    html = `<span class="muted" title="${esc(b.note)}">?</span>`;
+    html = `<span class="muted" title="${esc(b.note)}">Unavailable</span>`;
   } else {
-    html = `<span class="bad">none</span>`;
+    html = `<span class="bad">None</span>`;
   }
   if (b.verified === false) html += ` <span class="chip bad" title="The newest backup failed verification">verify failed</span>`;
-  if (b.in_job === false) html += ` <span class="chip warn" title="Not in any scheduled backup job">no job</span>`;
-  if (b.last && b.note && !isProxmox(t)) html += ` <span class="muted" title="${esc(b.note)}">ⓘ</span>`;
+  if (b.last && b.in_job === false) html += ` <span class="chip warn" title="Not in a scheduled backup job">Not scheduled</span>`;
   return html;
 }
 
 function machineInfoButton(t, c) {
-  if (!isProxmox(t) || (!t.backup && !c?.notes?.length)) return "";
+  if (!t.backup && !(isProxmox(t) && c?.notes?.length)) return "";
   const id = esc(t.id);
   return `<button class="small ghost machine-info-trigger" data-machine-info="${id}" data-focus-key="machine-info:${id}" aria-label="Information for ${esc(t.name)}" aria-controls="machine-information" aria-expanded="false">${icon("info")}</button>`;
 }
@@ -280,7 +281,7 @@ function rowHtml(v, withBackup, relation = {}) {
     <td class="update-action-cell" data-label="Update">${updateState(v)}</td>
     <td class="reboot-cell" data-label="Reboot">${reboot}</td>
     ${state.settings.docker_enabled ? `<td class="containers-cell" data-label="Containers">${dockerCell(v)}</td>` : ""}
-    <td class="last-check" data-label="Checked"><span class="last-check-content"><span>${c ? ago(c.checked_at) : "Never"}</span>${machineInfo || repoNote}</span></td>
+    <td class="last-check" data-label="Checked"><span class="last-check-content"><span>${c ? ago(c.checked_at) : "Never"}</span>${machineInfo}${repoNote}</span></td>
     <td class="more-cell"><button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="More actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button></td>
   </tr>`;
   if (c?.packages?.length && state.expanded.has(t.id)) {
@@ -455,12 +456,12 @@ function backupInformation(t) {
   } else if (b.note) {
     lines.push(b.note);
   } else if (b.not_set_up) {
-    lines.push(`Fleetdeck backup is not configured for this Proxmox ${isProxmoxNode(t) ? "node" : "machine"}.`);
+    lines.push("Fleetdeck backup is not configured for this machine.");
   } else {
-    lines.push(`No backup was found for this Proxmox ${isProxmoxNode(t) ? "node" : "machine"}.`);
+    lines.push("No backup was found for this machine.");
   }
   if (b.verified === false) lines.push("The newest backup failed verification.");
-  if (b.in_job === false) lines.push(`This ${isProxmoxNode(t) ? "node" : "machine"} is not in a scheduled backup job.`);
+  if (b.in_job === false) lines.push("This machine is not scheduled for backups.");
   return lines;
 }
 
@@ -470,9 +471,9 @@ function openMachineInformation(id, trigger) {
   closeMachineMenu();
   if (open) return;
   const v = state.targets.find((item) => item.target.id === id);
-  if (!v || !isProxmox(v.target)) return;
+  if (!v) return;
   const backup = backupInformation(v.target);
-  const repositories = v.check?.notes || [];
+  const repositories = isProxmox(v.target) ? v.check?.notes || [] : [];
   if (!backup.length && !repositories.length) return;
   const panel = $("#machine-information");
   panel.innerHTML = `<div class="machine-info-heading"><span>${icon("info")}<strong id="machine-information-title">${isProxmoxNode(v.target) ? "Node" : "Machine"} information</strong></span><span class="muted">${esc(v.target.name)}</span></div>${machineInfoSection("Backup", backup)}${machineInfoSection("Repositories", repositories)}`;
