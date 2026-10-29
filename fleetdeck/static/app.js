@@ -270,7 +270,7 @@ function rowHtml(v, withBackup, relation = {}, mobile = false) {
   const t = v.target, c = v.check;
   const shown = displayCheck(v);
   const self = v.runs_dashboard ? ` <span class="chip" title="This dashboard runs here">dashboard</span>` : "";
-  const monitor = v.monitor_only ? ` <span class="chip" title="${MONITOR_TIP}">monitor only</span>` : "";
+  const monitor = v.monitor_only ? ` <span class="chip monitor-policy" role="img" aria-label="Monitor only" title="${MONITOR_TIP}">${icon("eye")}</span>` : "";
   const cs = c?.community_script
     ? ` <span class="chip" title="${esc(csTip(c.community_script))}">helper script</span>` : "";
   const note = t.updatable && t.note
@@ -291,7 +291,7 @@ function rowHtml(v, withBackup, relation = {}, mobile = false) {
   if (state.selected.has(t.id)) rowClasses.push("is-selected");
   let html = `<tr class="${rowClasses.join(" ")}" data-machine-row="${esc(t.id)}">
     <td class="selection-cell"><label class="machine-select"><input type="checkbox" aria-label="Select ${esc(t.name)}" data-select="${esc(t.id)}" data-focus-key="select:${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) && !relation.context ? "" : "disabled"}><span class="mobile-select-label">Select</span></label></td>
-    <td class="name machine-cell" data-label="Machine"><span class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name" title="${esc(t.name)}">${esc(t.name)}</span><span class="machine-meta"><span class="chip type-chip">${esc(kindLabel(t))}</span>${c?.os ? `<span class="machine-os" title="${esc(c.os)}">${esc(compactOS(c.os))}</span>` : ""}${self}${monitor}${cs}${note}</span></span></td>
+    <td class="name machine-cell" data-label="Machine"><span class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name" title="${esc(t.name)}">${esc(t.name)}</span>${monitor}<span class="machine-meta"><span class="chip type-chip">${esc(kindLabel(t))}</span>${c?.os ? `<span class="machine-os" title="${esc(c.os)}">${esc(compactOS(c.os))}</span>` : ""}${self}${cs}${note}</span></span></td>
     ${withBackup ? `<td class="backup-cell" data-label="Last backup">${backupCell(t)}</td><td class="backup-job-cell" data-label="Job">${backupJobCell(t)}</td>` : ""}
     ${updateColumns(v)}
     <td class="reboot-cell" data-label="Reboot">${reboot}</td>
@@ -310,9 +310,9 @@ function rowHtml(v, withBackup, relation = {}, mobile = false) {
     const metrics = [["security", securityPackages(shown).length], ["package", regularPackages(shown).length], ["phased", phasedPackages(shown).length]]
       .filter(([, count]) => count > 0).map(([kind, count]) => metricButton(v, kind, count)).join("");
     html = `<article class="mc-card${relation.context ? " is-context" : ""}${v.hidden ? " is-hidden" : ""}" data-machine-row="${esc(t.id)}">
-      <div class="mc-header"><div class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name">${esc(t.name)}</span></div>
+      <div class="mc-header"><div class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name">${esc(t.name)}</span>${monitor}</div>
         <div class="mc-status-group">${updateState(v)}<div class="mc-check-line"><span class="mc-check-time">Checked ${c ? ago(c.checked_at) : "Never"}</span>${information}</div></div></div>
-      <div class="mc-meta-row"><div class="machine-meta"><span class="chip type-chip">${esc(kindLabel(t))}</span>${os ? `<span class="machine-os" title="${esc(os)}">${esc(compactOS(os))}</span>` : ""}${self}${monitor}${cs}${note}</div></div>
+      <div class="mc-meta-row"><div class="machine-meta"><span class="chip type-chip">${esc(kindLabel(t))}</span>${os ? `<span class="machine-os" title="${esc(os)}">${esc(compactOS(os))}</span>` : ""}${self}${cs}${note}</div></div>
       ${metrics || reboot ? `<div class="mc-counts">${metrics}${reboot ? `<span class="mc-reboot">${reboot}</span>` : ""}</div>` : ""}
       ${backup ? `<div class="mc-details"><div class="mc-detail-line"><span>Backup</span><div class="mc-backup-value">${backup}${backupJobCell(t)}</div>${!action ? more : ""}</div></div>` : ""}
       ${!action && !backup ? `<div class="mc-utility-row">${more}</div>` : ""}
@@ -474,7 +474,6 @@ function openMachineMenu(id, trigger) {
     (t.can_backup ? action("backup", "Back up configuration", "backup", !busy) : "") +
     (hasDocker(v) ? `<button data-docker-settings="${esc(id)}">${icon("settings")}Docker management</button>` : "") +
     (state.console?.enabled && !["stopped", "offline"].includes(t.status) ? `<button data-run="${esc(id)}">${icon("terminal")}Run command</button>` : "") +
-    `<button data-monitor="${v.monitor_only ? "0" : "1"}" data-id="${esc(id)}" ${t.monitor_only ? "disabled" : ""} title="${t.monitor_only ? "Set to monitor only in the config file" : MONITOR_TIP}">${icon("eye")}${v.monitor_only ? "Allow updates" : "Monitor only"}</button>` +
     `<button data-hide="${v.hidden ? "0" : "1"}" data-id="${esc(id)}">${icon(v.hidden ? "eye" : "eyeOff")}${v.hidden ? "Unhide machine" : "Hide machine"}</button>`;
   machineMenuId = id;
   trigger.setAttribute("aria-expanded", "true");
@@ -533,6 +532,10 @@ function openMachineInformation(id, trigger) {
   const backup = backupInformation(v.target);
   const repositories = isProxmox(v.target) ? v.check?.notes || [] : [];
   const updates = [];
+  if (v.monitor_only) {
+    updates.push("Monitor only: updates are installed outside Fleetdeck. Checks, reboots and backups remain available.");
+    updates.push(v.target.monitor_only ? "Update policy is managed in configuration on the Settings page." : "A saved monitor-only restriction from an earlier version remains active for safety.");
+  }
   if (!v.check) updates.push("No update check has completed for this machine.");
   if (v.check?.os) updates.push(`Operating system: ${v.check.os}`);
   if (!v.target.updatable) updates.push(`Machine unavailable: ${v.target.note || v.target.status}`);
@@ -779,18 +782,6 @@ async function setHidden(id, hidden) {
   render();
 }
 
-async function setMonitorOnly(id, on) {
-  try {
-    await api("/api/monitor-only", { method: "POST", body: JSON.stringify({ target_ids: [id], monitor_only: on }) });
-  } catch (e) {
-    alert(`Could not change it: ${e.message}`);
-    return;
-  }
-  for (const v of state.targets) if (v.target.id === id) v.monitor_only = on;
-  if (on) state.selected.delete(id);
-  render();
-}
-
 $("#confirm-reboot").addEventListener("change", () => {
   $("#confirm-reboot-note").hidden = !$("#confirm-reboot").checked;
 });
@@ -803,7 +794,7 @@ document.addEventListener("click", (e) => {
     for (const id of state.selected) if (!state.targets.some((v) => v.target.id === id && matchesKpi(v, state.filter))) state.selected.delete(id);
     closeMachineMenu(); closeMachineInformation(); render(); return;
   }
-  const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide],[data-monitor],[data-stack]");
+  const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide],[data-stack]");
   if (!el || el.disabled) return;
   closeMachineMenu();
   $("#dashboard-menu").open = false;
@@ -816,8 +807,6 @@ document.addEventListener("click", (e) => {
     setView("containers", el.dataset.id);
   } else if (el.dataset.act === "stacks") {
     confirmAction("stacks", [el.dataset.id]);
-  } else if (el.dataset.monitor) {
-    setMonitorOnly(el.dataset.id, el.dataset.monitor === "1");
   } else if (el.dataset.hide) {
     setHidden(el.dataset.id, el.dataset.hide === "1");
   } else if (el.dataset.toggle) {

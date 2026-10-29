@@ -99,7 +99,7 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
   a device check.
 
 Existing protections, authentication and CSRF protections remain in place.
-This does **not** add an OMV-specific updater. The upstream monitor-only policy is supported: checks and counts stay visible, OS and Docker deployments are blocked, and reboot/backup actions retain their existing protections. The per-machine More menu can toggle this policy; configuration-enforced monitor-only cannot be cleared there.
+This does **not** add an OMV-specific updater. The upstream monitor-only policy is supported: checks and counts stay visible, OS and Docker deployments are blocked, and reboot/backup actions retain their existing protections. Monitor-only is managed through configuration, with a neutral eye-only label beside the machine name on desktop and mobile; Info explains the policy. The former override endpoint rejects changes and directs users to Settings. Previously saved database restrictions remain enforced for compatibility; they are never silently cleared.
 
 ## Docker stays with your existing manager
 

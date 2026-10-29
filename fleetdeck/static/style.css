@@ -788,3 +788,8 @@ a.brand { color: var(--text); text-decoration: none; }
 .mc-check-line { gap: 8px; }
 .mc-card .mc-check-line .machine-info-trigger { width: 16px; min-width: 16px; }
 .mc-card .mc-check-line .machine-info-trigger::before { inset: -8px; }
+
+.dashboard-page .monitor-policy { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 22px; padding: 0; }
+.dashboard-page .monitor-policy .ui-icon { width: 14px; height: 14px; }
+.mc-card .machine-main:has(.monitor-policy) { flex-wrap: nowrap; }
+.mc-card .machine-main:has(.monitor-policy) .machine-name { flex: 0 1 auto; }

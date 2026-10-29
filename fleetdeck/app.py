@@ -51,7 +51,7 @@ class TargetView(BaseModel):
     # Looks like the machine this dashboard runs on: shown with a "dashboard" tag.
     runs_dashboard: bool = False
     docker_settings: DockerSettings = Field(default_factory=DockerSettings)
-    # Checked and reported, never updated from here (set in the config: target.monitor_only, or on the dashboard).
+    # Configured monitor-only, including restrictions retained from legacy dashboard overrides.
     monitor_only: bool = False
 
 
@@ -311,20 +311,8 @@ def create_app(
 
     @app.post("/api/monitor-only")
     async def set_monitor_only(req: MonitorOnlyRequest):
-        """Only monitor machines (checks and reports, no updates), or allow updates again. Machines set to
-        monitor-only in the config stay that way."""
-        ids = list(dict.fromkeys(req.target_ids))
-        await inventory.refresh()
-        unknown = [t for t in ids if t not in inventory.targets]
-        if req.monitor_only and unknown:
-            raise HTTPException(404, f"unknown target: {', '.join(unknown)}")
-        in_config = [
-            inventory.targets[t][0].name for t in ids if t not in unknown and inventory.targets[t][0].monitor_only
-        ]
-        if not req.monitor_only and in_config:
-            raise HTTPException(400, f"set to monitor only in the config file: {', '.join(in_config)}")
-        jobs.set_monitor_only(ids, req.monitor_only)
-        return {"monitor_only": sorted(jobs.monitor_only_ids)}
+        """Retired dashboard override: update policy is managed through configuration."""
+        raise HTTPException(409, "Manage monitor-only machines in config.yaml on the Settings page")
 
     @app.get("/api/jobs")
     async def list_jobs(limit: int = Query(50, ge=1, le=500)):
