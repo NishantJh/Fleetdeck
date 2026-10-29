@@ -552,7 +552,7 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .backup-job { width: 34px; min-height: 28px; justify-content: center; }
 .dashboard-page .backup-job-heading, .dashboard-page .backup-job-cell { padding-inline: 5px; text-align: center; }
 .dashboard-page .backup-cell .ui-icon, .dashboard-page .backup-job-cell .ui-icon { width: 15px; height: 15px; }
-.dashboard-page th.update-heading, .dashboard-page td.update-metric-cell { padding-inline: 5px; text-align: left; }
+.dashboard-page th.update-heading, .dashboard-page td.update-metric-cell { padding-inline: 5px; text-align: center; }
 .dashboard-page .update-metric {
   min-width: 34px; min-height: 28px; margin: 0; padding: 3px 6px; border: 0; border-radius: 6px;
   background: transparent; box-shadow: none; font-weight: 650; font-variant-numeric: tabular-nums;

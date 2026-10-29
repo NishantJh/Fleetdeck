@@ -306,7 +306,7 @@ test("cluster hierarchy uses the approved compact continuous tree geometry", () 
   const css = read("style.css");
   assert.match(css, /--tree-line: 2px; --guest-indent: 26px; --guest-branch: 18px; --guest-curve: 11px;/);
   assert.match(css, /tr\.guest\.last-guest \.machine-cell::after \{ bottom: calc\(50% \+ var\(--guest-curve\)\); \}/);
-  assert.match(css, /th\.update-heading, \.dashboard-page td\.update-metric-cell \{ padding-inline: 5px; text-align: left; \}/);
+  assert.match(css, /th\.update-heading, \.dashboard-page td\.update-metric-cell \{ padding-inline: 5px; text-align: center; \}/);
   assert.match(css, /\.dot\.off \{ background: var\(--bad\); box-shadow: 0 0 0 3px color-mix\(in srgb, var\(--bad\) 20%, transparent\); \}/);
 });
 
