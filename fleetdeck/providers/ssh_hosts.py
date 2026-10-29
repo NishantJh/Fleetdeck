@@ -39,6 +39,7 @@ class SSHHostsProvider:
                     note=h.host_key_problem,
                     backup=backup,
                     can_backup=h.host_key_problem is None,
+                    monitor_only=h.monitor_only,
                 ),
                 SSHExecutor(h),
             )

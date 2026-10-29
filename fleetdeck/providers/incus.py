@@ -169,6 +169,7 @@ class IncusProvider:
                 note=None if running else "not running",
                 can_snapshot=True,
                 backup=backups.get(tid),
+                monitor_only=name in self.cfg.monitor_only or f"{project}/{name}" in self.cfg.monitor_only,
             )
             snapshots[t.id] = IncusSnapshots(self.client, name, project)
             found.append((t, IncusExecutor(self.client, name, project)))

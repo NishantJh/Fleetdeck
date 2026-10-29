@@ -49,6 +49,8 @@ class Target(BaseModel):
     can_snapshot: bool = False
     # A host the "Back up" button works on (see backup_runs.py).
     can_backup: bool = False
+    # Set monitor-only in the config: checked as usual, never updated from here (see JobManager.monitor_only).
+    monitor_only: bool = False
 
 
 class Package(BaseModel):

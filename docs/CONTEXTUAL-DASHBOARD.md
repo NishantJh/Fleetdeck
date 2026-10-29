@@ -99,7 +99,7 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
   a device check.
 
 Existing protections, authentication and CSRF protections remain in place.
-This does **not** add an OMV-specific updater or an independent monitor-only OS policy.
+This does **not** add an OMV-specific updater. The upstream monitor-only policy is supported: checks and counts stay visible, OS and Docker deployments are blocked, and reboot/backup actions retain their existing protections. The per-machine More menu can toggle this policy; configuration-enforced monitor-only cannot be cleared there.
 
 ## Docker stays with your existing manager
 
@@ -187,6 +187,14 @@ use an offline DOM with synthetic API responses; they do not open a browser or c
 Node dependencies are development-only and are not included in the runtime image.
 
 ### Preview verification
+
+After integrating `main` through `281c4e5`: all 26 offline UI tests pass, including monitor-only
+controls on desktop and mobile. The focused app, jobs, scheduler, providers, config, store,
+Docker-policy, security, backup and setup suite passes 196 tests, skips 5 and deselects 4 existing
+platform-dependent local-shell checks (Linux boot ID, wrapper shell, port check and downloaded
+bootstrap execution). The upstream monitor-only job test explicitly enables Docker in its fixture
+so it tests the monitor-only guard independently of this fork's global Docker-disabled default.
+Ruff and diff checks pass. No homelab machines were contacted.
 
 For the latest page split, shared tools and confirmation fixes: all 25 offline UI tests pass. They cover KPI
 filters/reset, parent context, cross-group column structure, selection pruning, historical

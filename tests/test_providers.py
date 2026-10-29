@@ -31,6 +31,7 @@ async def test_proxmox_discovery():
     cfg = ProxmoxConfig(
         name="lab", api_url="https://pve:8006", token_id="root@pam!t", token_secret="x",
         ssh=SSHConfig(host="pve", known_hosts="/kh"), exclude=[199], protect=[103],
+        monitor_only=[200],
     )  # fmt: skip
     p = ProxmoxProvider(cfg)
 
@@ -50,7 +51,9 @@ async def test_proxmox_discovery():
     assert found["pihole"].updatable and not found["old"].updatable
     assert not found["arcane"].updatable and "protected" in found["arcane"].note
     assert "arcane" in found["pve"].no_reboot
-    assert found["docker"].updatable
+    assert "docker" not in found["pve"].no_reboot  # a monitor-only guest leaves its node's reboot alone
+    assert found["docker"].updatable and found["docker"].monitor_only
+    assert not found["pihole"].monitor_only
     assert not found["win11"].updatable and "Windows" in found["win11"].note
     assert not found["noagent"].updatable and "agent" in found["noagent"].note
 
@@ -69,7 +72,7 @@ async def test_proxmox_node_without_ssh_is_check_only():
 
 
 async def test_incus_discovery_without_ssh():
-    p = IncusProvider(IncusConfig(name="incus01", socket="/nonexistent"))
+    p = IncusProvider(IncusConfig(name="incus01", socket="/nonexistent", monitor_only=["lab/vm1"]))
 
     def handler(req):
         return httpx.Response(
@@ -87,6 +90,7 @@ async def test_incus_discovery_without_ssh():
     assert not found["incus01"].updatable  # host needs ssh settings
     assert found["web"].kind == "container" and found["web"].updatable
     assert found["lab/vm1"].kind == "vm" and not found["lab/vm1"].updatable
+    assert found["lab/vm1"].monitor_only and not found["web"].monitor_only
 
 
 async def test_pve_node_check_uses_pve_api(monkeypatch):
@@ -410,7 +414,10 @@ async def test_unknown_ssh_host_key_is_shown_on_the_dashboard():
     ((pi, _),) = await SSHHostsProvider([HostConfig(name="pi", host="10.0.0.2")]).discover()
     assert not pi.updatable and "add 10.0.0.2 to known_hosts" in pi.note
     ((ok, _),) = await SSHHostsProvider([HostConfig(name="pi", host="10.0.0.2", known_hosts="/kh")]).discover()
-    assert ok.updatable and ok.note is None
+    assert ok.updatable and ok.note is None and not ok.monitor_only
+    cfg = HostConfig(name="omv", host="10.0.0.3", known_hosts="/kh", monitor_only=True)
+    ((omv, _),) = await SSHHostsProvider([cfg]).discover()
+    assert omv.monitor_only
 
 
 async def test_pve_node_check_flags_security_updates_over_ssh():

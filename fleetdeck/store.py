@@ -43,6 +43,7 @@ class Store:
         )
         self.db.execute("CREATE TABLE IF NOT EXISTS stacks (target_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS hidden (target_id TEXT PRIMARY KEY)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS monitor_only (target_id TEXT PRIMARY KEY)")
         self.db.execute("CREATE TABLE IF NOT EXISTS backup_places (target_id TEXT PRIMARY KEY, path TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS docker_settings (target_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
         self.db.execute(
@@ -124,6 +125,16 @@ class Store:
             sql = "INSERT OR IGNORE INTO hidden (target_id) VALUES (?)"
         else:
             sql = "DELETE FROM hidden WHERE target_id = ?"
+        self.db.executemany(sql, [(t,) for t in target_ids])
+
+    def load_monitor_only(self) -> set[str]:
+        return {tid for (tid,) in self.db.execute("SELECT target_id FROM monitor_only")}
+
+    def set_monitor_only(self, target_ids: list[str], on: bool) -> None:
+        if on:
+            sql = "INSERT OR IGNORE INTO monitor_only (target_id) VALUES (?)"
+        else:
+            sql = "DELETE FROM monitor_only WHERE target_id = ?"
         self.db.executemany(sql, [(t,) for t in target_ids])
 
     def get_value(self, key: str) -> str | None:

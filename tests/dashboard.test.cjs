@@ -46,6 +46,7 @@ async function dashboard({ docker = false, targets = [], rememberedView = "machi
       if (path.startsWith("/api/targets")) body = data;
       else if (path === "/api/jobs") body = [];
       else if (path === "/api/schedule") body = schedule || { check_every: null };
+      else if (path === "/api/monitor-only") body = { monitor_only: [] };
       else if (path === "/api/actions") body = { jobs: [], rejected: {} };
       else if (path === "/api/session") body = { login: false };
       else throw new Error(`Unexpected request: ${path}`);
@@ -618,4 +619,30 @@ test("favicon and clickable Fleetdeck logo are present", async () => {
   assert.equal(ui.document.querySelector('link[rel="icon"]').getAttribute("href"), "/static/favicon.svg");
   assert.equal(ui.document.querySelector("a.brand").getAttribute("href"), "/");
   assert.equal(ui.document.querySelector("a.brand").getAttribute("aria-label"), "Fleetdeck dashboard");
+});
+
+
+test("upstream monitor-only policy preserves counts and reboots but prevents update selection on both layouts", async () => {
+  for (const mobile of [false, true]) {
+    const target = machine("appliance", { view: { monitor_only: true }, check: {
+      packages: [{ name: "curl", current: "1", available: "2" }], reboot_required: true,
+    } });
+    const ui = await dashboard({ targets: [target], mobile });
+    const row = ui.document.querySelector('[data-machine-row="appliance"]');
+    assert.match(row.textContent, /monitor only/);
+    assert.equal(row.querySelector('[data-act="upgrade"]'), null);
+    assert.ok(row.querySelector('[data-act="reboot"]'), "reboots remain available");
+    if (!mobile) assert.ok(row.querySelector('[data-select]').disabled);
+    ui.click('[data-machine-menu="appliance"]');
+    assert.match(ui.document.querySelector('[data-monitor]').textContent, /Allow updates/);
+    ui.click('[data-monitor]');
+    await flush();
+    assert.equal(ui.calls.filter(c => c.path === '/api/monitor-only').length, 1);
+    assert.ok(ui.document.querySelector('[data-machine-row="appliance"] [data-act="upgrade"]'));
+    target.target.monitor_only = true;
+    target.monitor_only = true;
+    ui.render();
+    ui.click('[data-machine-menu="appliance"]');
+    assert.ok(ui.document.querySelector('[data-monitor]').disabled, "configuration policy cannot be cleared");
+  }
 });

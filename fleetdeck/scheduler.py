@@ -168,6 +168,8 @@ class Scheduler:
                 target, executor = entry
                 if (target.kind == "host") != hosts or executor is None or target.check_only:
                     continue
+                if self.jobs.monitor_only(target):
+                    continue
                 if not any(p.security for p in check.packages):
                     continue
                 try:

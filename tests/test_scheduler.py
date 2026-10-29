@@ -309,3 +309,22 @@ async def test_failed_auto_security_update_is_reported(monkeypatch):
     await Scheduler(3600, inv, JobManager(inv), notifier, auto_security=True).run_once()
     ((_, body),) = notifier.messages
     assert "pve: security updates failed: upgrade exited with code 100" in body
+
+
+async def test_auto_security_updates_skip_monitor_only_machines(monkeypatch):
+    monkeypatch.setattr(fleetdeck.scheduler, "POLL", 0)
+    calls: list[str] = []
+    inv = _inventory(
+        (_target("pve"), SecExecutor("pve", calls)),
+        (_guest("omv", "pve").model_copy(update={"monitor_only": True}), SecExecutor("omv", calls)),
+        (_guest("ct1", "pve"), SecExecutor("ct1", calls)),
+    )
+    inv.refresh = _noop_refresh
+    notifier = RecordingNotifier()
+    jobs = JobManager(inv)
+    jobs.set_monitor_only(["ct1"], True)
+    await Scheduler(3600, inv, jobs, notifier, auto_security=True).run_once()
+    assert calls == ["pve:security"]
+    ((_, body),) = notifier.messages
+    # Still reported, so their own updater can be run.
+    assert "omv: 1 update" in body and "ct1: 1 update" in body

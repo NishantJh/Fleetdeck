@@ -111,6 +111,9 @@ class ProxmoxConfig(BaseModel):
     # VMIDs shown but never updated from the dashboard, e.g. the LXC/VM the dashboard runs in.
     # Upgrading it (Docker in particular) would restart the dashboard mid-upgrade.
     protect: list[int] = Field(default_factory=list)
+    # VMIDs that are only monitored: checked and reported, but never updated from the dashboard (e.g. an appliance
+    # with its own updater). Unlike protect, reboots, snapshots and the node's own reboot stay allowed.
+    monitor_only: list[int] = Field(default_factory=list)
     # Flag a guest whose newest backup is older than this many hours. 0 turns backup tracking off.
     # Reading backups needs Datastore.Audit, Datastore.AllocateSpace and VM.Backup.
     backup_max_age_hours: int = Field(48, ge=0)
@@ -137,6 +140,8 @@ class IncusConfig(BaseModel):
     ssh: SSHConfig | None = None
     # Instance names ("project/name" or "name") to hide.
     exclude: list[str] = Field(default_factory=list)
+    # Instance names ("project/name" or "name") that are only monitored, never updated from the dashboard.
+    monitor_only: list[str] = Field(default_factory=list)
     # Flag an instance whose newest snapshot or export is older than this many hours. 0 turns it off.
     backup_max_age_hours: int = Field(48, ge=0)
 
@@ -172,6 +177,8 @@ class HostConfig(SSHConfig):
 
     name: str
     tunnel: TunnelConfig | None = None
+    # Only monitor this machine: checked and reported, never updated from the dashboard.
+    monitor_only: bool = False
 
 
 def check_username(v: str) -> str:
