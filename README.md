@@ -36,10 +36,30 @@ or in a `.env` file next to it. A `.env` value only reaches the container once t
 * **`PUID` / `PGID`**: the user the app runs as, if the data folder has the wrong owner. Example: `PUID: "1000"`.
 * **`FLEETDECK_BACKUP_FOLDER`**: where "Back up" saves archives, with that folder mounted into the container.
 * **`TLS_CERT` / `TLS_KEY`**: serve HTTPS directly, using certificate files in `/data`.
-* **`FLEETDECK_CONSOLE`** (`"1"` turns on Run command) and **`FLEETDECK_DEMO`** (`"1"` shows demo machines): both off by default.
+* **`FLEETDECK_CONSOLE`** (`"1"` turns on Run command, see below) and **`FLEETDECK_DEMO`** (`"1"` shows demo machines): both off by default.
 
 Everything else, such as the login, machines and notifications, is set on the setup page, which writes `config.yaml`.
 After changing the compose file, run `docker compose up -d` again. A plain restart does not reload it.
+
+## Run commands from the dashboard
+
+Run command is off by default. To turn it on, add this under the Fleetdeck service's `environment:` in
+[`docker-compose.yml`](docker-compose.yml), then run `docker compose up -d`:
+
+```yaml
+environment:
+  FLEETDECK_CONSOLE: "1"
+```
+
+Then it appears in the dashboard:
+
+* Each running machine's row gets a **Run command…** button. Stopped and offline machines don't show it.
+* **Open terminal** is inside the Run command dialog. It appears only on SSH hosts, Proxmox nodes and Proxmox LXCs.
+  Proxmox VMs get Run command only.
+
+It needs a dashboard login (set on the setup page). Without one, the console stays off and the log says so. It
+only answers from private networks and Tailscale, and asks for your password again each time you unlock it. Commands
+run as root, so turn it on only if you need it. The full rules are in [docs/CONSOLE.md](docs/CONSOLE.md).
 
 ## Full documentation
 
