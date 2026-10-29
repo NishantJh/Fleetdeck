@@ -84,8 +84,11 @@ test("mobile cards preserve package details, information and confirmation withou
   assert.equal(doc.querySelectorAll('.mc-card').length, 2);
   assert.equal(doc.querySelectorAll('[data-select]').length, 0);
   assert.equal(doc.querySelector('[data-machine-row="web"] .mc-status-group .mc-check-time').textContent, "Checked just now");
-  assert.ok(doc.querySelector('[data-machine-row="web"] .mc-backup-value [data-machine-info]'));
-  assert.ok(doc.querySelector('[data-machine-row="pve"] .machine-meta [data-machine-info]'));
+  assert.ok(doc.querySelector('[data-machine-row="web"] .mc-check-line [data-machine-info]'));
+  assert.ok(doc.querySelector('[data-machine-row="pve"] .mc-check-line [data-machine-info]'));
+  assert.equal(doc.querySelector('[data-machine-row="pve"] .mc-footer'), null, "healthy cards do not reserve an empty action footer");
+  assert.equal(doc.querySelectorAll('[data-machine-row="pve"] [data-machine-menu]').length, 1);
+  assert.ok(doc.querySelector('[data-machine-row="web"] .mc-footer [data-act="upgrade"]'));
   assert.ok(doc.querySelector('[data-machine-row="web"] .mc-reboot [aria-label="Reboot required"]'));
   ui.click('[data-machine-row="web"] [data-toggle]');
   assert.match(doc.querySelector('#packages-web').textContent, /openssl/);

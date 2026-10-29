@@ -71,8 +71,12 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
 - Narrow screens render dedicated machine cards using the same update, backup and action logic
   as the desktop table. Type and OS sit below the name, status at the top right, and check time
   directly below status. Nonzero Security, Package and Phased counts are icon-only; the boxed
-  reboot indicator aligns right. Backup age, job coverage and Info stay together. Nodes without
-  backup details place Info beside the OS. The footer has the relevant action left and More right.
+  reboot indicator aligns right. Update-type and reboot icons are 18 px; the reboot box is 32 px.
+  Info follows the check time in a consistent location on every card. Backup age and job coverage
+  stay together. Cards without an action omit the empty action footer and place More on the backup
+  or check line. Where an action exists, the footer has the action left and More right, with no divider.
+  Mobile actions share a 96 × 36 px size, with expanded touch areas. Spacing around the icon row
+  accounts for the visible label and badge edges, and status text is slightly larger at 13 px.
   Mobile cards have no selection controls; bulk selection remains available on desktop. Switching
   to mobile clears desktop selection so hidden bulk operations cannot remain pending. The toolbar
   uses a compact Check button, and KPIs use two columns. Expanded package details retain a local

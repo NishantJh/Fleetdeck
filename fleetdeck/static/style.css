@@ -695,42 +695,56 @@ a.brand { color: var(--text); text-decoration: none; }
 /* Mobile cards use their own layout rather than overriding table cells. */
 .dashboard-page .mobile-layout .group { background: transparent; border: 0; box-shadow: none; }
 .dashboard-page .mobile-layout .group-head { border: 0; padding: 12px 0; }
-.mc-stack { display: grid; gap: 10px; }
-.mc-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; min-width: 0; }
-.mc-header { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 12px; align-items: start; }
+.mc-stack { display: grid; gap: 8px; }
+.mc-card { position: relative; display: grid; grid-template-columns: minmax(0,1fr) auto; column-gap: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+.mc-header { display: contents; }
+.mc-card .machine-main { grid-column: 1; grid-row: 1; }
+.mc-card .mc-status-group { grid-column: 2; grid-row: 1 / 3; align-self: start; }
+.mc-card > .mc-counts, .mc-card > .mc-details, .mc-card > .mc-containers, .mc-card > .mc-footer { grid-column: 1 / -1; }
 .mc-card .machine-main { display: flex; flex-wrap: wrap; gap: 6px 8px; min-width: 0; width: auto; font-size: 14px; }
 .mc-card .machine-name { flex: 1 1 65px; min-width: 0; white-space: normal; font-weight: 600; overflow-wrap: anywhere; }
-.mc-card .machine-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 6px; flex: 1 1 100%; margin: 0 0 0 18px; }
+.mc-meta-row { grid-column: 1; grid-row: 2; display: flex; align-items: center; gap: 8px; min-height: 28px; }
+.mc-card .machine-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 5px 6px; min-width: 0; flex: 1; margin: 0 0 0 18px; }
 .mc-card .machine-os { font-size: 12px; }
-.dashboard-page .mc-card .status-inline { display: flex; gap: 5px; align-items: center; justify-content: flex-end; font-size: 12px; font-weight: 400; max-width: 145px; white-space: normal; overflow: visible; }
+.dashboard-page .mc-card .status-inline { display: flex; gap: 5px; align-items: center; justify-content: flex-end; font-size: 13px; line-height: 18px; font-weight: 400; max-width: 145px; white-space: normal; overflow: visible; }
 .mc-card .status-inline .ui-icon { width: 14px; height: 14px; flex: none; }
-.mc-status-group { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+.mc-status-group { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .mc-check-time { color: var(--muted); font-size: 11px; font-weight: 400; }
-.mc-counts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding-top: 8px; }
+.mc-check-line { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.mc-check-line .mc-check-time { white-space: nowrap; }
+.mc-card .mc-check-line .machine-info-trigger { position: relative; min-width: 32px; min-height: 28px; padding: 0; }
+.mc-counts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 11px 0 5px; }
 .mc-card .update-list-hit { display: inline-flex; align-items: center; justify-content: flex-start; gap: 5px; width: auto; min-height: 36px; padding: 0; border-radius: 6px; font-size: 13px; font-weight: 400; }
 .mc-card .update-metric { display: inline-flex; align-items: center; gap: 5px; min-width: 0; min-height: 26px; padding: 3px 5px; font-weight: 500; }
 .mc-reboot { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--reboot); }
-.mc-card .reboot-status.required { width: 26px; height: 26px; }
-.mc-details { display: grid; gap: 4px; margin-top: 8px; font-size: 12px; }
-.mc-detail-line { display: grid; grid-template-columns: 58px minmax(0,1fr); gap: 8px; align-items: center; min-height: 22px; }
+.mc-card .reboot-status.required { width: 32px; height: 32px; }
+.dashboard-page .mc-card .update-metric .ui-icon,
+.dashboard-page .mc-card .reboot-status .ui-icon { width: 18px; height: 18px; }
+.mc-details { display: grid; gap: 4px; margin-top: 0; font-size: 12px; }
+.mc-detail-line { display: grid; grid-template-columns: 50px minmax(0,1fr) auto; gap: 8px; align-items: center; min-height: 28px; }
 .mc-detail-line > span:first-child { color: var(--muted); }
 .mc-backup-value { display: flex; align-items: center; gap: 8px; }
 .mc-card .backup-job { display: inline-flex; width: auto; min-height: 0; }
 .mc-card .backup-job .ui-icon { width: 14px; height: 14px; }
-.mc-footer { display: grid; grid-template-columns: auto minmax(0,1fr) 44px; gap: 4px; align-items: center; margin-top: 8px; border-top: 1px solid var(--border); padding-top: 4px; }
+.mc-footer { display: grid; grid-template-columns: auto minmax(0,1fr) 44px; gap: 4px; align-items: center; margin-top: 4px; padding-top: 4px; }
 .mc-action { grid-column: 1; }
 .mc-action:empty { display: none; }
-.mc-action > button { width: 84px; min-height: 36px; justify-content: center; }
-.mc-card .mc-footer > button { width: 44px; min-width: 44px; height: 44px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.mc-action > button { position: relative; width: 96px; min-height: 36px; height: 36px; justify-content: center; }
+.mc-card button.more-actions { position: relative; width: 44px; min-width: 44px; min-height: 28px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+.mc-card .mc-footer button.more-actions { height: 44px; }
 
 .mc-card .mc-footer > .more-actions { grid-column: 3; }
 .mc-package-panel { min-width: 0; }
 .mc-package-panel .packages-panel { margin: 0; max-width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
-@media(max-width:360px) { .mc-header { gap: 8px; } .mc-card { padding: 12px; } .dashboard-page .mc-card .status-inline { max-width: 120px; } }
+@media(max-width:360px) { .mc-card { padding: 12px; column-gap: 8px; } .dashboard-page .mc-card .status-inline { max-width: 120px; } }
 
 .mc-card .mc-backup-value .machine-info-trigger, .mc-card .machine-meta .machine-info-trigger { min-width: 44px; min-height: 44px; padding: 0; }
-.mc-card .mc-action > button { min-height: 44px; }
-.mc-card .update-list-hit { min-height: 44px; min-width: 44px; }
+.mc-card .mc-action > button { min-height: 36px; }
+.mc-card .mc-action > button::before { content: ""; position: absolute; inset: -4px 0; }
+.mc-card .update-list-hit { position: relative; min-height: 32px; min-width: 44px; }
+/* Expand icon hit areas without reserving a full control row in the card. */
+.mc-card .update-list-hit::before, .mc-card .mc-check-line .machine-info-trigger::before, .mc-card button.more-actions::before { content: ""; position: absolute; inset: -8px 0; }
+.mc-card .mc-footer button.more-actions::before { inset: 0; }
 .mc-card.is-context .machine-name { color: var(--muted); }
 .mc-card.is-hidden { opacity: .55; }
 .mc-card .mc-containers { margin-top: 8px; }
