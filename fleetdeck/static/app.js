@@ -309,10 +309,11 @@ function rowHtml(v, withBackup, relation = {}, mobile = false) {
       .filter(([, count]) => count > 0).map(([kind, count]) => metricButton(v, kind, count)).join("");
     html = `<article class="mc-card${relation.context ? " is-context" : ""}${v.hidden ? " is-hidden" : ""}" data-machine-row="${esc(t.id)}">
       <div class="mc-header"><div class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name">${esc(t.name)}</span></div>
-        <div class="mc-status-group">${updateState(v)}<div class="mc-check-line"><span class="mc-check-time">Checked ${c ? ago(c.checked_at) : "Never"}</span>${information}${!action && !backup ? more : ""}</div></div></div>
+        <div class="mc-status-group">${updateState(v)}<div class="mc-check-line"><span class="mc-check-time">Checked ${c ? ago(c.checked_at) : "Never"}</span>${information}</div></div></div>
       <div class="mc-meta-row"><div class="machine-meta"><span class="chip type-chip">${esc(kindLabel(t))}</span>${os ? `<span class="machine-os" title="${esc(os)}">${esc(compactOS(os))}</span>` : ""}${self}${cs}${note}</div></div>
       ${metrics || reboot ? `<div class="mc-counts">${metrics}${reboot ? `<span class="mc-reboot">${reboot}</span>` : ""}</div>` : ""}
       ${backup ? `<div class="mc-details"><div class="mc-detail-line"><span>Backup</span><div class="mc-backup-value">${backup}${backupJobCell(t)}</div>${!action ? more : ""}</div></div>` : ""}
+      ${!action && !backup ? `<div class="mc-utility-row">${more}</div>` : ""}
       ${state.settings.docker_enabled ? `<div class="mc-containers">${dockerCell(v)}</div>` : ""}
       ${action ? `<div class="mc-footer"><div class="mc-action">${action}</div>${more}</div>` : ""}
     </article>`;

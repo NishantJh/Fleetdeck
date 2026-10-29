@@ -460,7 +460,7 @@ a.brand { color: var(--text); text-decoration: none; }
 #schedule-status .ui-icon { width: 15px; height: 15px; }
 .dashboard-page .summary { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 18px; }
 .dashboard-page .summary:has(.stat:nth-child(4)) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-.dashboard-page .stat { padding: 12px 15px; }
+.dashboard-page .stat { padding: 12px 15px 12px 19px; }
 .stat small { font-size: 11px; line-height: 1.5; }
 .view-tabs { display: flex; gap: 5px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
 .view-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; box-shadow: none; padding: 10px 13px; color: var(--muted); }
@@ -652,7 +652,7 @@ a.brand { color: var(--text); text-decoration: none; }
   .dashboard-page main { min-width: 0; padding: 14px; }
   .dashboard-page .summary, .dashboard-page .summary:has(.stat:nth-child(4)) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .dashboard-page > header { flex-wrap: nowrap; gap: 8px; padding: 10px; }
-  .dashboard-page .toolbar { width: auto; flex-wrap: nowrap; gap: 4px; margin-left: auto; }
+  .dashboard-page .toolbar { width: auto; flex-wrap: nowrap; gap: 6px; margin-left: auto; }
   .dashboard-page .toolbar > #check-all { flex: none; min-height: 44px; white-space: nowrap; }
   .dashboard-page #check-all span { display: none; }
   .dashboard-page #check-all::after { content: "Check"; font-size: 12px; }
@@ -671,7 +671,7 @@ a.brand { color: var(--text); text-decoration: none; }
 }
 @media (max-width: 520px) {
   .dashboard-page > header { position: static; flex-wrap: nowrap; padding: 10px; gap: 8px; }
-  .dashboard-page .toolbar { width: auto; flex-wrap: nowrap; gap: 4px; margin-left: auto; }
+  .dashboard-page .toolbar { width: auto; flex-wrap: nowrap; gap: 6px; margin-left: auto; }
   .dashboard-page .toolbar > * { flex: none; }
   .dashboard-page .toolbar > #check-all { flex: none; }
   .dashboard-page .toolbar button, .dashboard-menu > summary { min-height: 44px; }
@@ -680,7 +680,7 @@ a.brand { color: var(--text); text-decoration: none; }
   .dashboard-page .brand { gap: 7px; }
   .dashboard-page .logo { width: 28px; height: 28px; }
   .dashboard-page .summary { gap: 7px; }
-  .dashboard-page .stat { padding: 11px 9px; }
+  .dashboard-page .stat { padding: 11px 10px 11px 15px; gap: 9px; }
   .dashboard-page .stat span { font-size: 12px; }
   .dashboard-page .stat b { font-size: 23px; }
   .dashboard-page .summary, .dashboard-page .summary:has(.stat:nth-child(4)) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -688,7 +688,7 @@ a.brand { color: var(--text); text-decoration: none; }
   .dashboard-page td.actions { min-width: 0; }
   .dashboard-page .group td.actions button { padding: 5px 6px; font-size: 11px; }
   .dashboard-menu-items { position: absolute; top: calc(100% + 7px); right: 0; min-width: min(286px, calc(100vw - 28px)); }
-  .dashboard-page .toolbar .icon { padding: 7px 5px; }
+  .dashboard-page .toolbar > .icon, .dashboard-page .toolbar > .dashboard-menu > summary { width: 36px; min-width: 36px; height: 44px; padding: 0; }
   .dashboard-page .toolbar .icon svg { width: 15px; height: 15px; }
   #docker-settings-dialog input, #docker-settings-dialog select { font-size: 16px; }
   #confirm input[type="text"] { font-size: 16px; }
@@ -706,7 +706,8 @@ a.brand { color: var(--text); text-decoration: none; }
 .mc-header { display: contents; }
 .mc-card .machine-main { grid-column: 1; grid-row: 1; }
 .mc-card .mc-status-group { grid-column: 2; grid-row: 1 / 3; align-self: start; }
-.mc-card > .mc-counts, .mc-card > .mc-details, .mc-card > .mc-containers, .mc-card > .mc-footer { grid-column: 1 / -1; }
+.mc-card > .mc-counts, .mc-card > .mc-details, .mc-card > .mc-containers, .mc-card > .mc-footer, .mc-card > .mc-utility-row { grid-column: 1 / -1; }
+.mc-utility-row { display: flex; justify-content: flex-end; }
 .mc-card .machine-main { display: flex; flex-wrap: wrap; gap: 6px 8px; min-width: 0; width: auto; font-size: 14px; }
 .mc-card .machine-name { flex: 1 1 65px; min-width: 0; white-space: normal; font-weight: 600; overflow-wrap: anywhere; }
 .mc-meta-row { grid-column: 1; grid-row: 2; display: flex; align-items: center; gap: 8px; min-height: 28px; }
@@ -755,3 +756,34 @@ a.brand { color: var(--text); text-decoration: none; }
 .mc-card.is-hidden { opacity: .55; }
 .mc-card .mc-containers { margin-top: 8px; }
 @media (max-width: 360px) { .dashboard-page #check-all::after { display: none; } .dashboard-page .toolbar > #check-all { min-width: 44px; } }
+
+/* Share the mobile toolbar across Dashboard, Machines and Settings. */
+@media (max-width: 520px) {
+  .dashboard-page > header, .management-page > header {
+    display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 12px 14px; position: static;
+  }
+  .dashboard-page header h1, .management-page header h1 { font-size: 17px; }
+  .dashboard-page .brand, .management-page .brand { gap: 9px; }
+  .dashboard-page .logo, .management-page .logo { width: 30px; height: 30px; }
+  .dashboard-page > header > .toolbar, .management-page > header > .toolbar {
+    position: relative; display: grid; grid-template-columns: minmax(0, 1fr) repeat(3, 44px);
+    align-items: center; gap: 8px; width: 100%; margin: 0;
+  }
+  .dashboard-page .toolbar > #check-all, .management-page .toolbar > #to-dashboard {
+    width: 100%; height: 44px; padding: 8px 12px; font-size: 13px;
+  }
+  .dashboard-page #check-all span { display: inline; }
+  .dashboard-page #check-all::after { content: none; }
+  .dashboard-page .toolbar > .icon, .management-page .toolbar > .icon,
+  .dashboard-page .toolbar > .dashboard-menu > summary, .management-page .toolbar > .dashboard-menu > summary {
+    width: 44px; min-width: 44px; height: 44px; padding: 0;
+  }
+  .dashboard-page .toolbar .icon svg, .management-page .toolbar .icon svg { width: 18px; height: 18px; }
+  .dashboard-page .toolbar > .dashboard-menu, .management-page .toolbar > .dashboard-menu { position: static; }
+  .dashboard-page .toolbar .dashboard-menu-items, .management-page .toolbar .dashboard-menu-items {
+    top: calc(100% + 8px); right: 0; min-width: 0; width: min(286px, 100%);
+  }
+}
+.mc-check-line { gap: 8px; }
+.mc-card .mc-check-line .machine-info-trigger { width: 16px; min-width: 16px; }
+.mc-card .mc-check-line .machine-info-trigger::before { inset: -8px; }

@@ -89,6 +89,8 @@ test("mobile cards preserve package details, information and confirmation withou
   assert.ok(doc.querySelector('[data-machine-row="pve"] .mc-check-line [data-machine-info]'));
   assert.equal(doc.querySelector('[data-machine-row="pve"] .mc-footer'), null, "healthy cards do not reserve an empty action footer");
   assert.equal(doc.querySelectorAll('[data-machine-row="pve"] [data-machine-menu]').length, 1);
+  assert.ok(doc.querySelector('[data-machine-row="pve"] .mc-utility-row [data-machine-menu]'));
+  assert.equal(doc.querySelector('[data-machine-row="pve"] .mc-check-line [data-machine-menu]'), null);
   assert.ok(doc.querySelector('[data-machine-row="web"] .mc-footer [data-act="upgrade"]'));
   assert.ok(doc.querySelector('[data-machine-row="web"] .mc-reboot [aria-label="Reboot required"]'));
   ui.click('[data-machine-row="web"] [data-toggle]');

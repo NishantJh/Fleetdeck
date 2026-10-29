@@ -87,12 +87,12 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
   reboot indicator aligns right. Update-type and reboot icons are 18 px; the reboot box is 32 px.
   Info follows the check time in a consistent location on every card. Backup age and job coverage
   stay together. Cards without an action omit the empty action footer and place More on the backup
-  or check line. Where an action exists, the footer has the action left and More right, with no divider.
+  or a compact bottom-right utility row. Where an action exists, the footer has the action left and More right, with no divider.
   Mobile actions share a 96 × 36 px size, with expanded touch areas. Spacing around the icon row
   accounts for the visible label and badge edges, and status text is slightly larger at 13 px.
   Mobile cards have no selection controls; bulk selection remains available on desktop. Switching
   to mobile clears desktop selection so hidden bulk operations cannot remain pending. The toolbar
-  uses a compact Check button, and KPIs use two columns. Expanded package details retain a local
+  places the controls on a separate row below the logo, shared across Dashboard, Machines and Settings. Icon controls are 44 px squares with even gaps; menus stay inside the viewport. Info aligns with the right edge of the card. KPIs use two columns with extra inset for their numbers. Expanded package details retain a local
   horizontal scroller. Menus and confirmation dialogs stay within the mobile viewport.
   Layout switching and interactions were checked in the local browser with simulated machines at
   320, 390 and 430 px widths, and the desktop table at 1200 px. Native iPhone Safari still needs
