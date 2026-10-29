@@ -23,6 +23,7 @@ const ICON = {
   backupJob: '<path d="M8 2v4"/><path d="M16 2v4"/><path d="M21 11V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/><path d="M3 10h18"/><circle cx="17" cy="17" r="5"/><path d="M17 14v3l2 1"/>',
   noBackup: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6"/><path d="m15 9-6 6"/>',
   info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2-3 4"/><path d="M12 17h.01"/>',
   alert: '<path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
 };
 const icon = (name) => `<svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
@@ -112,11 +113,13 @@ const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
 const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "checking Docker", "stack-update": "updating Docker" };
 
 function metricButton(v, kind, count) {
-  if (!count) return "";
+  if (!displayCheck(v)?.packages?.length) return "";
   const id = esc(v.target.id), open = state.expanded.has(v.target.id);
   const label = { security: "security", package: "package", phased: "phased" }[kind];
   const iconName = { security: "shield", package: "package", phased: "clock" }[kind];
-  return `<button class="update-metric ${kind}${staleCheck(v) ? " stale" : ""}" data-toggle="${id}" data-focus-key="updates:${id}:${kind}" aria-expanded="${open}" aria-controls="packages-${id}" aria-label="${count} ${label} update${count === 1 ? "" : "s"}${staleCheck(v) ? " from the last successful check" : ""}; ${open ? "hide" : "show"} details">${icon(iconName)}<span>${count}</span></button>`;
+  const metric = count ? `<span class="update-metric ${kind}${staleCheck(v) ? " stale" : ""}">${icon(iconName)}<span>${count}</span></span>` : "";
+  const caption = count ? `${count} ${label} update${count === 1 ? "" : "s"}${staleCheck(v) ? " from the last successful check" : ""}; ` : "";
+  return `<button class="update-list-hit" data-toggle="${id}" data-focus-key="updates:${id}:${kind}" aria-expanded="${open}" aria-controls="packages-${id}" aria-label="${caption}${open ? "Hide" : "Show"} package list for ${esc(v.target.name)}">${metric}</button>`;
 }
 
 function updateColumns(v) {
@@ -139,10 +142,10 @@ function updateState(v) {
     const label = stopped ? "Not running" : offline ? "Offline" : t.note || "Unavailable";
     return `<span class="status-inline unavailable" title="${esc(t.note || label)}">${icon(stopped || offline ? "power" : "alert")}${esc(label)}</span>`;
   }
-  if (!c) return `<span class="status-inline muted">Not checked</span>`;
+  if (!c) return `<span class="status-inline muted">${icon("help")}Not checked</span>`;
   if (c.error) return `<span class="status-inline bad" title="${esc(c.error)}">${icon("alert")}Check failed</span>`;
   const pending = actionablePackages(c).length > 0;
-  if (pending) return `<span class="status-inline">Updates available</span>`;
+  if (pending) return `<span class="status-inline updates-available">${icon("download")}Updates available</span>`;
   if (!pending) return `<span class="status-inline ok">${icon("check")}Up to date</span>`;
   return "";
 }
@@ -350,7 +353,7 @@ function render() {
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
       <div class="group-scroll"><table class="machine-table${withBackup ? " has-backup" : ""}${state.settings.docker_enabled ? " has-containers" : ""}" aria-label="${esc(g.title)} machines">
         <colgroup><col class="col-select"><col class="col-machine">${withBackup ? '<col class="col-backup"><col class="col-backup-job">' : ""}<col class="col-metric"><col class="col-metric"><col class="col-metric"><col class="col-reboot"><col class="col-status"><col class="col-update">${state.settings.docker_enabled ? '<col class="col-containers">' : ""}<col class="col-checked"><col class="col-info"><col class="col-more"></colgroup>
-        <thead><tr class="column-groups"><th colspan="2" scope="colgroup">Inventory</th>${withBackup ? '<th colspan="2" scope="colgroup">Backup</th>' : ""}<th colspan="4" scope="colgroup">Updates</th><th colspan="2" scope="colgroup">Maintenance</th>${state.settings.docker_enabled ? '<th scope="colgroup">Containers</th>' : ""}<th colspan="3" scope="colgroup">Activity</th></tr><tr class="column-headings"><th></th><th>Machine</th>${withBackup ? '<th>Last backup</th><th class="backup-job-heading">Job</th>' : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th class="reboot-heading">Reboot</th><th>Status</th><th>Actions</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Checked</th><th class="info-heading">Info</th><th class="more-heading">More</th></tr></thead>
+        <thead><tr class="column-headings"><th></th><th>Machine</th>${withBackup ? '<th>Last backup</th><th class="backup-job-heading">Job</th>' : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th class="reboot-heading">Reboot</th><th>Status</th><th>Actions</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Checked</th><th class="info-heading">Info</th><th class="more-heading">More</th></tr></thead>
         <tbody>${g.rows.map((v, index) => rowHtml(v, withBackup, {
           hasGuests: v.target.kind === "host" && guestIndexes.length > 0,
           firstGuest: index === firstGuest,

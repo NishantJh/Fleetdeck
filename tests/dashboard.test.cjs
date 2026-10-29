@@ -157,12 +157,13 @@ test("update columns separate security, packages and phased updates with only re
   const doc = ui.document;
   const headers = [...doc.querySelectorAll(".machine-table > thead .column-headings th")].map((el) => el.textContent.trim());
   assert.deepEqual(headers, ["", "Machine", "Security", "Package", "Phased", "Reboot", "Status", "Actions", "Checked", "Info", "More"]);
-  assert.deepEqual([...doc.querySelectorAll(".column-groups th")].map((el) => el.textContent), ["Inventory", "Updates", "Maintenance", "Activity"]);
+  assert.equal(doc.querySelectorAll(".machine-table > thead > tr").length, 1);
   assert.equal(doc.querySelectorAll(".machine-table > colgroup > col").length, 11);
   assert.equal(doc.querySelector(".more-heading").textContent, "More");
   assert.match(read("style.css"), /\.more-heading, \.dashboard-page td\.more-cell \{ padding-inline: 4px; text-align: center; \}/);
   assert.equal(doc.querySelector('[data-machine-row="pve"] .type-chip').textContent.trim(), "Node");
   assert.equal(doc.querySelector('[data-machine-row="pve"] .update-action-cell [data-act="upgrade"] span').textContent, "Update");
+  assert.ok(doc.querySelector('[data-machine-row="pve"] .updates-available .ui-icon'));
   assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Reboot"] [data-act="reboot"]'), null);
   assert.ok(doc.querySelector('[data-machine-row="pve"] .reboot-status .ui-icon'));
   assert.equal(doc.querySelector('[data-machine-row="phased"] [data-act="upgrade"]'), null);
@@ -188,6 +189,32 @@ test("update columns separate security, packages and phased updates with only re
   assert.equal(doc.querySelectorAll("#machine-actions .ui-icon").length >= 3, true);
   assert.equal(doc.querySelector("#machine-actions .menu-caption").textContent.trim(), "pve");
   assert.doesNotMatch(doc.querySelector("#machine-actions").textContent, /…/);
+  assert.deepEqual(ui.errors, []);
+});
+
+test("full update cells toggle one package list without selecting a row or running an action", async () => {
+  const ui = await dashboard({ targets: [
+    machine("pending", { check: { packages: [{ name: "curl", current: "1", available: "2" }] } }),
+    machine("current"),
+    machine("unchecked", { view: { check: null } }),
+  ] });
+  const doc = ui.document;
+  const row = doc.querySelector('[data-machine-row="pending"]');
+  assert.equal(row.querySelectorAll(".update-list-hit").length, 3);
+  assert.equal(row.querySelector('[data-label="Security"] button').textContent, "");
+  assert.equal(doc.querySelector('[data-machine-row="current"] .update-list-hit'), null);
+  const empty = ui.click('[data-machine-row="pending"] [data-label="Security"] button');
+  assert.equal(doc.querySelectorAll("#packages-pending").length, 1);
+  assert.match(doc.querySelector("#packages-pending").textContent, /curl/);
+  assert.ok([...doc.querySelectorAll('[data-machine-row="pending"] .update-list-hit')].every((b) => b.getAttribute("aria-expanded") === "true"));
+  assert.equal(ui.state.selected.size, 0);
+  assert.equal(ui.calls.some((call) => call.path === "/api/actions"), false);
+  ui.click('[data-machine-row="pending"] [data-label="Phased"] button');
+  assert.equal(doc.querySelector("#packages-pending"), null);
+  const controls = doc.querySelectorAll('[data-machine-row="pending"] .update-list-hit');
+  assert.ok([...controls].every((b) => b.tagName === "BUTTON" && b.getAttribute("aria-expanded") === "false"));
+  assert.ok(empty.getAttribute("aria-controls"));
+  assert.ok(doc.querySelector('[data-machine-row="unchecked"] .update-status-cell .ui-icon'));
   assert.deepEqual(ui.errors, []);
 });
 

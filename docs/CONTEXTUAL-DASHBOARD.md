@@ -13,9 +13,15 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
   optional hidden-machine view without changing the menu label.
 - Single-line rows combine machine/state, type and a compact OS label in one flexible cell;
   the full OS name remains available on the label and in machine information. Backup age and
-  job coverage retain separate columns. Left-aligned group headings organize Inventory, Backup,
-  Updates, Maintenance and Activity. Security, Package, Phased and the icon-only Reboot indicator
-  sit under Updates; their compact cells are centered. Status and Actions are separate and left-aligned.
+  job coverage retain separate columns; Last backup is capped at a compact 120 px width.
+  The table has one caption row. Security, Package, Phased and the icon-only Reboot indicator
+  stay together with centered compact cells. Status and Actions are separate and left-aligned.
+- Updates available uses a purple download icon and label, matching the Update action. Reboot
+  stays gold, Up to date stays green, failed checks stay red, and unavailable/unchecked states
+  use neutral icons. Full Security, Package and Phased cells open the package list, including
+  empty cells when the row has known packages. They share a subtle hover highlight and native
+  keyboard-accessible buttons; selection, Reboot and other actions remain independent.
+- Dashboard and machine menus share item spacing, text, icon sizing and hover treatment.
 - Apt packages deferred by Ubuntu/Debian phasing are detected with read-only simulations.
   Packages that apt lists separately as not upgrading, but which become installable when only
   the phase policy changes, are included in the green **Phased** count and identified as
