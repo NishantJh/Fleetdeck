@@ -29,7 +29,7 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
 - Backup age and job coverage use separate compact columns: a neutral calendar icon appears only
   when a backup job covers the machine, while a neutral X replaces ambiguous missing values.
   Exact dates, storage, counts, verification, job coverage and backup notes live in one neutral
-  information popover beside the checked time; Proxmox nodes also include repository context there.
+  information popover in a dedicated compact **Info** column; Proxmox nodes also include repository context there.
 - Selecting machines reveals the bulk-update bar. Updates and reboots retain their confirmation dialogs.
 - Platform/host groups and guest rows have a deterministic order, including after refreshes.
   Hosts use **Node** for Proxmox. A centered 2 px tree line uses compact guest indentation,

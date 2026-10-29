@@ -126,7 +126,7 @@ test("bulk actions appear only after selection; updates still require confirmati
   ui.click('[data-toggle="guest"]');
   assert.equal(doc.querySelector(".pkgs img"), null);
   assert.match(doc.querySelector(".pkgs").textContent, /<img src=x/);
-  assert.equal(doc.querySelector(".pkgs td[colspan]").getAttribute("colspan"), "10");
+  assert.equal(doc.querySelector(".pkgs td[colspan]").getAttribute("colspan"), "11");
   ui.click('[data-act="upgrade"]');
   assert.equal(doc.querySelector("#confirm").open, true);
   assert.equal(doc.querySelector("#confirm-snapshot-row").hidden, false);
@@ -156,8 +156,8 @@ test("update columns separate security, packages and phased updates with only re
   });
   const doc = ui.document;
   const headers = [...doc.querySelectorAll(".machine-table > thead th")].map((el) => el.textContent.trim());
-  assert.deepEqual(headers, ["", "Machine", "Type", "OS", "Security", "Package", "Phased", "Update", "Reboot", "Checked", "More"]);
-  assert.equal(doc.querySelectorAll(".machine-table > colgroup > col").length, 11);
+  assert.deepEqual(headers, ["", "Machine", "Type", "OS", "Security", "Package", "Phased", "Update", "Reboot", "Checked", "Info", "More"]);
+  assert.equal(doc.querySelectorAll(".machine-table > colgroup > col").length, 12);
   assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Type"]').textContent.trim(), "Node");
   assert.equal(doc.querySelector('[data-machine-row="pve"] .update-action-cell [data-act="upgrade"] span').textContent, "Update");
   assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Reboot"] [data-act="reboot"] span').textContent, "Reboot");
@@ -229,9 +229,10 @@ test("machine backup context uses neutral information popovers", async () => {
   const css = read("style.css");
   assert.match(css, /\.backup-job \{ width: 34px; min-height: 28px; justify-content: center; \}/);
   assert.match(css, /\.backup-job-heading, \.dashboard-page \.backup-job-cell \{ padding-inline: 5px; text-align: center; \}/);
-  assert.ok(standalone.querySelector(".repo-note"));
+  assert.ok(standalone.querySelector(".info-cell .repo-note"));
   assert.equal(node.querySelector(".repo-note"), null);
-  assert.ok(node.querySelector(".last-check-content"));
+  assert.equal(node.querySelector(".last-check").querySelector(".ui-icon"), null);
+  assert.ok(node.querySelector(".info-cell .machine-info-trigger"));
 
   const trigger = node.querySelector('[data-machine-info="pve"]');
   assert.ok(trigger);
@@ -319,7 +320,7 @@ test("optional Docker status is separate, honest about failed checks, and never 
   const dockerTable = ui.document.querySelector('[data-machine-row="docker-vm"]').closest("table");
   assert.equal(dockerTable.classList.contains("has-backup"), true);
   assert.equal(dockerTable.classList.contains("has-containers"), true);
-  assert.equal(dockerTable.querySelectorAll("colgroup > col").length, 14);
+  assert.equal(dockerTable.querySelectorAll("colgroup > col").length, 15);
   assert.equal(ui.document.querySelectorAll("[data-open-docker]").length, 1);
   ui.click('[data-open-docker="docker-vm"]');
   assert.equal(ui.document.querySelector("#groups").hidden, true);

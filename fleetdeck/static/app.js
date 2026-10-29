@@ -256,6 +256,7 @@ function rowHtml(v, withBackup, relation = {}) {
   const repoNote = !isProxmox(t) && c?.notes?.length
     ? `<span class="repo-note ${c.notes.length > 1 ? "warn" : "muted"}" title="${esc(c.notes.join("\n"))}" aria-label="Repository information">${icon("alert")}</span>` : "";
   const machineInfo = machineInfoButton(t, c);
+  const information = `${machineInfo}${repoNote}`;
   const rebootTitle = t.no_reboot || v.blocked || "Reboot needed";
   const reboot = c?.reboot_required === true
     ? canReboot(t)
@@ -278,7 +279,8 @@ function rowHtml(v, withBackup, relation = {}) {
     <td class="update-action-cell" data-label="Update">${updateState(v)}</td>
     <td class="reboot-cell" data-label="Reboot">${reboot}</td>
     ${state.settings.docker_enabled ? `<td class="containers-cell" data-label="Containers">${dockerCell(v)}</td>` : ""}
-    <td class="last-check" data-label="Checked"><span class="last-check-content"><span>${c ? ago(c.checked_at) : "Never"}</span>${machineInfo}${repoNote}</span></td>
+    <td class="last-check" data-label="Checked">${c ? ago(c.checked_at) : "Never"}</td>
+    <td class="info-cell" data-label="Info">${information ? `<span class="info-cell-content">${information}</span>` : ""}</td>
     <td class="more-cell"><button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="More actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button></td>
   </tr>`;
   if (c?.packages?.length && state.expanded.has(t.id)) {
@@ -295,7 +297,7 @@ function rowHtml(v, withBackup, relation = {}) {
     const detailClasses = ["pkgs"];
     if (state.selected.has(t.id)) detailClasses.push("is-selected");
     if (relation.hasGuests || (t.kind !== "host" && !relation.lastGuest)) detailClasses.push("tree-continues");
-    html += `<tr class="${detailClasses.join(" ")}" id="packages-${esc(t.id)}"><td></td><td colspan="${10 + (2 * Number(!!withBackup)) + Number(!!state.settings.docker_enabled)}"><div class="packages-panel"><table class="packages-table"><thead><tr><th>Type</th><th>Package</th><th>Installed</th><th>Available</th></tr></thead><tbody>${rows}</tbody></table></div></td></tr>`;
+    html += `<tr class="${detailClasses.join(" ")}" id="packages-${esc(t.id)}"><td></td><td colspan="${11 + (2 * Number(!!withBackup)) + Number(!!state.settings.docker_enabled)}"><div class="packages-panel"><table class="packages-table"><thead><tr><th>Type</th><th>Package</th><th>Installed</th><th>Available</th></tr></thead><tbody>${rows}</tbody></table></div></td></tr>`;
   }
   return html;
 }
@@ -342,8 +344,8 @@ function render() {
     <div class="group">
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
       <div class="group-scroll"><table class="machine-table${withBackup ? " has-backup" : ""}${state.settings.docker_enabled ? " has-containers" : ""}" aria-label="${esc(g.title)} machines">
-        <colgroup><col class="col-select"><col class="col-machine"><col class="col-type"><col class="col-os">${withBackup ? '<col class="col-backup"><col class="col-backup-job">' : ""}<col class="col-metric"><col class="col-metric"><col class="col-metric"><col class="col-update"><col class="col-reboot">${state.settings.docker_enabled ? '<col class="col-containers">' : ""}<col class="col-checked"><col class="col-more"></colgroup>
-        <thead><tr><th></th><th>Machine</th><th>Type</th><th>OS</th>${withBackup ? '<th>Last backup</th><th class="backup-job-heading">Job</th>' : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th>Update</th><th>Reboot</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Checked</th><th>More</th></tr></thead>
+        <colgroup><col class="col-select"><col class="col-machine"><col class="col-type"><col class="col-os">${withBackup ? '<col class="col-backup"><col class="col-backup-job">' : ""}<col class="col-metric"><col class="col-metric"><col class="col-metric"><col class="col-update"><col class="col-reboot">${state.settings.docker_enabled ? '<col class="col-containers">' : ""}<col class="col-checked"><col class="col-info"><col class="col-more"></colgroup>
+        <thead><tr><th></th><th>Machine</th><th>Type</th><th>OS</th>${withBackup ? '<th>Last backup</th><th class="backup-job-heading">Job</th>' : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th>Update</th><th>Reboot</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Checked</th><th class="info-heading">Info</th><th>More</th></tr></thead>
         <tbody>${g.rows.map((v, index) => rowHtml(v, withBackup, {
           hasGuests: v.target.kind === "host" && guestIndexes.length > 0,
           firstGuest: index === firstGuest,

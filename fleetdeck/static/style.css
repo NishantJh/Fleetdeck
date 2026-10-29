@@ -494,47 +494,48 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .machine-table.has-containers { min-width: 1320px; }
 .dashboard-page .machine-table.has-backup.has-containers { min-width: 1470px; }
 .dashboard-page .machine-table col.col-select { width: 3.5%; }
-.dashboard-page .machine-table col.col-machine { width: 21%; }
+.dashboard-page .machine-table col.col-machine { width: 20%; }
 .dashboard-page .machine-table col.col-type { width: 7%; }
-.dashboard-page .machine-table col.col-os { width: 17.5%; }
+.dashboard-page .machine-table col.col-os { width: 16.5%; }
 .dashboard-page .machine-table col.col-metric { width: 6%; }
 .dashboard-page .machine-table col.col-update { width: 12%; }
 .dashboard-page .machine-table col.col-reboot { width: 8%; }
-.dashboard-page .machine-table col.col-checked { width: 9%; }
-.dashboard-page .machine-table col.col-more { width: 4%; }
+.dashboard-page .machine-table col.col-checked { width: 8%; }
+.dashboard-page .machine-table col.col-info { width: 3.5%; }
+.dashboard-page .machine-table col.col-more { width: 3.5%; }
 .dashboard-page .machine-table.has-backup col.col-select { width: 3%; }
-.dashboard-page .machine-table.has-backup col.col-machine { width: 20.5%; }
+.dashboard-page .machine-table.has-backup col.col-machine { width: 19%; }
 .dashboard-page .machine-table.has-backup col.col-type { width: 6%; }
-.dashboard-page .machine-table.has-backup col.col-os { width: 13%; }
+.dashboard-page .machine-table.has-backup col.col-os { width: 12.5%; }
 .dashboard-page .machine-table.has-backup col.col-backup { width: 9%; }
 .dashboard-page .machine-table.has-backup col.col-backup-job { width: 4%; }
 .dashboard-page .machine-table.has-backup col.col-metric { width: 5%; }
 .dashboard-page .machine-table.has-backup col.col-update { width: 10%; }
 .dashboard-page .machine-table.has-backup col.col-reboot { width: 7%; }
-.dashboard-page .machine-table.has-backup col.col-checked { width: 8.5%; }
-.dashboard-page .machine-table.has-backup col.col-more { width: 4%; }
+.dashboard-page .machine-table.has-backup col.col-checked { width: 7.5%; }
+.dashboard-page .machine-table.has-backup col.col-more { width: 3.5%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-select { width: 3%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-machine { width: 20%; }
+.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-machine { width: 19%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-type { width: 6%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-os { width: 15%; }
+.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-os { width: 14%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-metric { width: 5%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-update { width: 10%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-reboot { width: 7%; }
 .dashboard-page .machine-table.has-containers:not(.has-backup) col.col-containers { width: 11%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-checked { width: 9%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-more { width: 4%; }
+.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-checked { width: 8%; }
+.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-more { width: 3.5%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-select { width: 3%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-machine { width: 17.5%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-machine { width: 16.5%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-type { width: 6%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-os { width: 11.5%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-os { width: 11%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-backup { width: 8%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-backup-job { width: 3.5%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-metric { width: 4.5%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-update { width: 9%; }
 .dashboard-page .machine-table.has-backup.has-containers col.col-reboot { width: 7%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-containers { width: 9.5%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-checked { width: 8%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-more { width: 3.5%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-containers { width: 9%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-checked { width: 7%; }
+.dashboard-page .machine-table.has-backup.has-containers col.col-more { width: 3%; }
 .dashboard-page .machine-table > thead > tr > th { white-space: nowrap; }
 .dashboard-page .machine-table > tbody > .machine-row > td { height: 56px; padding-top: 8px; padding-bottom: 8px; white-space: nowrap; }
 .dashboard-page .machine-table > tbody > .machine-row > td:first-child { padding-left: 14px; padding-right: 5px; }
@@ -574,7 +575,9 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page button.reboot-action { padding-inline: 8px; border-color: color-mix(in srgb, var(--reboot) 45%, var(--border)); background: color-mix(in srgb, var(--reboot) 10%, var(--panel)); color: var(--reboot); box-shadow: none; font-weight: 650; }
 .dashboard-page button.reboot-action:hover:not(:disabled) { border-color: var(--reboot); background: color-mix(in srgb, var(--reboot) 16%, var(--panel)); }
 .dashboard-page .last-check { color: var(--muted); }
-.dashboard-page .last-check-content { display: inline-flex; align-items: center; gap: 4px; }
+.dashboard-page .info-heading, .dashboard-page .info-cell { padding-inline: 4px; text-align: center; }
+.dashboard-page .info-cell-content { display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
+.dashboard-page .info-cell .repo-note { margin-left: 0; }
 .dashboard-page button.machine-info-trigger { min-width: 28px; min-height: 28px; margin: 0; padding: 4px 6px; color: var(--muted); background: transparent; border-color: transparent; box-shadow: none; }
 .dashboard-page button.machine-info-trigger:hover:not(:disabled) { color: var(--text); background: var(--chip); border-color: transparent; box-shadow: none; }
 .dashboard-page .machine-info-trigger .ui-icon { width: 14px; height: 14px; }
@@ -635,7 +638,7 @@ a.brand { color: var(--text); text-decoration: none; }
   .dashboard-page .group td.actions button { flex: none; padding: 5px 8px; }
   .dashboard-page .group td[data-label] { grid-column: 2 / -1; }
   .dashboard-page .group td[data-label]::before { min-width: 88px; }
-  .dashboard-page .group td.update-metric-cell, .dashboard-page .group td.backup-job-cell { text-align: left; }
+  .dashboard-page .group td.update-metric-cell, .dashboard-page .group td.backup-job-cell, .dashboard-page .group td.info-cell { text-align: left; }
   .dashboard-page .group .update-metric { margin: 0; }
   .dashboard-page .group .cell-detail { max-width: 100%; }
   .dashboard-page .packages-panel { margin-left: 0; }
