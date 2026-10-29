@@ -583,7 +583,7 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .machine-info-trigger .ui-icon { width: 14px; height: 14px; }
 .dashboard-page td.actions { min-width: 160px; padding-inline: 8px; text-align: left; white-space: nowrap; }
 .dashboard-page td.actions button.small { padding-inline: 8px; }
-.dashboard-page td.more-cell { padding-left: 4px; padding-right: 10px; text-align: left; }
+.dashboard-page .more-heading, .dashboard-page td.more-cell { padding-inline: 4px; text-align: center; }
 .dashboard-page tr.machine-row.is-selected > td { background: color-mix(in srgb, var(--accent) 9%, var(--panel)); }
 .dashboard-page tr.machine-row.is-selected:hover > td { background: color-mix(in srgb, var(--accent) 11%, var(--panel)); }
 .dashboard-page .packages-panel { margin: 8px 0 12px 42px; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-2); }

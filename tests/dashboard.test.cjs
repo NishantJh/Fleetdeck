@@ -158,6 +158,8 @@ test("update columns separate security, packages and phased updates with only re
   const headers = [...doc.querySelectorAll(".machine-table > thead th")].map((el) => el.textContent.trim());
   assert.deepEqual(headers, ["", "Machine", "Type", "OS", "Security", "Package", "Phased", "Update", "Reboot", "Checked", "Info", "More"]);
   assert.equal(doc.querySelectorAll(".machine-table > colgroup > col").length, 12);
+  assert.equal(doc.querySelector(".more-heading").textContent, "More");
+  assert.match(read("style.css"), /\.more-heading, \.dashboard-page td\.more-cell \{ padding-inline: 4px; text-align: center; \}/);
   assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Type"]').textContent.trim(), "Node");
   assert.equal(doc.querySelector('[data-machine-row="pve"] .update-action-cell [data-act="upgrade"] span').textContent, "Update");
   assert.equal(doc.querySelector('[data-machine-row="pve"] [data-label="Reboot"] [data-act="reboot"] span').textContent, "Reboot");
