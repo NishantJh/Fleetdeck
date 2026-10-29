@@ -301,7 +301,7 @@ def create_app(
             raise HTTPException(429, f"too many failed attempts, try again in {int(left) + 1} s")
         user = cfg.auth.username if cfg.auth else "demo"
         if not await asyncio.to_thread(password_ok, cfg.auth, req.password):
-            throttle.failed(ip, req.password)
+            throttle.failed(ip)  # not the password: CodeQL flags hashing it, and the audit row counts each try
             _audit(store, {"kind": "update-command-failed", "user": user, "ip": ip, "target": req.target_id})
             raise HTTPException(403, "wrong password")
         throttle.succeeded(ip)
