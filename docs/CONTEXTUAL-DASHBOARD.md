@@ -5,8 +5,11 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
 ## What changes
 
 - Four compact summary cards: machines needing updates, machines with security updates,
-  machines requiring a reboot, and machines needing recheck. The first three use current,
-  successful results; offline, failed and unchecked machines count toward recheck. Labels use the correct singular/plural form, and the
+  machines requiring a reboot, and machines needing recheck. Updates and Security include the
+  last successful results for offline/failed machines; those machines can also count toward recheck.
+  Reboot uses current successful results only. Unchecked machines count toward recheck but do not
+  imply known updates. Phased-only packages and hidden machines stay outside update/security totals.
+  Labels use the correct singular/plural form, and the
   overview shows when the next automatic check will run.
   Clicking a card filters the machine list; clicking it again clears the filter. Parent nodes
   remain visible for context, with selection and the main action disabled when they do not match.
@@ -21,13 +24,16 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
   stay together with centered compact cells. Status and Actions are separate and left-aligned.
 - Updates available uses a purple package icon and regular-weight label; the filled Update
   action retains its download icon. Status is 150 px wide. Reboot
-  stays gold, Up to date stays green with regular weight, failed checks stay red, and unavailable/unchecked states
+  stays gold, Up to date stays green with regular weight, failed checks stay red with regular weight, and unavailable/unchecked states
   use neutral icons. Full Security, Package and Phased cells open the package list, including
   empty cells when the row has known packages. They share a subtle hover highlight and native
   keyboard-accessible buttons; selection, Reboot and other actions remain independent.
   All groups share the same columns and fixed compact widths, including backup columns when any
   visible group has backup reporting. Machine names take priority over OS text when space is tight.
 - Dashboard and machine menus share item spacing, text, icon sizing and hover treatment.
+- Absolute dates in information popovers and dashboard/setup restore previews use
+  **yyyy-mm-dd HH:mm:ss**, in the browser's local time zone with a 24-hour clock.
+  Relative ages such as **2 h ago** remain unchanged.
 - Apt packages deferred by Ubuntu/Debian phasing are detected with read-only simulations.
   Packages that apt lists separately as not upgrading, but which become installable when only
   the phase policy changes, are included in the green **Phased** count and identified as
@@ -40,7 +46,8 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
   do not show placeholder dashes or an ambiguous Unknown reboot value.
 - Failed checks preserve the last successful package/reboot snapshot separately in persistent
   state. Offline or failed machines show muted last-known package counts, expandable with a
-  **Last known · age** notice. These counts are excluded from selection and current KPIs; a stale
+  **Last known · age** notice. These results are included in update/security KPIs and their filters,
+  but are excluded from update selection and actionable buttons; a stale
   reboot requirement is explained in Info rather than presented as current. Info also includes
   the latest error, attempt time and last successful check time. A successful check clears the snapshot.
   Historical results lost before this version cannot be recovered.
@@ -61,6 +68,14 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
   rounded branches and an exact final endpoint to keep the hierarchy clear without wasting name
   space. Online and offline dots use matching green or red halos.
 - The Fleetdeck logo links home, and dashboard/setup/login pages have a favicon.
+- On narrow screens the desktop table minimum widths are removed. Machine cards use compact
+  status, count and backup sections with 44 px action targets and two-column KPIs. Type and OS sit
+  below the machine name; status sits at the top right. Selection, the relevant action and More
+  share one bottom row. The boxed reboot indicator stays alongside the update counts without
+  adding a second action button. Desktop column alignment and ordering remain unchanged.
+  Expanded package details retain their table structure inside a local horizontal scroller.
+  Menus and confirmation dialogs are bounded by the mobile viewport. This addresses desktop CSS
+  overriding the original mobile rules; physical iPhone Safari verification remains necessary.
 
 Existing protections, authentication and CSRF protections remain in place.
 This does **not** add an OMV-specific updater or an independent monitor-only OS policy.
@@ -152,7 +167,7 @@ Node dependencies are development-only and are not included in the runtime image
 
 ### Preview verification
 
-For the final dashboard refinements: all 13 offline dashboard tests pass. They cover KPI
+For the latest mobile, date and KPI refinements: all 15 offline dashboard tests pass. They cover KPI
 filters/reset, parent context, cross-group column structure, selection pruning, historical
 counts, single/bulk update dialogs, cancellation, unchecked defaults and explicit option payloads.
 Ruff and diff checks pass. These checks use simulated machines only.

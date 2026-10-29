@@ -54,6 +54,7 @@ async function dashboard({ docker = false, targets = [], rememberedView = "machi
     matchMedia: () => ({ matches: false }), addEventListener: window.addEventListener.bind(window),
   };
   const context = vm.createContext(sandbox);
+  vm.runInContext(read("format.js"), context);
   vm.runInContext(read("theme.js"), context);
   window.dispatchEvent(new window.Event("DOMContentLoaded"));
   vm.runInContext(read("app.js"), context);
@@ -68,6 +69,21 @@ async function dashboard({ docker = false, targets = [], rememberedView = "machi
   };
   return { ...sandbox.ui, document, window, calls, errors, click, data };
 }
+
+test("absolute dates use year-month-day and 24-hour local time on dashboard and setup", () => {
+  const sandbox = { window: {} };
+  vm.runInNewContext(read("format.js"), sandbox);
+  const format = sandbox.window.FleetdeckDates.dateTime;
+  assert.equal(format(new Date(2026, 0, 2, 0, 5, 9).toISOString()), "2026-01-02 00:05:09");
+  assert.equal(format(new Date(2026, 9, 29, 17, 29, 35).toISOString()), "2026-10-29 17:29:35");
+  assert.equal(format(new Date(2026, 11, 31, 23, 59, 59).toISOString()), "2026-12-31 23:59:59");
+  for (const value of [null, "", "invalid"]) assert.equal(format(value), "Unknown date");
+  for (const file of ["index.html", "setup.html"]) {
+    const html = read(file);
+    assert.ok(html.indexOf('/static/format.js') < html.indexOf(`/static/${file === "index.html" ? "app" : "setup"}.js`));
+  }
+  for (const file of ["app.js", "setup.js"]) assert.doesNotMatch(read(file), /\.toLocale(?:Date|Time)?String\(/);
+});
 
 test("OS-only default hides all Docker UI, including an old remembered Containers view", async () => {
   const pending = machine("pve1", { check: { packages: [{ name: "curl", current: "1", available: "2", security: true }], docker_installed: true },
@@ -306,6 +322,32 @@ test("KPI filters keep parent context, align all groups and clear selections out
   await ui.load(); ui.render();
   assert.equal(ui.state.selected.size, 0);
   assert.match(doc.querySelector("#groups").textContent, /No matching machines/);
+  assert.deepEqual(ui.errors, []);
+});
+
+test("update and security KPIs include last-known results without enabling stale actions", async () => {
+  const regular = [{ name: "curl", available: "2" }];
+  const security = [{ name: "openssl", available: "2", security: true }];
+  const ui = await dashboard({ targets: [
+    machine("pve"),
+    machine("offline", { guest: true, parent: "pve", target: { status: "stopped", updatable: false }, check: { packages: regular } }),
+    machine("failed", { guest: true, parent: "pve", check: { error: "agent unavailable", last_successful: { checked_at: now, packages: security } } }),
+    machine("ready", { guest: true, parent: "pve", check: { packages: regular } }),
+    machine("phased", { check: { packages: [{ name: "systemd", available: "2", phased: true }] } }),
+    machine("hidden", { check: { packages: security }, view: { hidden: true } }),
+  ] });
+  const doc = ui.document;
+  assert.match(doc.querySelector('[data-kpi="updates"]').textContent, /3Machines needing updates/);
+  assert.match(doc.querySelector('[data-kpi="security"]').textContent, /1Machine with security updates/);
+  assert.match(doc.querySelector('[data-kpi="recheck"]').textContent, /2Machines needing recheck/);
+  ui.click('[data-kpi="updates"]');
+  assert.deepEqual([...doc.querySelectorAll('[data-machine-row]')].map((r) => r.dataset.machineRow), ["pve", "failed", "offline", "ready"]);
+  assert.equal(doc.querySelectorAll('[data-act="upgrade"]').length, 1);
+  for (const id of ["failed", "offline"]) assert.equal(doc.querySelector(`[data-select="${id}"]`).disabled, true);
+  ui.click('[data-kpi="security"]');
+  assert.deepEqual([...doc.querySelectorAll('[data-machine-row]')].map((r) => r.dataset.machineRow), ["pve", "failed"]);
+  assert.equal(doc.querySelector('[data-act="upgrade"]'), null);
+  assert.ok(doc.querySelector('[data-machine-row="failed"] [data-act="check"]'));
   assert.deepEqual(ui.errors, []);
 });
 

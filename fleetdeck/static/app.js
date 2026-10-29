@@ -114,9 +114,9 @@ function matchesKpi(v, filter) {
   if (!filter) return true;
   if (v.hidden) return false;
   if (filter === "recheck") return needsRecheck(v);
+  if (filter === "updates") return actionablePackages(displayCheck(v)).length > 0;
+  if (filter === "security") return securityPackages(displayCheck(v)).length > 0;
   if (needsRecheck(v)) return false;
-  if (filter === "updates") return actionablePackages(v.check).length > 0;
-  if (filter === "security") return securityPackages(v.check).length > 0;
   if (filter === "reboot") return v.check.reboot_required === true;
   return true;
 }
@@ -287,8 +287,8 @@ function rowHtml(v, withBackup, relation = {}) {
   if (relation.context) rowClasses.push("is-context");
   if (state.selected.has(t.id)) rowClasses.push("is-selected");
   let html = `<tr class="${rowClasses.join(" ")}" data-machine-row="${esc(t.id)}">
-    <td><input type="checkbox" aria-label="Select ${esc(t.name)}" data-select="${esc(t.id)}" data-focus-key="select:${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) && !relation.context ? "" : "disabled"}></td>
-    <td class="name machine-cell" data-label="Machine"><span class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name" title="${esc(t.name)}">${esc(t.name)}</span><span class="chip type-chip">${esc(kindLabel(t))}</span>${c?.os ? `<span class="machine-os" title="${esc(c.os)}">${esc(compactOS(c.os))}</span>` : ""}${self}${cs}${note}</span></td>
+    <td class="selection-cell"><label class="machine-select"><input type="checkbox" aria-label="Select ${esc(t.name)}" data-select="${esc(t.id)}" data-focus-key="select:${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) && !relation.context ? "" : "disabled"}><span class="mobile-select-label">Select</span></label></td>
+    <td class="name machine-cell" data-label="Machine"><span class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name" title="${esc(t.name)}">${esc(t.name)}</span><span class="machine-meta"><span class="chip type-chip">${esc(kindLabel(t))}</span>${c?.os ? `<span class="machine-os" title="${esc(c.os)}">${esc(compactOS(c.os))}</span>` : ""}${self}${cs}${note}</span></span></td>
     ${withBackup ? `<td class="backup-cell" data-label="Last backup">${backupCell(t)}</td><td class="backup-job-cell" data-label="Job">${backupJobCell(t)}</td>` : ""}
     ${updateColumns(v)}
     <td class="reboot-cell" data-label="Reboot">${reboot}</td>
@@ -332,8 +332,8 @@ function render() {
     .map(([p, e]) => `<div class="error-banner"><b>${esc(p)}</b>: ${esc(e)}</div>`).join("");
 
   const updatable = active().filter((v) => v.target.updatable);
-  const pending = updatable.filter((v) => v.check && !v.check.error && actionablePackages(v.check).length);
-  const secMachines = pending.filter((v) => securityPackages(v.check).length).length;
+  const pending = active().filter((v) => actionablePackages(displayCheck(v)).length);
+  const secMachines = pending.filter((v) => securityPackages(displayCheck(v)).length).length;
   const reboot = updatable.filter((v) => !v.check?.error && v.check?.reboot_required).length;
   const recheck = active().filter(needsRecheck).length;
   const hosts = dockerHosts();
@@ -480,7 +480,7 @@ function backupInformation(t) {
   const lines = [];
   if (b.last) {
     const count = `${b.count} backup${b.count === 1 ? "" : "s"} found`;
-    lines.push(`Last backup ${new Date(b.last).toLocaleString()}${b.storage ? ` on ${b.storage}` : ""}; ${count}.`);
+    lines.push(`Last backup ${window.FleetdeckDates.dateTime(b.last)}${b.storage ? ` on ${b.storage}` : ""}; ${count}.`);
     if (b.note) lines.push(b.note);
   } else if (b.note) {
     lines.push(b.note);
@@ -509,10 +509,10 @@ function openMachineInformation(id, trigger) {
   if (v.check?.os) updates.push(`Operating system: ${v.check.os}`);
   if (!v.target.updatable) updates.push(`Machine unavailable: ${v.target.note || v.target.status}`);
   if (v.check?.error) updates.push(`Latest check failed: ${v.check.error}`);
-  if (v.check) updates.push(`Last attempt: ${new Date(v.check.checked_at).toLocaleString()}`);
+  if (v.check) updates.push(`Last attempt: ${window.FleetdeckDates.dateTime(v.check.checked_at)}`);
   if (staleCheck(v)) {
     const last = displayCheck(v);
-    updates.push(`Displayed counts are from the last successful check: ${new Date(last.checked_at).toLocaleString()}`);
+    updates.push(`Displayed counts are from the last successful check: ${window.FleetdeckDates.dateTime(last.checked_at)}`);
     if (last.reboot_required) updates.push("A reboot was required at that check; this needs to be verified again.");
   }
   if (!backup.length && !repositories.length && !updates.length) return;
@@ -929,7 +929,7 @@ $("#restore-check").onclick = async () => {
     backup.data = await readBase64(file);
     const r = await api("/api/backup/restore", { method: "POST", body: JSON.stringify({ passphrase: $("#restore-pass").value, data: backup.data }) });
     const b = r.backup;
-    const made = b.created_at ? new Date(b.created_at).toLocaleString() : "an unknown date";
+    const made = b.created_at ? window.FleetdeckDates.dateTime(b.created_at) : "an unknown date";
     $("#restore-summary").textContent = `Made ${made}. Login: ${b.username || "none"}. ${b.machines} machine${b.machines === 1 ? "" : "s"} in the config` +
       `${b.history ? ", with job history" : ""}. ${b.files.length} file${b.files.length === 1 ? "" : "s"}.`;
     $("#restore-preview").hidden = false;

@@ -318,7 +318,7 @@ $("#restore-check").onclick = async () => {
     const data = await readBase64(file);
     const b = (await api("/api/setup/restore", { method: "POST", body: JSON.stringify({ passphrase: $("#restore-pass").value, data }) })).backup;
     restoreData = data;
-    const made = b.created_at ? new Date(b.created_at).toLocaleString() : "an unknown date";
+    const made = b.created_at ? window.FleetdeckDates.dateTime(b.created_at) : "an unknown date";
     $("#restore-summary").textContent = `Made ${made}. Login: ${b.username || "none"}. ${b.machines} machine${b.machines === 1 ? "" : "s"}${b.history ? ", with job history" : ""}.`;
     $("#restore-preview").hidden = false;
   } catch (err) {
