@@ -483,3 +483,53 @@ async def test_host_reboot_blocked_while_guest_runs_any_changing_job(action):
         jobs.submit("t1", "reboot")
     jobs.jobs["g"].status = "succeeded"
     assert jobs.update_blocked(host) is None
+
+
+async def test_monitor_only_machine_is_checked_and_rebooted_but_never_updated(fast_reboot):
+    host = _target("pve")
+    inv = _inventory(
+        (host, RebootingExecutor()),
+        (_guest("omv", "pve", monitor_only=True), RebootingExecutor()),
+        (_guest("ct", "pve"), RebootingExecutor()),
+    )
+    jobs = JobManager(inv)
+    jobs.set_monitor_only(["ct"], True)
+    for tid in ("omv", "ct"):
+        for action in ("upgrade", "stack-update"):
+            with pytest.raises(ValueError, match="monitor only"):
+                jobs.submit(tid, action, stack="web")
+        jobs.submit(tid, "check")
+    await _finish(jobs)
+    assert jobs.checks["omv"].error is None and jobs.checks["ct"].error is None
+    # Its own reboot, and its host's update and reboot, stay allowed.
+    for tid, action in (("omv", "reboot"), ("pve", "upgrade"), ("pve", "reboot")):
+        job = jobs.submit(tid, action)
+        await _finish(jobs)
+        assert job.status == "succeeded", (tid, action, job.error)
+
+    jobs.set_monitor_only(["ct"], False)
+    assert jobs.submit("ct", "upgrade")
+    await _finish(jobs)
+
+
+async def test_monitor_only_set_while_an_update_is_queued_stops_it():
+    gate = asyncio.Event()
+    inv = _inventory((_target("busy"), FakeExecutor(gate=gate)), (_target("omv"), FakeExecutor()))
+    jobs = JobManager(inv, max_parallel=1)
+    jobs.submit("busy", "check")
+    queued = jobs.submit("omv", "upgrade")
+    jobs.set_monitor_only(["omv"], True)
+    gate.set()
+    await _finish(jobs)
+    assert queued.status == "failed" and "monitor only" in queued.error
+
+
+def test_monitor_only_survives_a_restart(tmp_path):
+    from fleetdeck.store import Store
+
+    inv = _inventory((_target("a"), FakeExecutor()), (_target("b"), FakeExecutor()))
+    s = Store(tmp_path / "state.db")
+    JobManager(inv, store=s).set_monitor_only(["a", "b"], True)
+    JobManager(inv, store=s).set_monitor_only(["b"], False)
+    s.close()
+    assert JobManager(inv, store=Store(tmp_path / "state.db")).monitor_only_ids == {"a"}

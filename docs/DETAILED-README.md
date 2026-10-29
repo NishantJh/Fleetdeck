@@ -177,6 +177,10 @@ changes are hard to undo.
   touches your own SSH keys.
 * It upgrades only when you press *Update*, and reboots only when you ask. A Proxmox node that runs a
   guest you put under `protect:` is never rebooted from here.
+* A machine set to *Monitor only* (its button on the dashboard, or `monitor_only:` in the config) is
+  checked and reported as usual, but no update is ever installed on it from here: not by *Update*,
+  *Update selected*, a Docker stack update or automatic security updates. Its reboot, backups and
+  snapshots still work, and so does its host's reboot.
 * The setup script never changes `sshd_config` or the firewall, except the UDP port of a tunnel you
   chose. Removing a machine on the setup page gives you a script that undoes its setup.
 * Keep the dashboard on your LAN or behind a VPN, with a login (`auth:`, set by the setup page). If you

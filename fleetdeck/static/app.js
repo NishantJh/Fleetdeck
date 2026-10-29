@@ -73,7 +73,8 @@ function groups() {
 }
 
 const canUpgrade = (t) => t.updatable && !t.check_only;
-const selectable = (v) => canUpgrade(v.target) && !v.hidden && !v.blocked;
+const selectable = (v) => canUpgrade(v.target) && !v.hidden && !v.blocked && !v.monitor_only;
+const MONITOR_TIP = "Monitor only: checked and reported, but updates are installed elsewhere, not from here. Reboot, backups and snapshots still work.";
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
 const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "checking Docker", "stack-update": "updating Docker" };
 
@@ -137,8 +138,8 @@ function stackPanel(v) {
       else status = `<span class="ok">up to date</span>`;
       const up = s.state === "partial" ? ` <span class="chip warn" title="Services that are stopped stay stopped">partly running</span>` : "";
       const self = s.is_dashboard ? ` <span class="chip" title="This dashboard runs in this stack. Updating it would stop the update itself: run docker compose pull && docker compose up -d in a terminal.">dashboard</span>` : "";
-      const can = !busy && s.state !== "stopped" && !s.is_dashboard && r.compose !== "none";
-      const btn = `<button class="small ${behind.length && can ? "primary" : ""}" data-stack="${esc(s.name)}" data-id="${id}" ${can ? "" : "disabled"}>Update</button>`;
+      const can = !busy && s.state !== "stopped" && !s.is_dashboard && r.compose !== "none" && !v.monitor_only;
+      const btn = `<button class="small ${behind.length && can ? "primary" : ""}" data-stack="${esc(s.name)}" data-id="${id}" ${can ? "" : "disabled"} title="${v.monitor_only ? MONITOR_TIP : ""}">Update</button>`;
       return `<tr><td>${esc(s.name)}${self}${up}</td><td class="muted">${s.services.map((x) => esc(x.name)).join(", ")}</td><td>${status}</td><td>${btn}</td></tr>`;
     }).join("");
     body = `<table>${rows}</table>`;
@@ -160,11 +161,12 @@ function rowHtml(v, withBackup) {
     : "";
   const pending = c && !c.error && c.packages.length > 0;
   const self = v.runs_dashboard ? ` <span class="chip" title="This dashboard runs here">dashboard</span>` : "";
+  const monitor = v.monitor_only ? ` <span class="chip" title="${MONITOR_TIP}">monitor only</span>` : "";
   const cs = c?.community_script
     ? ` <span class="chip" title="${esc(csTip(c.community_script))}">helper script</span>` : "";
   let html = `<tr class="${t.kind === "host" ? "host" : "guest"}${v.hidden ? " is-hidden" : ""}">
     <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) ? "" : "disabled"}></td>
-    <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${self}${cs}${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
+    <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${self}${monitor}${cs}${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
     <td class="muted os" data-label="OS">${esc(c?.os || "")}</td>
     <td data-label="State"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span>${esc(SHORT[t.status] || t.status)}</span></td>
     ${withBackup ? `<td data-label="Last backup">${backupCell(t)}</td>` : ""}
@@ -172,11 +174,12 @@ function rowHtml(v, withBackup) {
     <td class="muted" data-label="Checked">${c ? ago(c.checked_at) : ""}</td>
     <td class="actions">
       <button class="small" data-act="check" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Check</button>
-      <button class="small ${pending && !t.check_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy && !v.blocked ? "" : "disabled"} title="${t.check_only ? esc(t.note) : esc(v.blocked || "")}">Update</button>
+      <button class="small ${pending && !t.check_only && !v.monitor_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy && !v.blocked && !v.monitor_only ? "" : "disabled"} title="${t.check_only ? esc(t.note) : v.monitor_only ? MONITOR_TIP : esc(v.blocked || "")}">Update</button>
       <button class="small" data-act="reboot" data-id="${esc(t.id)}" ${canReboot(t) && !busy && !v.blocked ? "" : "disabled"} title="${esc(t.no_reboot || (t.check_only ? t.note : "") || v.blocked || "")}">Reboot</button>
       ${canUpgrade(t) ? `<button class="small ${dockerBehind(v) ? "primary" : ""}" data-act="docker" data-id="${esc(t.id)}" title="Docker Compose stacks on this machine">Docker${dockerBehind(v) ? ` (${dockerBehind(v)} ↑)` : ""}</button>` : ""}
       ${t.can_backup ? `<button class="small" data-act="backup" data-id="${esc(t.id)}" ${busy ? "disabled" : ""} title="Back up this machine">Back up</button>` : ""}
       ${state.console?.enabled && t.status !== "stopped" && t.status !== "offline" ? `<button class="small" data-run="${esc(t.id)}" title="Run a command on this machine">Run command…</button>` : ""}
+      <button class="small ghost" data-monitor="${v.monitor_only ? "0" : "1"}" data-id="${esc(t.id)}" ${t.monitor_only ? "disabled" : ""} title="${t.monitor_only ? "Set to monitor only in the config file" : v.monitor_only ? "Allow updates from the dashboard again" : "Keep checking this machine, but never install updates on it from here"}">${v.monitor_only ? "Allow updates" : "Monitor only"}</button>
       <button class="small ghost" data-hide="${v.hidden ? "0" : "1"}" data-id="${esc(t.id)}" title="${v.hidden ? "Show this machine on the dashboard again" : "Hide from the dashboard, Check all and scheduled checks"}">${v.hidden ? "Unhide" : "Hide"}</button>
     </td></tr>`;
   if (pending && state.expanded.has(t.id)) {
@@ -416,8 +419,20 @@ async function setHidden(id, hidden) {
   render();
 }
 
+async function setMonitorOnly(id, on) {
+  try {
+    await api("/api/monitor-only", { method: "POST", body: JSON.stringify({ target_ids: [id], monitor_only: on }) });
+  } catch (e) {
+    alert(`Could not change it: ${e.message}`);
+    return;
+  }
+  for (const v of state.targets) if (v.target.id === id) v.monitor_only = on;
+  if (on) state.selected.delete(id);
+  render();
+}
+
 document.addEventListener("click", (e) => {
-  const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide],[data-stack]");
+  const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide],[data-monitor],[data-stack]");
   if (!el) return;
   if (el.dataset.stack) {
     const id = el.dataset.id, name = el.dataset.stack;
@@ -435,6 +450,8 @@ document.addEventListener("click", (e) => {
     render();
   } else if (el.dataset.act === "stacks") {
     act("stacks", [el.dataset.id]);
+  } else if (el.dataset.monitor) {
+    setMonitorOnly(el.dataset.id, el.dataset.monitor === "1");
   } else if (el.dataset.hide) {
     setHidden(el.dataset.id, el.dataset.hide === "1");
   } else if (el.dataset.toggle) {

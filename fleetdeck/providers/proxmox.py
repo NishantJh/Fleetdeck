@@ -382,6 +382,7 @@ class ProxmoxProvider:
                     note=note,
                     backup=self._backup_for(vmid, backups),
                     can_snapshot=vmid not in self.cfg.protect,
+                    monitor_only=vmid in self.cfg.monitor_only,
                 )
                 if t.can_snapshot:
                     snapshots[t.id] = PveSnapshots(self.client, nname, "lxc", vmid)
@@ -413,6 +414,7 @@ class ProxmoxProvider:
                     note=note,
                     backup=self._backup_for(vmid, backups),
                     can_snapshot=vmid not in self.cfg.protect,
+                    monitor_only=vmid in self.cfg.monitor_only,
                 )
                 if t.can_snapshot:
                     snapshots[t.id] = PveSnapshots(self.client, nname, "qemu", vmid)
