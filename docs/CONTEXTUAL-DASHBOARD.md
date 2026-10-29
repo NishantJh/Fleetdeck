@@ -1,6 +1,6 @@
 # OS-focused dashboard preview
 
-This fork changes the dashboard, not the OS upgrade commands or snapshot behavior.
+This fork changes the dashboard, not the OS upgrade commands or snapshot implementation.
 
 ## What changes
 
@@ -8,6 +8,9 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
   machines requiring a reboot, and machines needing recheck. The first three use current,
   successful results; offline, failed and unchecked machines count toward recheck. Labels use the correct singular/plural form, and the
   overview shows when the next automatic check will run.
+  Clicking a card filters the machine list; clicking it again clears the filter. Parent nodes
+  remain visible for context, with selection and the main action disabled when they do not match.
+  KPI totals continue to describe the full inventory. Selections outside a filter are cleared.
 - A short toolbar: **Check updates**, with less frequent tasks in a compact icon-led menu.
   The menu separates inventory tasks from backup and notification tools, and marks the
   optional hidden-machine view without changing the menu label.
@@ -16,11 +19,14 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
   job coverage retain separate columns; Last backup is capped at a compact 120 px width.
   The table has one caption row. Security, Package, Phased and the icon-only Reboot indicator
   stay together with centered compact cells. Status and Actions are separate and left-aligned.
-- Updates available uses a purple download icon and label, matching the Update action. Reboot
-  stays gold, Up to date stays green, failed checks stay red, and unavailable/unchecked states
+- Updates available uses a purple package icon and regular-weight label; the filled Update
+  action retains its download icon. Status is 150 px wide. Reboot
+  stays gold, Up to date stays green with regular weight, failed checks stay red, and unavailable/unchecked states
   use neutral icons. Full Security, Package and Phased cells open the package list, including
   empty cells when the row has known packages. They share a subtle hover highlight and native
   keyboard-accessible buttons; selection, Reboot and other actions remain independent.
+  All groups share the same columns and fixed compact widths, including backup columns when any
+  visible group has backup reporting. Machine names take priority over OS text when space is tight.
 - Dashboard and machine menus share item spacing, text, icon sizing and hover treatment.
 - Apt packages deferred by Ubuntu/Debian phasing are detected with read-only simulations.
   Packages that apt lists separately as not upgrading, but which become installable when only
@@ -34,26 +40,29 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot behavio
   do not show placeholder dashes or an ambiguous Unknown reboot value.
 - Failed checks preserve the last successful package/reboot snapshot separately in persistent
   state. Offline or failed machines show muted last-known package counts, expandable with a
-  historical-result notice. These counts are excluded from selection and current KPIs; a stale
+  **Last known · age** notice. These counts are excluded from selection and current KPIs; a stale
   reboot requirement is explained in Info rather than presented as current. Info also includes
   the latest error, attempt time and last successful check time. A successful check clears the snapshot.
   Historical results lost before this version cannot be recovered.
 - Per-machine **More** menus use icons and concise labels for checks, configuration backups,
   hiding and any optional command-console or Docker actions that are actually available.
 - Backup age and job coverage use separate compact columns: a neutral calendar icon appears only
-  when a backup job covers the machine, while a neutral X replaces ambiguous missing values.
-  If a job exists but no backup is found, Last backup says **No backup found** and Job still shows
-  its calendar icon. Ages use hours, days and weeks without changing job coverage.
+  when a backup job covers the machine. A muted dash means no backup was found; **Unavailable**
+  means backup information could not be read. Proxmox node configuration-backup cells stay blank.
+  A job may exist even when Last backup is a dash. Ages use hours, days and weeks without changing job coverage.
   Exact dates, storage, counts, verification, job coverage and backup notes live in one neutral
   information popover in a dedicated compact **Info** column; Proxmox nodes also include repository context there.
 - Selecting machines reveals the bulk-update bar. Updates and reboots retain their confirmation dialogs.
+  The update dialog has a compact machine summary and aligned options. Snapshot first and Reboot
+  if required both start unchecked every time; users explicitly opt in for each operation. This
+  changes the manual confirmation default, not stored configuration or server-side snapshot behavior.
 - Platform/host groups and guest rows have a deterministic order, including after refreshes.
   Hosts use **Node** for Proxmox. A centered 2 px tree line uses compact guest indentation,
   rounded branches and an exact final endpoint to keep the hierarchy clear without wasting name
   space. Online and offline dots use matching green or red halos.
 - The Fleetdeck logo links home, and dashboard/setup/login pages have a favicon.
 
-Existing protections, snapshot defaults, authentication and CSRF protections remain in place.
+Existing protections, authentication and CSRF protections remain in place.
 This does **not** add an OMV-specific updater or an independent monitor-only OS policy.
 
 ## Docker stays with your existing manager
@@ -142,6 +151,11 @@ use an offline DOM with synthetic API responses; they do not open a browser or c
 Node dependencies are development-only and are not included in the runtime image.
 
 ### Preview verification
+
+For the final dashboard refinements: all 13 offline dashboard tests pass. They cover KPI
+filters/reset, parent context, cross-group column structure, selection pruning, historical
+counts, single/bulk update dialogs, cancellation, unchecked defaults and explicit option payloads.
+Ruff and diff checks pass. These checks use simulated machines only.
 
 For the status/actions and last-known-results revision: all 10 offline dashboard tests pass,
 including failed/offline history, update/reboot priority, confirmation dialogs, selection,

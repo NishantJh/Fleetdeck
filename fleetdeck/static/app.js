@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), logJob: null, logLines: [], showHidden: false, view: "machines" };
+const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), logJob: null, logLines: [], showHidden: false, view: "machines", filter: null };
 const $ = (sel) => document.querySelector(sel);
 const renderedHTML = new WeakMap();
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -108,6 +108,16 @@ const regularPackages = (check) => actionablePackages(check).filter((p) => !p.se
 const displayCheck = (v) => v.check?.error ? v.check.last_successful : v.check;
 const staleCheck = (v) => !!displayCheck(v) && (!v.target.updatable || !!v.check?.error);
 const needsRecheck = (v) => !v.target.updatable || !v.check || !!v.check.error;
+function matchesKpi(v, filter) {
+  if (!filter) return true;
+  if (v.hidden) return false;
+  if (filter === "recheck") return needsRecheck(v);
+  if (needsRecheck(v)) return false;
+  if (filter === "updates") return actionablePackages(v.check).length > 0;
+  if (filter === "security") return securityPackages(v.check).length > 0;
+  if (filter === "reboot") return v.check.reboot_required === true;
+  return true;
+}
 const selectable = (v) => canUpgrade(v.target) && !v.check?.error && actionablePackages(v.check).length > 0 && !v.hidden && !v.blocked && !v.active_job;
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
 const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "checking Docker", "stack-update": "updating Docker" };
@@ -145,7 +155,7 @@ function updateState(v) {
   if (!c) return `<span class="status-inline muted">${icon("help")}Not checked</span>`;
   if (c.error) return `<span class="status-inline bad" title="${esc(c.error)}">${icon("alert")}Check failed</span>`;
   const pending = actionablePackages(c).length > 0;
-  if (pending) return `<span class="status-inline updates-available">${icon("download")}Updates available</span>`;
+  if (pending) return `<span class="status-inline updates-available">${icon("package")}Updates available</span>`;
   if (!pending) return `<span class="status-inline ok">${icon("check")}Up to date</span>`;
   return "";
 }
@@ -165,7 +175,7 @@ function compactOS(os) {
 
 function backupCell(t) {
   const b = t.backup;
-  if (!b) return "";
+  if (!b) return isProxmoxNode(t) ? "" : `<span class="muted">Unavailable</span>`;
   if (b.last) {
     return `<span class="${b.stale ? "warn" : ""}">${ago(b.last)}</span>`;
   }
@@ -173,9 +183,8 @@ function backupCell(t) {
     // Proxmox node configuration-backup context is available from the neutral information popover.
     return "";
   }
-  if (b.in_job === true) return `<span class="muted">No backup found</span>`;
   const label = b.note && !b.stale && !b.not_set_up ? "Backup information unavailable" : "No backup found";
-  return `<span class="backup-missing muted" role="img" aria-label="${label}">${icon("noBackup")}</span>`;
+  return `<span class="backup-missing muted" aria-label="${label}">${label === "Backup information unavailable" ? "Unavailable" : "—"}</span>`;
 }
 
 function backupJobCell(t) {
@@ -184,7 +193,6 @@ function backupJobCell(t) {
 }
 
 function machineInfoButton(t, c) {
-  if (!t.backup && !(isProxmox(t) && c?.notes?.length) && !c?.error && t.updatable) return "";
   const id = esc(t.id);
   return `<button class="small ghost machine-info-trigger" data-machine-info="${id}" data-focus-key="machine-info:${id}" aria-label="Information for ${esc(t.name)}" aria-controls="machine-information" aria-expanded="false">${icon("info")}</button>`;
 }
@@ -274,15 +282,16 @@ function rowHtml(v, withBackup, relation = {}) {
   if (relation.firstGuest) rowClasses.push("first-guest");
   if (relation.lastGuest) rowClasses.push("last-guest");
   if (v.hidden) rowClasses.push("is-hidden");
+  if (relation.context) rowClasses.push("is-context");
   if (state.selected.has(t.id)) rowClasses.push("is-selected");
   let html = `<tr class="${rowClasses.join(" ")}" data-machine-row="${esc(t.id)}">
-    <td><input type="checkbox" aria-label="Select ${esc(t.name)}" data-select="${esc(t.id)}" data-focus-key="select:${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) ? "" : "disabled"}></td>
+    <td><input type="checkbox" aria-label="Select ${esc(t.name)}" data-select="${esc(t.id)}" data-focus-key="select:${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) && !relation.context ? "" : "disabled"}></td>
     <td class="name machine-cell" data-label="Machine"><span class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name" title="${esc(t.name)}">${esc(t.name)}</span><span class="chip type-chip">${esc(kindLabel(t))}</span>${c?.os ? `<span class="machine-os" title="${esc(c.os)}">${esc(compactOS(c.os))}</span>` : ""}${self}${cs}${note}</span></td>
     ${withBackup ? `<td class="backup-cell" data-label="Last backup">${backupCell(t)}</td><td class="backup-job-cell" data-label="Job">${backupJobCell(t)}</td>` : ""}
     ${updateColumns(v)}
     <td class="reboot-cell" data-label="Reboot">${reboot}</td>
     <td class="update-status-cell" data-label="Status">${updateState(v)}</td>
-    <td class="update-action-cell" data-label="Actions">${nextAction(v)}</td>
+    <td class="update-action-cell" data-label="Actions">${relation.context ? "" : nextAction(v)}</td>
     ${state.settings.docker_enabled ? `<td class="containers-cell" data-label="Containers">${dockerCell(v)}</td>` : ""}
     <td class="last-check" data-label="Checked">${c ? ago(c.checked_at) : "Never"}</td>
     <td class="info-cell" data-label="Info">${information ? `<span class="info-cell-content">${information}</span>` : ""}</td>
@@ -302,7 +311,7 @@ function rowHtml(v, withBackup, relation = {}) {
     const detailClasses = ["pkgs"];
     if (state.selected.has(t.id)) detailClasses.push("is-selected");
     if (relation.hasGuests || (t.kind !== "host" && !relation.lastGuest)) detailClasses.push("tree-continues");
-    const history = staleCheck(v) ? `<p class="last-known-note">Last successful check: ${esc(ago(shown.checked_at))}. These updates need to be checked again before installation.</p>` : "";
+    const history = staleCheck(v) ? `<p class="last-known-note">Last known · ${esc(ago(shown.checked_at))}. Check again before installation.</p>` : "";
     html += `<tr class="${detailClasses.join(" ")}" id="packages-${esc(t.id)}"><td></td><td colspan="${10 + (2 * Number(!!withBackup)) + Number(!!state.settings.docker_enabled)}"><div class="packages-panel">${history}<table class="packages-table"><thead><tr><th>Type</th><th>Package</th><th>Installed</th><th>Available</th></tr></thead><tbody>${rows}</tbody></table></div></td></tr>`;
   }
   return html;
@@ -329,11 +338,12 @@ function render() {
   const images = hosts.reduce((n, v) => n + dockerBehind(v), 0);
   const imageErrors = hosts.reduce((n, v) => n + dockerErrors(v), 0);
   const imageUnchecked = hosts.filter((v) => dockerEnabled(v) && !v.stacks).length;
+  const kpi = (key, count, tone, label) => `<button type="button" class="stat" data-kpi="${key}" data-focus-key="kpi:${key}" aria-pressed="${state.filter === key}"><b class="${count ? tone : "ok"}">${count}</b><span>${label}</span></button>`;
   html("#summary", `
-    <div class="stat"><b class="${pending.length ? "warn" : "ok"}">${pending.length}</b><span>${plural(pending.length, "Machine needing updates", "Machines needing updates")}</span></div>
-    <div class="stat"><b class="${secMachines ? "bad" : "ok"}">${secMachines}</b><span>${plural(secMachines, "Machine with security updates", "Machines with security updates")}</span></div>
-    <div class="stat"><b class="${reboot ? "reboot" : "ok"}">${reboot}</b><span>${plural(reboot, "Machine requiring reboot", "Machines requiring reboot")}</span></div>
-    <div class="stat"><b class="${recheck ? "muted" : "ok"}">${recheck}</b><span>${plural(recheck, "Machine needing recheck", "Machines needing recheck")}</span></div>
+    ${kpi("updates", pending.length, "warn", plural(pending.length, "Machine needing updates", "Machines needing updates"))}
+    ${kpi("security", secMachines, "bad", plural(secMachines, "Machine with security updates", "Machines with security updates"))}
+    ${kpi("reboot", reboot, "reboot", plural(reboot, "Machine requiring reboot", "Machines requiring reboot"))}
+    ${kpi("recheck", recheck, "muted", plural(recheck, "Machine needing recheck", "Machines needing recheck"))}
     ${state.settings.docker_enabled ? `<div class="stat"><b class="${images ? "warn" : imageErrors ? "bad" : "ok"}">${images}</b><span>${plural(images, "Stack with an image update", "Stacks with image updates")}${imageUnchecked ? ` · ${imageUnchecked} unchecked` : ""}</span></div>` : ""}`);
   $("#overview-count").textContent = `${active().length} ${plural(active().length, "machine", "machines")}`;
   $("#schedule-status").innerHTML = scheduleStat();
@@ -344,8 +354,17 @@ function render() {
   toggle.hidden = hiddenCount === 0;
   $("#hidden-count").textContent = hiddenCount;
   toggle.setAttribute("aria-pressed", String(state.showHidden));
-  html("#groups", groups().map((g) => {
-    const withBackup = g.rows.some((v) => v.target.backup);
+  const allGroups = groups();
+  const withBackup = allGroups.some((g) => g.rows.some((v) => v.target.backup));
+  const filteredGroups = allGroups.map((g) => {
+    const matches = g.rows.filter((v) => matchesKpi(v, state.filter));
+    return { ...g, rows: !state.filter ? g.rows : matches.length ? g.rows.filter((v) => matches.includes(v) || (v.target.kind === "host" && g.rows.some((guest) => guest.target.kind !== "host"))) : [] };
+  }).filter((g) => g.rows.length);
+  const matchingCount = active().filter((v) => matchesKpi(v, state.filter)).length;
+  if (state.filter) $("#overview-count").textContent = `${matchingCount} of ${active().length} machines`;
+  $("#filter-status").hidden = !state.filter;
+  $("#filter-status").textContent = state.filter ? `${matchingCount} matching ${plural(matchingCount, "machine", "machines")} · parent nodes kept for context · click the selected KPI to clear` : "";
+  html("#groups", filteredGroups.map((g) => {
     const guestIndexes = g.rows.map((v, index) => v.target.kind === "host" ? -1 : index).filter((index) => index >= 0);
     const firstGuest = guestIndexes[0], lastGuest = guestIndexes.at(-1);
     return `
@@ -358,10 +377,11 @@ function render() {
           hasGuests: v.target.kind === "host" && guestIndexes.length > 0,
           firstGuest: index === firstGuest,
           lastGuest: index === lastGuest,
+          context: !!state.filter && !matchesKpi(v, state.filter),
         })).join("")}</tbody>
       </table></div>
     </div>`;
-  }).join("") || `<div class="empty"><h3>No machines yet</h3><p class="muted">Add a Proxmox node, an Incus server or any Linux host, and it shows up here with its updates, backups and state.</p><a class="button primary" href="/setup">Add machines</a></div>`);
+  }).join("") || (state.filter ? `<div class="empty"><h3>No matching machines</h3><p class="muted">Click the selected KPI again to show all machines.</p></div>` : `<div class="empty"><h3>No machines yet</h3><p class="muted">Add a Proxmox node, an Incus server or any Linux host, and it shows up here with its updates, backups and state.</p><a class="button primary" href="/setup">Add machines</a></div>`));
   const unknown = active().filter((v) => v.target.updatable && v.check?.docker_installed == null && !v.stacks).length;
   html("#containers", state.settings.docker_enabled ? `${hosts.some((v) => dockerEnabled(v) && canUpgrade(v.target)) ? `<div class="containers-toolbar"><span class="muted">OS packages and container deployments are managed separately.</span><button class="small" data-fetch-docker>Fetch image updates</button></div>` : ""}${hosts.map(stackPanel).join("") || `<div class="empty"><h3>No Docker hosts discovered</h3><p class="muted">Update checks also detect Docker without downloading images.</p></div>`}${unknown ? `<p class="muted discovery-note">Docker capability is not known on ${unknown} machine(s). <button class="small" data-discover-docker>Check updates to discover hosts</button></p>` : ""}` : "");
   $(".view-tabs").hidden = !state.settings.docker_enabled;
@@ -454,7 +474,7 @@ function machineInfoSection(title, lines) {
 
 function backupInformation(t) {
   const b = t.backup;
-  if (!b) return [];
+  if (!b) return isProxmoxNode(t) ? [] : ["Backup information is not available for this machine."];
   const lines = [];
   if (b.last) {
     const count = `${b.count} backup${b.count === 1 ? "" : "s"} found`;
@@ -483,6 +503,7 @@ function openMachineInformation(id, trigger) {
   const backup = backupInformation(v.target);
   const repositories = isProxmox(v.target) ? v.check?.notes || [] : [];
   const updates = [];
+  if (!v.check) updates.push("No update check has completed for this machine.");
   if (v.check?.os) updates.push(`Operating system: ${v.check.os}`);
   if (!v.target.updatable) updates.push(`Machine unavailable: ${v.target.note || v.target.status}`);
   if (v.check?.error) updates.push(`Latest check failed: ${v.check.error}`);
@@ -537,7 +558,7 @@ async function load(refresh = false) {
     state.jobs = await api("/api/jobs");
     state.schedule = await api("/api/schedule");
     // Drop selections for targets that disappeared or can no longer be upgraded.
-    const ok = new Set(state.targets.filter(selectable).map((v) => v.target.id));
+    const ok = new Set(state.targets.filter((v) => selectable(v) && matchesKpi(v, state.filter)).map((v) => v.target.id));
     for (const id of state.selected) if (!ok.has(id)) state.selected.delete(id);
   } catch (e) {
     state.errors = { dashboard: e.message };
@@ -593,9 +614,17 @@ function confirmAction(action, ids) {
   const c = CONFIRM[action];
   $("#confirm-title").textContent = c.title;
   $("#confirm-text").textContent = c.text;
-  $("#confirm-ok").textContent = c.ok;
+  const upgradeAction = action === "upgrade";
+  $("#confirm").classList.toggle("upgrade-confirm", upgradeAction);
+  $("#confirm-symbol").innerHTML = icon(upgradeAction ? "download" : action === "reboot" ? "reboot" : action === "backup" ? "backup" : "refresh");
+  $("#confirm-ok").innerHTML = `${upgradeAction ? icon("download") : ""}<span>${esc(upgradeAction && ids.length > 1 ? `Update ${ids.length} machines` : c.ok)}</span>`;
+  if (upgradeAction) {
+    $("#confirm-title").textContent = ids.length === 1 ? "Update machine?" : `Update ${ids.length} machines?`;
+    $("#confirm-text").textContent = `Install the available OS updates on ${ids.length === 1 ? "this machine" : "these machines"}.`;
+  }
   $("#confirm-reboot-row").hidden = action !== "upgrade";
   $("#confirm-reboot").checked = false;
+  $("#confirm-reboot-note").hidden = true;
   const placeRow = $("#confirm-place-row");
   placeRow.hidden = action !== "backup";
   if (action === "backup") {
@@ -613,6 +642,10 @@ function confirmAction(action, ids) {
     const n = v?.check ? actionablePackages(v.check).length : null;
     const phased = phasedPackages(v?.check).length;
     let detail = n != null ? `${n} package${n === 1 ? "" : "s"}${phased ? ` · ${phased} phased, waiting` : ""}` : "not checked";
+    if (upgradeAction && n != null) {
+      const security = securityPackages(v?.check).length, regular = regularPackages(v?.check).length;
+      detail = [security ? `${security} security` : "", regular ? `${regular} package${regular === 1 ? "" : "s"}` : "", phased ? `${phased} phased, waiting` : ""].filter(Boolean).join(" · ") || "0 packages";
+    }
     if (action === "backup" || action === "stacks") detail = "";
     if (action === "reboot") {
       detail = v?.check?.reboot_required ? "reboot needed" : "";
@@ -629,11 +662,15 @@ function confirmAction(action, ids) {
         ? ` · then runs ${app}'s own update (helper script)`
         : ` · ${app}'s own update is off: run "update" in it if it misbehaves`;
     }
+    if (upgradeAction) {
+      return `<li class="confirm-machine"><span class="confirm-machine-name">${icon("package")}<strong>${esc(v?.target.name || id)}</strong>${v ? `<span class="chip">${esc(kindLabel(v.target))}</span>` : ""}</span><span class="confirm-machine-detail muted">${esc(detail)}</span></li>`;
+    }
     return `<li>${esc(v?.target.name || id)} <span class="muted">${esc(detail)}</span></li>`;
   }).join("");
   const snapshottable = action === "upgrade" && ids.some((id) => byId.get(id)?.target.can_snapshot);
   $("#confirm-snapshot-row").hidden = !snapshottable;
-  $("#confirm-snapshot").checked = snapshottable && !!state.settings.snapshot_before_upgrade;
+  $("#confirm-snapshot").checked = false;
+  $("#confirm-snapshot-label").textContent = ids.length === 1 ? "Take a snapshot first" : "Take snapshots first";
   const dlg = $("#confirm");
   dlg.returnValue = "";
   dlg.showModal();
@@ -702,7 +739,18 @@ async function setHidden(id, hidden) {
   render();
 }
 
+$("#confirm-reboot").addEventListener("change", () => {
+  $("#confirm-reboot-note").hidden = !$("#confirm-reboot").checked;
+});
+
 document.addEventListener("click", (e) => {
+  const kpi = e.target.closest("[data-kpi]");
+  if (kpi) {
+    state.filter = state.filter === kpi.dataset.kpi ? null : kpi.dataset.kpi;
+    state.view = "machines";
+    for (const id of state.selected) if (!state.targets.some((v) => v.target.id === id && matchesKpi(v, state.filter))) state.selected.delete(id);
+    closeMachineMenu(); closeMachineInformation(); render(); return;
+  }
   const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide],[data-stack]");
   if (!el || el.disabled) return;
   closeMachineMenu();

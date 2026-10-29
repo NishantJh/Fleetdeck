@@ -172,6 +172,25 @@ dialog input[type="text"] { margin: 2px 0 6px; }
 #confirm-place-row .check-row { margin: 6px 0; }
 #confirm-place-row p { font-size: 12.5px; margin: 6px 0 4px; }
 #confirm-place-row[hidden] { display: none; }
+#confirm { max-width: 540px; padding: 24px; }
+#confirm .confirm-heading { display: flex; align-items: center; gap: 11px; margin-bottom: 12px; }
+#confirm .confirm-heading h3 { margin: 0; font-size: 20px; font-weight: 550; }
+#confirm .confirm-symbol { display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; flex: none; color: var(--accent); background: var(--accent-soft); border-radius: 10px; }
+#confirm .confirm-symbol .ui-icon { width: 19px; height: 19px; }
+#confirm.upgrade-confirm #confirm-list { list-style: none; padding: 0; margin: 20px 0; }
+#confirm .confirm-machine { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 5px 12px; padding: 12px; background: var(--panel-2); border-radius: 8px; }
+#confirm .confirm-machine + .confirm-machine { margin-top: 5px; }
+#confirm .confirm-machine-name { display: flex; align-items: center; gap: 8px; min-width: 0; }
+#confirm .confirm-machine-name strong { font-weight: 550; overflow-wrap: anywhere; }
+#confirm .confirm-machine-name .ui-icon { color: var(--muted); }
+#confirm .confirm-machine-detail { font-size: 12px; overflow-wrap: anywhere; }
+#confirm .confirm-option { display: flex; flex-direction: row; align-items: flex-start; gap: 11px; margin: 18px 0; text-align: left; }
+#confirm .confirm-option input { flex: none; width: 17px; height: 17px; margin: 2px 0 0; }
+#confirm .confirm-option strong { display: block; font-weight: 550; }
+#confirm .confirm-option small { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; }
+#confirm .confirm-option[hidden], #confirm-reboot-note[hidden] { display: none; }
+#confirm-reboot-note { font-size: 12px; }
+#confirm menu { border-top: 1px solid var(--border); padding-top: 16px; }
 
 .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; vertical-align: -2px; opacity: .7; }
 @keyframes spin { to { transform: rotate(360deg); } }
@@ -495,45 +514,18 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .machine-table.has-backup { min-width: 1280px; }
 .dashboard-page .machine-table.has-containers { min-width: 1240px; }
 .dashboard-page .machine-table.has-backup.has-containers { min-width: 1420px; }
-.dashboard-page .machine-table col.col-select { width: 3%; }
-.dashboard-page .machine-table col.col-machine { width: 36%; }
-.dashboard-page .machine-table col.col-metric { width: 6%; }
-.dashboard-page .machine-table col.col-status { width: 170px; }
-.dashboard-page .machine-table col.col-update { width: 9%; }
-.dashboard-page .machine-table col.col-reboot { width: 6%; }
-.dashboard-page .machine-table col.col-checked { width: 8%; }
-.dashboard-page .machine-table col.col-info { width: 3.5%; }
-.dashboard-page .machine-table col.col-more { width: 3.5%; }
-.dashboard-page .machine-table.has-backup col.col-select { width: 2.5%; }
-.dashboard-page .machine-table.has-backup col.col-machine { width: 30%; }
-.dashboard-page .machine-table.has-backup col.col-backup { width: 120px; }
-.dashboard-page .machine-table.has-backup col.col-backup-job { width: 4%; }
-.dashboard-page .machine-table.has-backup col.col-metric { width: 5%; }
-.dashboard-page .machine-table.has-backup col.col-status { width: 170px; }
-.dashboard-page .machine-table.has-backup col.col-update { width: 8%; }
-.dashboard-page .machine-table.has-backup col.col-reboot { width: 5%; }
-.dashboard-page .machine-table.has-backup col.col-checked { width: 7%; }
-.dashboard-page .machine-table.has-backup col.col-more { width: 3.5%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-select { width: 3%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-machine { width: 32%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-metric { width: 5%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-status { width: 170px; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-update { width: 9%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-reboot { width: 5%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-containers { width: 11%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-checked { width: 8%; }
-.dashboard-page .machine-table.has-containers:not(.has-backup) col.col-more { width: 3.5%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-select { width: 2.5%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-machine { width: 27%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-backup { width: 120px; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-backup-job { width: 3.5%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-metric { width: 4.5%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-status { width: 170px; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-update { width: 8%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-reboot { width: 4%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-containers { width: 9%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-checked { width: 7%; }
-.dashboard-page .machine-table.has-backup.has-containers col.col-more { width: 3%; }
+.dashboard-page .machine-table col.col-select { width: 36px; }
+.dashboard-page .machine-table col.col-machine { width: auto; }
+.dashboard-page .machine-table col.col-backup { width: 120px; }
+.dashboard-page .machine-table col.col-backup-job { width: 44px; }
+.dashboard-page .machine-table col.col-metric { width: 70px; }
+.dashboard-page .machine-table col.col-status { width: 150px; }
+.dashboard-page .machine-table col.col-update { width: 100px; }
+.dashboard-page .machine-table col.col-reboot { width: 64px; }
+.dashboard-page .machine-table col.col-checked { width: 90px; }
+.dashboard-page .machine-table col.col-info { width: 44px; }
+.dashboard-page .machine-table col.col-more { width: 44px; }
+.dashboard-page .machine-table col.col-containers { width: 120px; }
 .dashboard-page .machine-table > thead > tr > th { white-space: nowrap; }
 .dashboard-page .machine-table > tbody > .machine-row > td { height: 56px; padding-top: 8px; padding-bottom: 8px; white-space: nowrap; }
 .dashboard-page .machine-table > tbody > .machine-row > td:first-child { padding-left: 14px; padding-right: 5px; }
@@ -542,7 +534,7 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .machine-main { position: relative; z-index: 2; display: inline-flex; align-items: center; gap: 8px; max-width: 100%; }
 .dashboard-page .machine-main .state { display: inline-flex; align-items: center; }
 .dashboard-page .machine-main .state, .dashboard-page .machine-main .chip, .dashboard-page .machine-main .machine-note { flex: none; }
-.dashboard-page .machine-os { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12px; font-weight: 400; }
+.dashboard-page .machine-os { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); font-size: 12px; font-weight: 400; }
 .dashboard-page .machine-name { flex: 0 1 auto; }
 .dashboard-page .machine-main .dot { width: 10px; height: 10px; margin: 0; }
 .dashboard-page .machine-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -573,11 +565,16 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .update-metric .ui-icon { width: 14px; height: 14px; }
 .dashboard-page .update-summary { color: var(--text-2); }
 .dashboard-page .status-inline { display: inline-flex; align-items: center; gap: 6px; font-weight: 550; }
-.dashboard-page .status-inline.updates-available { color: var(--accent); }
+.dashboard-page .status-inline.updates-available { color: var(--accent); font-weight: 400; }
+.dashboard-page .status-inline.ok { font-weight: 400; }
+.dashboard-page .machine-row.is-context .machine-name { color: var(--muted); }
+.dashboard-page button.stat { width: 100%; justify-content: initial; text-align: left; white-space: normal; }
+.dashboard-page button.stat[aria-pressed="true"] { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
+.dashboard-page .filter-status { margin: -6px 0 14px; font-size: 12px; }
 .dashboard-page .status-inline.unavailable { max-width: 100%; overflow: hidden; color: var(--muted); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard-page .status-inline.unavailable .ui-icon { flex: none; }
 .dashboard-page .update-action-cell { padding-inline: 8px; text-align: left; }
-.dashboard-page .update-status-cell { overflow: hidden; text-overflow: ellipsis; }
+.dashboard-page .update-status-cell { padding-inline: 6px; overflow: hidden; text-overflow: ellipsis; }
 .dashboard-page .update-status-cell .status-inline { max-width: 100%; }
 .dashboard-page .update-status-cell .ui-icon { flex: none; }
 .dashboard-page .reboot-heading, .dashboard-page .reboot-cell { text-align: center; padding-inline: 5px; }

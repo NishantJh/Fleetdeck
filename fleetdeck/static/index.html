@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fleetdeck</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/style.css?v=21">
+  <link rel="stylesheet" href="/static/style.css?v=22">
   <script src="/static/theme.js?v=10"></script>
 </head>
 <body class="dashboard-page">
@@ -58,6 +58,7 @@
     <div id="errors"></div>
     <div class="overview-heading"><h2>Overview</h2><span id="overview-count" class="muted"></span><span id="schedule-status" class="muted"></span></div>
     <section id="summary" class="summary"></section>
+    <p id="filter-status" class="muted filter-status" role="status" aria-live="polite" hidden></p>
     <nav class="view-tabs" aria-label="Infrastructure views" hidden>
       <button id="view-machines" data-view="machines" aria-pressed="true">Machines</button>
       <button id="view-containers" data-view="containers" aria-pressed="false">Containers <span id="docker-host-count" class="chip">0</span></button>
@@ -122,13 +123,14 @@
     </form>
   </dialog>
 
-  <dialog id="confirm">
+  <dialog id="confirm" aria-labelledby="confirm-title" aria-describedby="confirm-text">
     <form method="dialog">
-      <h3 id="confirm-title">Update these machines?</h3>
+      <div class="confirm-heading"><span id="confirm-symbol" class="confirm-symbol" aria-hidden="true"></span><h3 id="confirm-title">Update these machines?</h3></div>
       <p id="confirm-text" class="muted"></p>
       <ul id="confirm-list"></ul>
-      <label id="confirm-reboot-row" class="check-row"><input type="checkbox" id="confirm-reboot"> Reboot afterwards if a reboot is needed</label>
-      <label id="confirm-snapshot-row" class="check-row"><input type="checkbox" id="confirm-snapshot"> Snapshot Proxmox/Incus guests first, so the upgrade can be rolled back</label>
+      <label id="confirm-snapshot-row" class="check-row confirm-option"><input type="checkbox" id="confirm-snapshot"><span><strong id="confirm-snapshot-label">Take a snapshot first</strong><small>For Proxmox and Incus guests that support snapshots.</small></span></label>
+      <label id="confirm-reboot-row" class="check-row confirm-option"><input type="checkbox" id="confirm-reboot"><span><strong>Reboot if required</strong><small>Restart after updating only if a reboot is needed.</small></span></label>
+      <p id="confirm-reboot-note" class="muted" hidden>Services may be unavailable while machines reboot.</p>
       <div id="confirm-place-row">
         <label class="check-row"><input type="radio" name="place" id="confirm-place-default" checked> The default place</label>
         <label class="check-row"><input type="radio" name="place" id="confirm-place-dashboard"> <span>On the dashboard: <code id="confirm-place-dashboard-path">its backup folder</code>, in a folder named after the machine</span></label>
@@ -180,7 +182,7 @@
     </menu>
   </dialog>
 
-  <script src="/static/app.js?v=18"></script>
+  <script src="/static/app.js?v=19"></script>
   <script src="/static/console.js?v=2"></script>
 </body>
 </html>

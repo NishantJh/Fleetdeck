@@ -239,7 +239,7 @@ test("last-known results stay visible without stale update or reboot actions", a
     assert.equal(row.querySelector("[data-select]").disabled, true);
   }
   ui.click('[data-machine-row="failed"] .update-metric.security');
-  assert.match(doc.querySelector("#packages-failed").textContent, /Last successful check/);
+  assert.match(doc.querySelector("#packages-failed").textContent, /Last known · 3 h ago/);
   assert.equal(doc.querySelector("#packages-failed script"), null);
   ui.click('[data-machine-info="failed"]');
   assert.match(doc.querySelector("#machine-information").textContent, /agent <script>unavailable/);
@@ -257,7 +257,7 @@ test("last-known results stay visible without stale update or reboot actions", a
   assert.equal(doc.querySelector("#confirm").open, true);
   assert.equal(ui.calls.some((call) => call.path === "/api/actions"), false);
   const scheduled = doc.querySelector('[data-machine-row="scheduled"]');
-  assert.equal(scheduled.querySelector(".backup-cell").textContent, "No backup found");
+  assert.equal(scheduled.querySelector(".backup-cell").textContent, "—");
   assert.ok(scheduled.querySelector(".backup-job"));
   assert.ok(scheduled.querySelector(".machine-os"));
   for (const table of doc.querySelectorAll(".machine-table")) {
@@ -267,6 +267,89 @@ test("last-known results stay visible without stale update or reboot actions", a
       assert.equal(span, columns, "header, rows and detail panels span the same columns");
     }
   }
+  assert.deepEqual(ui.errors, []);
+});
+
+test("KPI filters keep parent context, align all groups and clear selections outside the filter", async () => {
+  const sec = machine("sec", { guest: true, parent: "pve", check: { packages: [{ name: "ssl", available: "2", security: true }] } });
+  const ordinary = machine("ordinary", { target: { platform: "ssh" }, check: { packages: [{ name: "curl", available: "2" }] } });
+  const ui = await dashboard({ targets: [machine("pve", { target: { backup: { last: now } } }), sec, ordinary,
+    machine("failed", { guest: true, parent: "pve", check: { error: "agent unavailable" } }),
+    machine("restart", { target: { platform: "ssh" }, check: { reboot_required: true } }),
+  ] });
+  const doc = ui.document;
+  const tables = [...doc.querySelectorAll(".machine-table")];
+  assert.equal(tables.length, 2);
+  assert.equal(tables[0].querySelector("colgroup").innerHTML, tables[1].querySelector("colgroup").innerHTML);
+  assert.ok(tables.every((t) => t.classList.contains("has-backup")));
+  const check = doc.querySelector('[data-select="ordinary"]'); check.checked = true;
+  check.dispatchEvent(new ui.window.Event("change", { bubbles: true }));
+  ui.click('[data-kpi="security"]');
+  assert.equal(ui.state.selected.size, 0);
+  assert.deepEqual([...doc.querySelectorAll("[data-machine-row]")].map((r) => r.dataset.machineRow), ["pve", "sec"]);
+  assert.ok(doc.querySelector('[data-machine-row="pve"]').classList.contains("is-context"));
+  assert.equal(doc.querySelector('[data-select="pve"]').disabled, true);
+  assert.equal(doc.querySelector('[data-kpi="security"]').getAttribute("aria-pressed"), "true");
+  assert.match(doc.querySelector("#filter-status").textContent, /1 matching machine/);
+  assert.match(doc.querySelector('[data-kpi="updates"]').textContent, /2Machines needing updates/);
+  ui.click('[data-kpi="recheck"]');
+  assert.deepEqual([...doc.querySelectorAll("[data-machine-row]")].map((r) => r.dataset.machineRow), ["pve", "failed"]);
+  ui.click('[data-kpi="reboot"]');
+  assert.deepEqual([...doc.querySelectorAll("[data-machine-row]")].map((r) => r.dataset.machineRow), ["restart"]);
+  ui.click('[data-kpi="reboot"]');
+  assert.equal(doc.querySelectorAll("[data-machine-row]").length, 5);
+  assert.equal(doc.querySelector("#filter-status").hidden, true);
+  ui.click('[data-kpi="security"]');
+  const box = doc.querySelector('[data-select="sec"]'); box.checked = true;
+  box.dispatchEvent(new ui.window.Event("change", { bubbles: true }));
+  sec.check.packages[0].security = false;
+  await ui.load(); ui.render();
+  assert.equal(ui.state.selected.size, 0);
+  assert.match(doc.querySelector("#groups").textContent, /No matching machines/);
+  assert.deepEqual(ui.errors, []);
+});
+
+test("update confirmation resets both options and submits only explicit choices", async () => {
+  const ui = await dashboard({ targets: [machine("vm", { guest: true, parent: "pve", check: { packages: [{ name: "curl", available: "2" }] } }),
+    machine("host", { target: { platform: "ssh" }, check: { packages: [{ name: "curl", available: "2" }] } })] });
+  const doc = ui.document, dialog = doc.querySelector("#confirm");
+  ui.click('[data-machine-row="vm"] [data-act="upgrade"]');
+  assert.equal(doc.querySelector("#confirm-title").textContent, "Update machine?");
+  assert.equal(doc.querySelector("#confirm-snapshot").checked, false);
+  assert.equal(doc.querySelector("#confirm-reboot").checked, false);
+  assert.equal(doc.querySelector("#confirm-snapshot-row").hidden, false);
+  assert.match(doc.querySelector("#confirm-list").textContent, /vmVM1 package/);
+  dialog.returnValue = "ok"; dialog.dispatchEvent(new ui.window.Event("close")); await flush();
+  let request = ui.calls.filter((c) => c.path === "/api/actions").at(-1);
+  assert.equal(JSON.parse(request.body).snapshot_first, false);
+  assert.equal(JSON.parse(request.body).reboot_if_required, false);
+  ui.click('[data-machine-row="vm"] [data-act="upgrade"]');
+  doc.querySelector("#confirm-snapshot").checked = true;
+  const reboot = doc.querySelector("#confirm-reboot"); reboot.checked = true;
+  reboot.dispatchEvent(new ui.window.Event("change", { bubbles: true }));
+  assert.equal(doc.querySelector("#confirm-reboot-note").hidden, false);
+  dialog.returnValue = "ok"; dialog.dispatchEvent(new ui.window.Event("close")); await flush();
+  request = ui.calls.filter((c) => c.path === "/api/actions").at(-1);
+  assert.equal(JSON.parse(request.body).snapshot_first, true);
+  assert.equal(JSON.parse(request.body).reboot_if_required, true);
+  ui.click('[data-machine-row="host"] [data-act="upgrade"]');
+  assert.equal(doc.querySelector("#confirm-snapshot").checked, false);
+  assert.equal(doc.querySelector("#confirm-reboot").checked, false);
+  assert.equal(doc.querySelector("#confirm-snapshot-row").hidden, true);
+  assert.equal(doc.querySelector("#confirm-reboot-note").hidden, true);
+  const count = ui.calls.filter((c) => c.path === "/api/actions").length;
+  dialog.returnValue = "cancel"; dialog.dispatchEvent(new ui.window.Event("close")); await flush();
+  assert.equal(ui.calls.filter((c) => c.path === "/api/actions").length, count);
+  for (const id of ["vm", "host"]) {
+    const box = doc.querySelector(`[data-select="${id}"]`); box.checked = true;
+    box.dispatchEvent(new ui.window.Event("change", { bubbles: true }));
+  }
+  ui.click("#update-selected");
+  assert.equal(doc.querySelector("#confirm-title").textContent, "Update 2 machines?");
+  assert.equal(doc.querySelectorAll("#confirm-list .confirm-machine").length, 2);
+  assert.equal(doc.querySelector("#confirm-snapshot").checked, false);
+  assert.equal(doc.querySelector("#confirm-reboot").checked, false);
+  assert.equal(doc.querySelector("#confirm-ok").textContent, "Update 2 machines");
   assert.deepEqual(ui.errors, []);
 });
 
