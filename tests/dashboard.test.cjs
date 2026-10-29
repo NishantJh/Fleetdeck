@@ -389,6 +389,23 @@ test("update and security KPIs include last-known results without enabling stale
   assert.deepEqual(ui.errors, []);
 });
 
+test("update confirmation gives each package type its own icon and preserves notes", async () => {
+  const ui = await dashboard({ targets: [machine("mixed", { check: { packages: [
+    { name: "openssl", security: true, available: "2" },
+    { name: "curl", available: "2" },
+    { name: "systemd", phased: true, available: "2" },
+  ] }, target: { no_reboot: "<b>Keep running</b>" } }), machine("ordinary", { check: { packages: [{ name: "curl", available: "2" }] } })] });
+  ui.state.selected.add('mixed');ui.state.selected.add('ordinary');ui.render();
+  ui.click('#update-selected');
+  const summaries = ui.document.querySelectorAll('.confirm-machine-detail');
+  assert.deepEqual([...summaries[0].querySelectorAll('.confirm-update-type')].map(el => el.textContent), ['1 security', '1 package', '1 phased, waiting']);
+  for (const summary of summaries) for (const type of summary.querySelectorAll('.confirm-update-type')) assert.equal(type.querySelectorAll('svg').length, 1);
+  assert.equal(summaries[1].querySelectorAll('.confirm-update-type').length, 1);
+  assert.match(summaries[0].querySelector('.confirm-detail-note').textContent, /<b>Keep running<\/b>/);
+  assert.equal(summaries[0].querySelector('b'), null);
+  assert.equal(ui.calls.some(call => call.path === '/api/actions'), false);
+});
+
 test("update confirmation resets both options and submits only explicit choices", async () => {
   const ui = await dashboard({ targets: [machine("vm", { guest: true, parent: "pve", check: { packages: [{ name: "curl", available: "2" }] } }),
     machine("host", { target: { platform: "ssh" }, check: { packages: [{ name: "curl", available: "2" }] } })] });
@@ -536,7 +553,7 @@ test("dashboard menu uses the compact simple list and preserves hidden-view stat
   assert.equal(summary.getAttribute("aria-label"), "More options");
   assert.deepEqual(
     [...doc.querySelectorAll(".dashboard-menu-item")].map((el) => el.textContent.trim().replace(/\s+/g, " ")),
-    ["Machines & settings", "Refresh inventory", "Show hidden machines1", "Back up & restore", "Test notifications"],
+    ["Machines", "Settings", "Refresh inventory", "Show hidden machines1", "Back up & restore", "Test notifications"],
   );
   const toggle = doc.querySelector("#show-hidden");
   assert.equal(toggle.hidden, false);

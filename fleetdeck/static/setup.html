@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fleetdeck setup</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/style.css?v=12">
+  <link rel="stylesheet" href="/static/style.css?v=30">
   <script src="/static/theme.js?v=10"></script>
 </head>
 <body>
@@ -13,11 +13,19 @@
     <h1>Fleetdeck setup</h1>
     <div class="toolbar">
       <a id="to-dashboard" class="button" href="/" hidden>Dashboard</a>
+      <details id="setup-navigation" class="dashboard-menu" hidden>
+        <summary class="button" aria-label="More options"><svg class="ui-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/></svg></summary>
+        <div class="dashboard-menu-items">
+          <a class="button ghost dashboard-menu-item" href="/machines"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/></svg><span>Machines</span></a>
+          <a class="button ghost dashboard-menu-item" href="/settings"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/></svg><span>Settings</span></a>
+        </div>
+      </details>
     </div>
   </header>
 
   <main class="setup">
     <div id="notice"></div>
+    <div id="page-heading" class="setup-page-heading" hidden><h2 id="page-title">Machines</h2><p id="page-description" class="muted">Add and connect the sources Fleetdeck checks.</p></div>
 
     <section id="unlock" class="panel" hidden>
       <h2>Enter the setup code</h2>
@@ -57,14 +65,17 @@
       </details>
     </section>
 
-    <section id="machines" class="panel" hidden>
-      <h2>Machines</h2>
-      <p class="muted">For each machine: fill in its details, run the script it shows on that machine (in any shell, as root or as a user who can use sudo, doas or su), then press <b>Connect</b>. The dashboard does the rest over SSH.</p>
+    <section id="connection-security" class="panel" hidden>
+      <h2>Connection security</h2>
       <div class="field wide">
         <label for="allow-from">Only accept the dashboard's key from these addresses <span class="opt">optional</span></label>
         <input id="allow-from" placeholder="192.168.1.50, 203.0.113.7" spellcheck="false" autocomplete="off">
         <p class="help">The address(es) machines see the dashboard connect from: this Docker host's LAN IP, and your home's public IP for a VPS. Leave empty to allow any. Changing it changes the scripts.</p>
       </div>
+    </section>
+    <section id="machines" class="panel" hidden>
+      <h2>Connections</h2>
+      <p class="muted">For each machine: fill in its details, run the script it shows on that machine (in any shell, as root or as a user who can use sudo, doas or su), then press <b>Connect</b>. The dashboard does the rest over SSH.</p>
       <div id="cards"></div>
       <div class="row">
         <button id="add-machine">Add a machine</button>
@@ -77,12 +88,13 @@
       <button id="apply-btn" class="primary">Apply and open the dashboard</button>
     </section>
 
-    <details id="advanced" class="panel" hidden>
-      <summary>Advanced: edit config.yaml <span class="muted small">schedule, notifications, protected guests, everything else</span></summary>
+    <section id="advanced" class="panel" hidden>
+      <h2>Configuration</h2>
+      <p class="muted">Edit config.yaml for checks, notifications, protected guests and dashboard settings.</p>
       <p class="muted">Checked before it's saved. See <code>config.example.yaml</code> in the repository for every setting.</p>
-      <textarea id="config-text" spellcheck="false" rows="24"></textarea>
-      <div class="row"><button id="config-save" class="primary">Save</button> <span id="config-status" class="muted"></span></div>
-    </details>
+      <textarea id="config-text" spellcheck="false" rows="24" aria-label="Configuration YAML" readonly></textarea>
+      <div class="row"><button id="config-save" class="primary" disabled>Save configuration</button> <span id="config-status" class="muted" aria-live="polite"></span></div>
+    </section>
   </main>
 
   <footer class="site-footer">
@@ -169,6 +181,6 @@
   </template>
 
   <script src="/static/format.js?v=1"></script>
-  <script src="/static/setup.js?v=10"></script>
+  <script src="/static/setup.js?v=11"></script>
 </body>
 </html>

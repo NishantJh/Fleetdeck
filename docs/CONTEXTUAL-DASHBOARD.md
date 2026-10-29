@@ -31,6 +31,12 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
   All groups share the same columns and fixed compact widths, including backup columns when any
   visible group has backup reporting. Machine names take priority over OS text when space is tight.
 - Dashboard and machine menus share item spacing, text, icon sizing and hover treatment.
+- Machines and Settings have separate URLs and separate entries in More. `/machines` contains
+  connection security (permanently expanded above the connection cards), scripts and connection
+  management. `/settings` contains the full YAML editor, with validation, read-only handling and
+  the existing separate apply/restart step. `/setup` retains the first-run setup-code and admin
+  creation flow, and remains a compatible machine-management entry after setup. All pages and APIs
+  retain the existing authentication and request protections; connection scripts are unchanged.
 - Absolute dates in information popovers and dashboard/setup restore previews use
   **yyyy-mm-dd HH:mm:ss**, in the browser's local time zone with a 24-hour clock.
   Relative ages such as **2 h ago** remain unchanged.
@@ -63,6 +69,9 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
   The update dialog has a compact machine summary and aligned options. Snapshot first and Reboot
   if required both start unchecked every time; users explicitly opt in for each operation. This
   changes the manual confirmation default, not stored configuration or server-side snapshot behavior.
+  Each nonzero update type in the confirmation has its own icon, including mixed Security,
+  Package and Phased counts. Phased packages stay green and marked as waiting. Machine restrictions
+  and helper-script notes remain visible beneath the type summary.
 - Platform/host groups and guest rows have a deterministic order, including after refreshes.
   Hosts use **Node** for Proxmox. A centered 2 px tree line uses compact guest indentation,
   rounded branches and an exact final endpoint to keep the hierarchy clear without wasting name
@@ -175,10 +184,13 @@ Node dependencies are development-only and are not included in the runtime image
 
 ### Preview verification
 
-For the latest mobile, date and KPI refinements: all 16 offline dashboard tests pass. They cover KPI
+For the latest page split and confirmation fixes: all 21 offline UI tests pass. They cover KPI
 filters/reset, parent context, cross-group column structure, selection pruning, historical
 counts, single/bulk update dialogs, cancellation, unchecked defaults and explicit option payloads.
-Ruff and diff checks pass. These checks use simulated machines only.
+Ruff and diff checks pass. The setup/security Python suite passes 55 tests and skips 4; three existing
+shell tests were deselected after reproducing permission failures for local system commands in this
+environment. The browser check used simulated machines for separate page navigation and mixed-type
+confirmation icons. These checks do not contact homelab machines.
 
 For the status/actions and last-known-results revision: all 10 offline dashboard tests pass,
 including failed/offline history, update/reboot priority, confirmation dialogs, selection,

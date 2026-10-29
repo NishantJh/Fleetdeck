@@ -668,9 +668,15 @@ function confirmAction(action, ids) {
     const n = v?.check ? actionablePackages(v.check).length : null;
     const phased = phasedPackages(v?.check).length;
     let detail = n != null ? `${n} package${n === 1 ? "" : "s"}${phased ? ` · ${phased} phased, waiting` : ""}` : "not checked";
+    let typeSummary = "";
     if (upgradeAction && n != null) {
       const security = securityPackages(v?.check).length, regular = regularPackages(v?.check).length;
       detail = [security ? `${security} security` : "", regular ? `${regular} package${regular === 1 ? "" : "s"}` : "", phased ? `${phased} phased, waiting` : ""].filter(Boolean).join(" · ") || "0 packages";
+      typeSummary = [
+        security ? `<span class="confirm-update-type">${icon("shield")}<span>${security} security</span></span>` : "",
+        regular ? `<span class="confirm-update-type">${icon("package")}<span>${regular} package${regular === 1 ? "" : "s"}</span></span>` : "",
+        phased ? `<span class="confirm-update-type phased">${icon("clock")}<span>${phased} phased, waiting</span></span>` : "",
+      ].filter(Boolean).join("");
     }
     if (action === "backup" || action === "stacks") detail = "";
     if (action === "reboot") {
@@ -681,6 +687,7 @@ function confirmAction(action, ids) {
       // Waits for running guest jobs first, but the guests themselves go down with it.
       if (guests) detail += `${detail ? " · " : ""}and every guest running on it (${guests})`;
     }
+    const summaryText = detail;
     if (action === "upgrade" && v?.target.no_reboot) detail += ` · won't reboot: ${v.target.no_reboot}`;
     const app = v?.check?.community_script;
     if (action === "upgrade" && app) {
@@ -690,8 +697,9 @@ function confirmAction(action, ids) {
     }
     if (upgradeAction) {
       const machineIcon = v?.target.kind === "host" ? "server" : "monitor";
-      const countIcon = securityPackages(v?.check).length ? "shield" : "package";
-      return `<li class="confirm-machine"><span class="confirm-machine-name">${icon(machineIcon)}<strong>${esc(v?.target.name || id)}</strong>${v ? `<span class="chip">${esc(kindLabel(v.target))}</span>` : ""}</span><span class="confirm-machine-detail muted">${icon(countIcon)}<span>${esc(detail)}</span></span></li>`;
+      const extra = detail.slice(summaryText.length).replace(/^ · /, "");
+      const summary = typeSummary ? `${typeSummary}${extra ? `<span class="confirm-detail-note">${esc(extra)}</span>` : ""}` : `${icon("package")}<span>${esc(detail)}</span>`;
+      return `<li class="confirm-machine"><span class="confirm-machine-name">${icon(machineIcon)}<strong>${esc(v?.target.name || id)}</strong>${v ? `<span class="chip">${esc(kindLabel(v.target))}</span>` : ""}</span><span class="confirm-machine-detail muted">${summary}</span></li>`;
     }
     return `<li>${esc(v?.target.name || id)} <span class="muted">${esc(detail)}</span></li>`;
   }).join("");

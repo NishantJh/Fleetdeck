@@ -3,7 +3,7 @@
   "private": true,
   "packageManager": "pnpm@11.25.0",
   "scripts": {
-    "test": "node --test tests/dashboard.test.cjs"
+    "test": "node --test tests/*.test.cjs"
   },
   "devDependencies": {
     "linkedom": "0.18.12"
