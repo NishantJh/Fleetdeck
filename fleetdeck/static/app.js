@@ -69,7 +69,7 @@ function groups() {
     map.get(k).rows.push(v);
   }
   for (const g of map.values()) g.rows.sort((a, b) => (a.target.kind === "host" ? -1 : b.target.kind === "host" ? 1 : a.target.name.localeCompare(b.target.name)));
-  return [...map.values()];
+  return [...map.values()].sort((a, b) => a.platform.localeCompare(b.platform) || a.key.localeCompare(b.key) || a.title.localeCompare(b.title));
 }
 
 const canUpgrade = (t) => t.updatable && !t.check_only;
