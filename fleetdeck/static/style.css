@@ -549,6 +549,7 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .type-chip { color: var(--text-2); font-weight: 600; }
 .dashboard-page .os-cell { overflow: hidden; text-overflow: ellipsis; }
 .dashboard-page .backup-missing, .dashboard-page .backup-job { display: inline-flex; align-items: center; }
+.dashboard-page .backup-job { width: 34px; min-height: 28px; justify-content: center; }
 .dashboard-page .backup-cell .ui-icon, .dashboard-page .backup-job-cell .ui-icon { width: 15px; height: 15px; }
 .dashboard-page th.update-heading, .dashboard-page td.update-metric-cell { padding-inline: 5px; text-align: left; }
 .dashboard-page .update-metric {
