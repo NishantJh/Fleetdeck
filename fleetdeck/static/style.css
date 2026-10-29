@@ -577,6 +577,7 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .status-inline.unavailable { max-width: 100%; overflow: hidden; color: var(--muted); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .dashboard-page .status-inline.unavailable .ui-icon { flex: none; }
 .dashboard-page .update-action-cell { padding-inline: 8px; text-align: left; }
+.dashboard-page .update-action-cell > button { width: 84px; justify-content: center; }
 .dashboard-page .update-status-cell { padding-inline: 6px; overflow: hidden; text-overflow: ellipsis; }
 .dashboard-page .update-status-cell .status-inline { max-width: 100%; }
 .dashboard-page .update-status-cell .ui-icon { flex: none; }
