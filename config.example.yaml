@@ -126,6 +126,10 @@ proxmox:
     # VMIDs shown but never updated from here: put the LXC that runs this dashboard here,
     # otherwise upgrading Docker inside it restarts the dashboard mid-upgrade.
     protect: [] # e.g. [105]
+    # VMIDs only monitored: checked and notified about, but never updated from here (e.g. an
+    # OpenMediaVault VM you update with its own tools). Reboots and the node's reboot still work.
+    # The machine's "Monitor only" button on the dashboard does the same for any machine.
+    monitor_only: [] # e.g. [110]
     # Flag guests whose newest backup is older than this (0 = don't track backups). Needs
     # Datastore.Audit, Datastore.AllocateSpace and VM.Backup for the token.
     backup_max_age_hours: 48
@@ -148,6 +152,7 @@ incus:
       sudo: true
       # backup: { type: path, path: /var/backups/incus-host } # this host's own backup, see hosts: below
     exclude: [] # "name" or "project/name"
+    monitor_only: [] # "name" or "project/name": checked, never updated from here
     # Last backup = newest snapshot or export (incus export / incus backup) of each instance.
     backup_max_age_hours: 48 # 0 = don't track
 
@@ -158,6 +163,7 @@ hosts:
     user: pi
     key_file: /config/id_ed25519
     sudo: true # non-root user with passwordless sudo
+    # monitor_only: true # check it and notify, but never update it from here
     # Where this machine's backups are, for the "Last backup" column. Only read, never locked.
     backup:
       type: path # newest file in a folder (rsync, tar, ...)

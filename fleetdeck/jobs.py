@@ -43,6 +43,8 @@ REBOOT_POLL = 5.0
 RECHECK_TRIES = 6
 # What a guest can be doing that stops its host from being updated or rebooted.
 GUEST_ACTIONS_BLOCKING_HOST = ("upgrade", "stack-update", "reboot", "rollback")
+# What a monitor-only machine never runs: installing OS, app or Docker updates.
+UPDATES = ("upgrade", "stack-update")
 
 # An upgrade running detached on its target gets this long before the dashboard stops waiting.
 UPGRADE_TIMEOUT = 3600.0
@@ -126,12 +128,15 @@ class JobManager:
         self._waiting_for_guests: set[str] = set()
         # Machines hidden from the dashboard: left out of scheduled checks and their notifications.
         self.hidden: set[str] = set()
+        # Machines set to monitor-only on the dashboard (the config can set it too, see Target.monitor_only).
+        self.monitor_only_ids: set[str] = set()
         # Host id -> the folder its Back up button is set to use every time.
         self.backup_places: dict[str, str] = {}
         if store is not None:
             self.checks = store.load_checks()
             self.stacks = store.load_stacks()
             self.hidden = store.load_hidden()
+            self.monitor_only_ids = store.load_monitor_only()
             self.backup_places = store.load_backup_places()
             self.jobs = OrderedDict((j.id, j) for j in store.load_jobs(MAX_JOBS))
 
@@ -152,6 +157,22 @@ class JobManager:
             self.hidden.difference_update(target_ids)
         if self.store is not None:
             self._persist(self.store.set_hidden, target_ids, hidden)
+
+    def set_monitor_only(self, target_ids: list[str], on: bool) -> None:
+        if on:
+            self.monitor_only_ids.update(target_ids)
+        else:
+            self.monitor_only_ids.difference_update(target_ids)
+        if self.store is not None:
+            self._persist(self.store.set_monitor_only, target_ids, on)
+
+    def monitor_only(self, target: Target) -> bool:
+        """Whether the target is only monitored: checks, reboots, backups and snapshots still run, updates don't."""
+        return target.monitor_only or target.id in self.monitor_only_ids
+
+    def _ensure_updates_allowed(self, target: Target, action: JobAction) -> None:
+        if action in UPDATES and self.monitor_only(target):
+            raise ValueError(f"{target.name}: monitor only, updates are not installed from here")
 
     def set_backup_place(self, target_id: str, path: str | None) -> None:
         if path is None:
@@ -228,6 +249,7 @@ class JobManager:
             _ensure_can_back_up(target, self.inventory.backup_runs.get(target_id))
         else:
             _ensure_runnable(target, executor, action)
+            self._ensure_updates_allowed(target, action)
             if action == "stack-update":
                 _ensure_stack_updatable(target, self.stacks.get(target_id), stack)
         host_id = self._host_id(target)
@@ -307,6 +329,7 @@ class JobManager:
                     _ensure_can_back_up(target, self.inventory.backup_runs.get(job.target_id))
                 else:
                     _ensure_runnable(target, executor, job.action)
+                    self._ensure_updates_allowed(target, job.action)
                 if job.action in ("upgrade", "reboot"):
                     await self._wait_unblocked(job, target, slot)
                 if job.action == "backup":
