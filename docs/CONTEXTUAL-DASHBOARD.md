@@ -73,6 +73,9 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
   below the machine name; status sits at the top right. Selection, the relevant action and More
   share one bottom row. The boxed reboot indicator stays alongside the update counts without
   adding a second action button. Desktop column alignment and ordering remain unchanged.
+  Empty sections do not reserve vertical gaps. Selection labels stay beside their checkboxes;
+  backup/job and checked/info controls align horizontally. A selected mobile card uses one
+  continuous background instead of highlighting separate table cells.
   Expanded package details retain their table structure inside a local horizontal scroller.
   Menus and confirmation dialogs are bounded by the mobile viewport. This addresses desktop CSS
   overriding the original mobile rules; physical iPhone Safari verification remains necessary.
