@@ -68,17 +68,18 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
   rounded branches and an exact final endpoint to keep the hierarchy clear without wasting name
   space. Online and offline dots use matching green or red halos.
 - The Fleetdeck logo links home, and dashboard/setup/login pages have a favicon.
-- On narrow screens the desktop table minimum widths are removed. Machine cards use compact
-  status, count and backup sections with 44 px action targets and two-column KPIs. Type and OS sit
-  below the machine name; status sits at the top right. Selection, the relevant action and More
-  share one bottom row. The boxed reboot indicator stays alongside the update counts without
-  adding a second action button. Desktop column alignment and ordering remain unchanged.
-  Empty sections do not reserve vertical gaps. Selection labels stay beside their checkboxes;
-  backup/job and checked/info controls align horizontally. A selected mobile card uses one
-  continuous background instead of highlighting separate table cells.
-  Expanded package details retain their table structure inside a local horizontal scroller.
-  Menus and confirmation dialogs are bounded by the mobile viewport. This addresses desktop CSS
-  overriding the original mobile rules; physical iPhone Safari verification remains necessary.
+- Narrow screens render dedicated machine cards using the same update, backup and action logic
+  as the desktop table. Type and OS sit below the name, status at the top right, and check time
+  directly below status. Nonzero Security, Package and Phased counts are icon-only; the boxed
+  reboot indicator aligns right. Backup age, job coverage and Info stay together. Nodes without
+  backup details place Info beside the OS. The footer has the relevant action left and More right.
+  Mobile cards have no selection controls; bulk selection remains available on desktop. Switching
+  to mobile clears desktop selection so hidden bulk operations cannot remain pending. The toolbar
+  uses a compact Check button, and KPIs use two columns. Expanded package details retain a local
+  horizontal scroller. Menus and confirmation dialogs stay within the mobile viewport.
+  Layout switching and interactions were checked in the local browser with simulated machines at
+  320, 390 and 430 px widths, and the desktop table at 1200 px. Native iPhone Safari still needs
+  a device check.
 
 Existing protections, authentication and CSRF protections remain in place.
 This does **not** add an OMV-specific updater or an independent monitor-only OS policy.
@@ -170,7 +171,7 @@ Node dependencies are development-only and are not included in the runtime image
 
 ### Preview verification
 
-For the latest mobile, date and KPI refinements: all 15 offline dashboard tests pass. They cover KPI
+For the latest mobile, date and KPI refinements: all 16 offline dashboard tests pass. They cover KPI
 filters/reset, parent context, cross-group column structure, selection pruning, historical
 counts, single/bulk update dialogs, cancellation, unchecked defaults and explicit option payloads.
 Ruff and diff checks pass. These checks use simulated machines only.

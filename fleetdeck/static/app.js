@@ -1,6 +1,7 @@
 "use strict";
 
 const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), logJob: null, logLines: [], showHidden: false, view: "machines", filter: null };
+const mobileDashboard = matchMedia("(max-width: 900px)");
 const $ = (sel) => document.querySelector(sel);
 const renderedHTML = new WeakMap();
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -264,7 +265,7 @@ function stackPanel(v) {
     ${body}</div>`;
 }
 
-function rowHtml(v, withBackup, relation = {}) {
+function rowHtml(v, withBackup, relation = {}, mobile = false) {
   const t = v.target, c = v.check;
   const shown = displayCheck(v);
   const self = v.runs_dashboard ? ` <span class="chip" title="This dashboard runs here">dashboard</span>` : "";
@@ -299,6 +300,21 @@ function rowHtml(v, withBackup, relation = {}) {
     <td class="info-cell" data-label="Info">${information ? `<span class="info-cell-content">${information}</span>` : ""}</td>
     <td class="more-cell"><button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="More actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button></td>
   </tr>`;
+  if (mobile) {
+    const backup = withBackup ? backupCell(t) : "";
+    const os = shown?.os || c?.os;
+    const metrics = [["security", securityPackages(shown).length], ["package", regularPackages(shown).length], ["phased", phasedPackages(shown).length]]
+      .filter(([, count]) => count > 0).map(([kind, count]) => metricButton(v, kind, count)).join("");
+    html = `<article class="mc-card${relation.context ? " is-context" : ""}${v.hidden ? " is-hidden" : ""}" data-machine-row="${esc(t.id)}">
+      <div class="mc-header"><div class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name">${esc(t.name)}</span>
+        <div class="machine-meta"><span class="chip type-chip">${esc(kindLabel(t))}</span>${os ? `<span class="machine-os" title="${esc(os)}">${esc(compactOS(os))}</span>` : ""}${self}${cs}${note}${backup ? "" : information}</div></div>
+        <div class="mc-status-group">${updateState(v)}<span class="mc-check-time">Checked ${c ? ago(c.checked_at) : "Never"}</span></div></div>
+      ${metrics || reboot ? `<div class="mc-counts">${metrics}${reboot ? `<span class="mc-reboot">${reboot}</span>` : ""}</div>` : ""}
+      ${backup ? `<div class="mc-details"><div class="mc-detail-line"><span>Backup</span><div class="mc-backup-value">${backup}${backupJobCell(t)}${information}</div></div></div>` : ""}
+      ${state.settings.docker_enabled ? `<div class="mc-containers">${dockerCell(v)}</div>` : ""}
+      <div class="mc-footer"><div class="mc-action">${relation.context ? "" : nextAction(v)}</div><button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="More actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button></div>
+    </article>`;
+  }
   if (shown?.packages?.length && state.expanded.has(t.id)) {
     // Security updates first, so they stand out in a long list.
     const rank = (p) => p.phased_dependency ? 3 : p.phased ? 2 : p.security ? 0 : 1;
@@ -314,12 +330,16 @@ function rowHtml(v, withBackup, relation = {}) {
     if (state.selected.has(t.id)) detailClasses.push("is-selected");
     if (relation.hasGuests || (t.kind !== "host" && !relation.lastGuest)) detailClasses.push("tree-continues");
     const history = staleCheck(v) ? `<p class="last-known-note">Last known · ${esc(ago(shown.checked_at))}. Check again before installation.</p>` : "";
-    html += `<tr class="${detailClasses.join(" ")}" id="packages-${esc(t.id)}"><td></td><td colspan="${10 + (2 * Number(!!withBackup)) + Number(!!state.settings.docker_enabled)}"><div class="packages-panel">${history}<table class="packages-table"><thead><tr><th>Type</th><th>Package</th><th>Installed</th><th>Available</th></tr></thead><tbody>${rows}</tbody></table></div></td></tr>`;
+    const panel = `<div class="packages-panel">${history}<table class="packages-table"><thead><tr><th>Type</th><th>Package</th><th>Installed</th><th>Available</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    html += mobile ? `<div class="mc-package-panel" id="packages-${esc(t.id)}">${panel}</div>` : `<tr class="${detailClasses.join(" ")}" id="packages-${esc(t.id)}"><td></td><td colspan="${10 + (2 * Number(!!withBackup)) + Number(!!state.settings.docker_enabled)}">${panel}</td></tr>`;
   }
   return html;
 }
 
 function render() {
+  const mobile = mobileDashboard.matches;
+  if (mobile) state.selected.clear();
+  $("#groups").classList.toggle("mobile-layout", mobile);
   if (!state.settings.docker_enabled) state.view = "machines";
   const focused = document.activeElement?.dataset?.focusKey;
   // Avoid replacing live controls on every poll when their rendered data did not change.
@@ -369,18 +389,20 @@ function render() {
   html("#groups", filteredGroups.map((g) => {
     const guestIndexes = g.rows.map((v, index) => v.target.kind === "host" ? -1 : index).filter((index) => index >= 0);
     const firstGuest = guestIndexes[0], lastGuest = guestIndexes.at(-1);
+    const rows = g.rows.map((v, index) => rowHtml(v, withBackup, {
+      hasGuests: v.target.kind === "host" && guestIndexes.length > 0,
+      firstGuest: index === firstGuest,
+      lastGuest: index === lastGuest,
+      context: !!state.filter && !matchesKpi(v, state.filter),
+    }, mobile)).join("");
+    if (mobile) return `<section class="group"><div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div><div class="mc-stack">${rows}</div></section>`;
     return `
     <div class="group">
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
       <div class="group-scroll"><table class="machine-table${withBackup ? " has-backup" : ""}${state.settings.docker_enabled ? " has-containers" : ""}" aria-label="${esc(g.title)} machines">
         <colgroup><col class="col-select"><col class="col-machine">${withBackup ? '<col class="col-backup"><col class="col-backup-job">' : ""}<col class="col-metric"><col class="col-metric"><col class="col-metric"><col class="col-reboot"><col class="col-status"><col class="col-update">${state.settings.docker_enabled ? '<col class="col-containers">' : ""}<col class="col-checked"><col class="col-info"><col class="col-more"></colgroup>
         <thead><tr class="column-headings"><th></th><th>Machine</th>${withBackup ? '<th>Last backup</th><th class="backup-job-heading">Job</th>' : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th class="reboot-heading">Reboot</th><th>Status</th><th>Actions</th>${state.settings.docker_enabled ? "<th>Containers</th>" : ""}<th>Checked</th><th class="info-heading">Info</th><th class="more-heading">More</th></tr></thead>
-        <tbody>${g.rows.map((v, index) => rowHtml(v, withBackup, {
-          hasGuests: v.target.kind === "host" && guestIndexes.length > 0,
-          firstGuest: index === firstGuest,
-          lastGuest: index === lastGuest,
-          context: !!state.filter && !matchesKpi(v, state.filter),
-        })).join("")}</tbody>
+        <tbody>${rows}</tbody>
       </table></div>
     </div>`;
   }).join("") || (state.filter ? `<div class="empty"><h3>No matching machines</h3><p class="muted">Click the selected KPI again to show all machines.</p></div>` : `<div class="empty"><h3>No machines yet</h3><p class="muted">Add a Proxmox node, an Incus server or any Linux host, and it shows up here with its updates, backups and state.</p><a class="button primary" href="/setup">Add machines</a></div>`));
@@ -805,6 +827,7 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { closeMachineMenu(true); closeMachineInformation(true); $("#dashboard-menu").open = false; }
 });
 window.addEventListener("resize", () => { closeMachineMenu(); closeMachineInformation(); });
+mobileDashboard.addEventListener?.("change", () => { closeMachineMenu(); closeMachineInformation(); render(); });
 window.addEventListener("scroll", () => { closeMachineMenu(); closeMachineInformation(); }, true);
 $("#clear-selected").onclick = () => { state.selected.clear(); render(); };
 $("#docker-mode").onchange = dockerModeFields;

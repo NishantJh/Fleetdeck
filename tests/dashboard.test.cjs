@@ -22,7 +22,7 @@ function machine(id, options = {}) {
   };
 }
 
-async function dashboard({ docker = false, targets = [], rememberedView = "machines", schedule = null } = {}) {
+async function dashboard({ docker = false, targets = [], rememberedView = "machines", schedule = null, mobile = false } = {}) {
   const { window, document } = parseHTML(read("index.html"));
   const calls = [], errors = [], storage = new Map([["dashboardView", JSON.stringify(rememberedView)]]);
   let activeElement = document.body;
@@ -33,6 +33,7 @@ async function dashboard({ docker = false, targets = [], rememberedView = "machi
   window.HTMLElement.prototype.showModal = function () { this.open = true; };
   window.HTMLElement.prototype.close = function () { this.open = false; };
   const data = { targets, errors: {}, settings: { docker_enabled: docker, snapshot_before_upgrade: true } };
+  const mobileQuery = { matches: mobile, addEventListener: (event, callback) => { mobileQuery.onChange = callback; } };
   const sandbox = {
     window, document, URL, innerWidth: 1200, innerHeight: 800,
     localStorage: { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) },
@@ -51,7 +52,7 @@ async function dashboard({ docker = false, targets = [], rememberedView = "machi
       return { ok: true, json: async () => body };
     },
     location: { hostname: "localhost", protocol: "http:", pathname: "/" },
-    matchMedia: () => ({ matches: false }), addEventListener: window.addEventListener.bind(window),
+    matchMedia: (query) => query === "(max-width: 900px)" ? mobileQuery : { matches: false }, addEventListener: window.addEventListener.bind(window),
   };
   const context = vm.createContext(sandbox);
   vm.runInContext(read("format.js"), context);
@@ -67,8 +68,42 @@ async function dashboard({ docker = false, targets = [], rememberedView = "machi
     el.dispatchEvent(new window.Event("click", { bubbles: true }));
     return el;
   };
-  return { ...sandbox.ui, document, window, calls, errors, click, data };
+  return { ...sandbox.ui, document, window, calls, errors, click, data, setMobile(value) { mobileQuery.matches = value; mobileQuery.onChange?.(); } };
 }
+
+test("mobile cards preserve package details, information and confirmation without bulk selection", async () => {
+  const node = machine("pve");
+  const guest = machine("web", { guest: true, parent: "pve", target: { backup: { last: now, in_job: true, count: 1 } }, check: {
+    os: "Debian GNU/Linux 13", reboot_required: true, packages: [
+      { name: "openssl", current: "1", available: "2", security: true },
+      { name: "curl", current: "1", available: "2" },
+    ],
+  } });
+  const ui = await dashboard({ mobile: true, targets: [node, guest] });
+  const doc = ui.document;
+  assert.equal(doc.querySelectorAll('.mc-card').length, 2);
+  assert.equal(doc.querySelectorAll('[data-select]').length, 0);
+  assert.equal(doc.querySelector('[data-machine-row="web"] .mc-status-group .mc-check-time').textContent, "Checked just now");
+  assert.ok(doc.querySelector('[data-machine-row="web"] .mc-backup-value [data-machine-info]'));
+  assert.ok(doc.querySelector('[data-machine-row="pve"] .machine-meta [data-machine-info]'));
+  assert.ok(doc.querySelector('[data-machine-row="web"] .mc-reboot [aria-label="Reboot required"]'));
+  ui.click('[data-machine-row="web"] [data-toggle]');
+  assert.match(doc.querySelector('#packages-web').textContent, /openssl/);
+  assert.equal(ui.calls.some(call => call.path === '/api/actions'), false);
+  ui.click('[data-machine-row="web"] [data-machine-info]');
+  assert.match(doc.querySelector('#machine-information').textContent, /Covered by a backup job/);
+  ui.click('[data-machine-row="web"] [data-act="upgrade"]');
+  assert.equal(doc.querySelector('#confirm').open, true);
+  assert.equal(doc.querySelector('#confirm-snapshot').checked, false);
+  doc.querySelector('#confirm').close();
+  ui.setMobile(false);
+  assert.equal(doc.querySelectorAll('.mc-card').length, 0);
+  assert.ok(doc.querySelector('[data-select="web"]'));
+  ui.state.selected.add('web');ui.render();
+  ui.setMobile(true);
+  assert.equal(ui.state.selected.size, 0);
+  assert.equal(doc.querySelector('#bulk-toolbar').hidden, true);
+});
 
 test("absolute dates use year-month-day and 24-hour local time on dashboard and setup", () => {
   const sandbox = { window: {} };
