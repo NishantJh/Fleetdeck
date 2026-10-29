@@ -177,7 +177,7 @@ function compactOS(os) {
 
 function backupCell(t) {
   const b = t.backup;
-  if (!b) return isProxmoxNode(t) ? "" : `<span class="muted">Unavailable</span>`;
+  if (!b) return isProxmoxNode(t) ? "" : `<span class="backup-missing muted" aria-label="Backup information unavailable">—</span>`;
   if (b.last) {
     return `<span class="${b.stale ? "warn" : ""}">${ago(b.last)}</span>`;
   }
@@ -186,7 +186,7 @@ function backupCell(t) {
     return "";
   }
   const label = b.note && !b.stale && !b.not_set_up ? "Backup information unavailable" : "No backup found";
-  return `<span class="backup-missing muted" aria-label="${label}">${label === "Backup information unavailable" ? "Unavailable" : "—"}</span>`;
+  return `<span class="backup-missing muted" aria-label="${label}">—</span>`;
 }
 
 function backupJobCell(t) {

@@ -47,8 +47,8 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
 - Per-machine **More** menus use icons and concise labels for checks, configuration backups,
   hiding and any optional command-console or Docker actions that are actually available.
 - Backup age and job coverage use separate compact columns: a neutral calendar icon appears only
-  when a backup job covers the machine. A muted dash means no backup was found; **Unavailable**
-  means backup information could not be read. Proxmox node configuration-backup cells stay blank.
+  when a backup job covers the machine. A muted dash means no backup was found or backup
+  information could not be read; Info explains which. Proxmox node configuration-backup cells stay blank.
   A job may exist even when Last backup is a dash. Ages use hours, days and weeks without changing job coverage.
   Exact dates, storage, counts, verification, job coverage and backup notes live in one neutral
   information popover in a dedicated compact **Info** column; Proxmox nodes also include repository context there.
