@@ -25,7 +25,7 @@ from fastapi import Request
 
 from .config import AuthConfig, ConsoleConfig
 from .models import Target
-from .security import verify_password
+from .security import password_ok
 from .store import Store
 
 log = logging.getLogger(__name__)
@@ -235,11 +235,7 @@ class Console:
     # --- unlock -------------------------------------------------------------------------------------------
 
     def password_ok(self, password: str) -> bool:
-        if self.auth is None:  # demo mode without a login: nothing to check
-            return True
-        if self.auth.password_hash:
-            return verify_password(password.encode(), self.auth.password_hash)
-        return secrets.compare_digest(password.encode(), (self.auth.password or "").encode())
+        return password_ok(self.auth, password)
 
     def unlock(self, ip: str) -> str:
         now = time.monotonic()

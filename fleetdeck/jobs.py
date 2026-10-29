@@ -25,6 +25,7 @@ from .updates import (
     SECURITY_UPGRADE_SCRIPT,
     UPGRADE_SCRIPT,
     clean_line,
+    custom_update_script,
     parse_boot_id,
     parse_check,
     parse_community_script,
@@ -132,12 +133,15 @@ class JobManager:
         self.monitor_only_ids: set[str] = set()
         # Host id -> the folder its Back up button is set to use every time.
         self.backup_places: dict[str, str] = {}
+        # Machine id -> its own update command, set on the dashboard (the config can set one too, see update_command).
+        self.update_commands: dict[str, str] = {}
         if store is not None:
             self.checks = store.load_checks()
             self.stacks = store.load_stacks()
             self.hidden = store.load_hidden()
             self.monitor_only_ids = store.load_monitor_only()
             self.backup_places = store.load_backup_places()
+            self.update_commands = store.load_update_commands()
             self.jobs = OrderedDict((j.id, j) for j in store.load_jobs(MAX_JOBS))
 
     def _set_check(self, target_id: str, check: CheckResult) -> None:
@@ -181,6 +185,19 @@ class JobManager:
             self.backup_places[target_id] = path
         if self.store is not None:
             self._persist(self.store.set_backup_place, target_id, path)
+
+    def update_command(self, target: Target) -> str | None:
+        """The command that updates this machine instead of the built-in OS upgrade, if it has one. The config's
+        wins over the dashboard's."""
+        return target.update_command or self.update_commands.get(target.id)
+
+    def set_update_command(self, target_id: str, command: str | None) -> None:
+        if command is None:
+            self.update_commands.pop(target_id, None)
+        else:
+            self.update_commands[target_id] = command
+        if self.store is not None:
+            self._persist(self.store.set_update_command, target_id, command)
 
     def _save_job(self, job: Job) -> None:
         if self.store is not None:
@@ -263,6 +280,10 @@ class JobManager:
             return existing
         if action in ("upgrade", "reboot") and (why := self.update_blocked(target)):
             raise ValueError(f"{target.name}: {why}")
+        command = self.update_command(target) if action == "upgrade" else None
+        if command and security_only:
+            # Its own command may install anything, so it is never run as a "security only" update.
+            raise ValueError(f"{target.name}: has its own update command, so security updates aren't installed alone")
         job = Job(
             id=uuid.uuid4().hex[:12],
             target_id=target_id,
@@ -270,6 +291,7 @@ class JobManager:
             action=action,
             reboot_if_required=reboot_if_required and action == "upgrade",
             security_only=security_only and action == "upgrade",
+            update_command=command,
             snapshot_first=snapshot_first and action == "upgrade",
             snapshot=snapshot if action == "rollback" else None,
             destination=destination if action == "backup" else None,
@@ -385,7 +407,12 @@ class JobManager:
                 else:
                     if job.snapshot_first:
                         await self._snapshot(job)
-                    if job.security_only:
+                    if job.update_command:
+                        # Instead of the OS upgrade and the helper-script app update; a failure fails the job.
+                        job.log.append(f"== Running this machine's update command: {job.update_command}")
+                        stdout = await self._upgrade(job, executor, on_line)
+                        await self._after_upgrade(job, target, executor, on_line, slot, stdout, app_updated=True)
+                    elif job.security_only:
                         # The community-scripts app update is a full update, not a security-only one.
                         job.log.append("== Installing security updates only")
                         stdout = await self._upgrade(job, executor, on_line)
@@ -446,7 +473,13 @@ class JobManager:
         elif job.remote is not None:
             stdout = await self._upgrade(job, executor, on_line)
             await self._after_upgrade(
-                job, target, executor, on_line, slot, stdout, app_updated=job.app_updated or job.security_only
+                job,
+                target,
+                executor,
+                on_line,
+                slot,
+                stdout,
+                app_updated=job.app_updated or job.security_only or bool(job.update_command),
             )
         else:  # waiting for a reboot, on its own or after an upgrade
             await self._reboot(job, target, executor, on_line, slot)
@@ -455,7 +488,9 @@ class JobManager:
         """Runs the upgrade (or another long ``script``) and returns its output. Detached on the target
         where the executor allows, so it goes on if the dashboard restarts, and :meth:`resume`
         follows it again."""
-        if script is None:
+        if script is None and job.update_command:
+            script, what = custom_update_script(job.update_command), "update command"
+        elif script is None:
             script = SECURITY_UPGRADE_SCRIPT if job.security_only else UPGRADE_SCRIPT
         if not getattr(executor, "detached", False):
             return await _attached(executor, on_line, script, what)

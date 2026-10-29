@@ -15,6 +15,7 @@ from ..updates import (
     CHECK_SCRIPT,
     COMMUNITY_SCRIPT_DETECT,
     COMMUNITY_UPDATE_SCRIPT,
+    CUSTOM_MARK,
     REBOOT_NOW_SCRIPT,
 )
 from . import Discovered
@@ -136,6 +137,13 @@ class DemoExecutor:
                 await asyncio.sleep(0.4)
             return ExecResult(rc=0)
         reboot = "yes" if self.reboot_pending else "no"
+        if CUSTOM_MARK in script:  # a machine's own update command (updates.custom_update_script)
+            for line in ("(demo: the command is not really run)", "Updating the appliance ...", "Done."):
+                if on_line:
+                    on_line("stdout", line)
+                await asyncio.sleep(0.4)
+            self.lines = []
+            return ExecResult(rc=0, stdout=f"{head}__REBOOT__={reboot}\n")
         if script == CHECK_SCRIPT:
             body = "\n".join(self.lines)
             if on_line:

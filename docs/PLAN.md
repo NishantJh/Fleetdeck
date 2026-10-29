@@ -28,6 +28,7 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 - [x] Reboot action, and "reboot if required" option after upgrade
 - [x] Scheduled checks plus notifications (ntfy, Gotify, Discord, Telegram, webhook) when updates are pending
 - [ ] Per-target holds (skip kernel / Proxmox major upgrades)
+- [x] A machine's own update command (e.g. `omv-upgrade`) instead of the built-in upgrade, from the config or the dashboard (password again, logged)
 - [ ] Optional SSH for VMs that don't run the guest agent
 - [x] Run upgrades detached on the target (`systemd-run`, or `setsid nohup`) so they survive a dashboard restart; the job picks them up again on start. The dashboard's own machine can now be updated and rebooted from here
 
