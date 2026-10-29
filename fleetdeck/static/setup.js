@@ -20,6 +20,9 @@ let token = sessionStorage.getItem("setup-token");
 let state = null;
 const settingsPage = location.pathname === "/settings";
 let configLoaded = false;
+let toolsLoaded = false;
+window.FleetdeckTools.bindBackup($("#admin-backup"), $("#admin-backup-dialog"), "admin-");
+$("#admin-test-notify").onclick = window.FleetdeckTools.testNotification;
 
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json" };
@@ -430,6 +433,16 @@ async function render() {
   $("#connection-security").hidden = !ready || settingsPage;
   $("#advanced").hidden = state.first_run || !settingsPage;
   showApply(state.restart_pending);
+  if (!state.first_run && !toolsLoaded) {
+    try {
+      const schedule = await api("/api/schedule");
+      $("#admin-test-notify").hidden = !schedule.notify_targets;
+      toolsLoaded = true;
+    } catch {
+      // Keep the explicit action available; its handler reports any API error.
+      $("#admin-test-notify").hidden = false;
+    }
+  }
   if (settingsPage) {
     if (!state.first_run && !configLoaded) await loadConfiguration();
     return;

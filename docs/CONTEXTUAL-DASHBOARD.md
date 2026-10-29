@@ -31,6 +31,10 @@ This fork changes the dashboard, not the OS upgrade commands or snapshot impleme
   All groups share the same columns and fixed compact widths, including backup columns when any
   visible group has backup reporting. Machine names take priority over OS text when space is tight.
 - Dashboard and machine menus share item spacing, text, icon sizing and hover treatment.
+  Machines and Settings include an icon on the Dashboard button, Back up & restore, and Test
+  notifications when notification targets are configured. Shared handlers open the encrypted-backup
+  dialog directly on the current page and preserve passphrase checks, preview and explicit restore
+  confirmation. Loading these pages never sends notifications or starts a backup.
 - Machines and Settings have separate URLs and separate entries in More. `/machines` contains
   connection security (permanently expanded above the connection cards), scripts and connection
   management. `/settings` contains the full YAML editor, with validation, read-only handling and
@@ -184,13 +188,14 @@ Node dependencies are development-only and are not included in the runtime image
 
 ### Preview verification
 
-For the latest page split and confirmation fixes: all 21 offline UI tests pass. They cover KPI
+For the latest page split, shared tools and confirmation fixes: all 25 offline UI tests pass. They cover KPI
 filters/reset, parent context, cross-group column structure, selection pruning, historical
 counts, single/bulk update dialogs, cancellation, unchecked defaults and explicit option payloads.
 Ruff and diff checks pass. The setup/security Python suite passes 55 tests and skips 4; three existing
 shell tests were deselected after reproducing permission failures for local system commands in this
 environment. The browser check used simulated machines for separate page navigation and mixed-type
 confirmation icons. These checks do not contact homelab machines.
+The 20 focused Python backup tests also pass after sharing the existing front-end backup handler.
 
 For the status/actions and last-known-results revision: all 10 offline dashboard tests pass,
 including failed/offline history, update/reboot priority, confirmation dialogs, selection,

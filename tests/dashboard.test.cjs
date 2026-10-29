@@ -56,6 +56,7 @@ async function dashboard({ docker = false, targets = [], rememberedView = "machi
   };
   const context = vm.createContext(sandbox);
   vm.runInContext(read("format.js"), context);
+  vm.runInContext(read("tools.js"), context);
   vm.runInContext(read("theme.js"), context);
   window.dispatchEvent(new window.Event("DOMContentLoaded"));
   vm.runInContext(read("app.js"), context);
@@ -119,8 +120,24 @@ test("absolute dates use year-month-day and 24-hour local time on dashboard and 
   for (const file of ["index.html", "setup.html"]) {
     const html = read(file);
     assert.ok(html.indexOf('/static/format.js') < html.indexOf(`/static/${file === "index.html" ? "app" : "setup"}.js`));
+    assert.ok(html.indexOf('/static/tools.js') < html.indexOf(`/static/${file === "index.html" ? "app" : "setup"}.js`));
   }
-  for (const file of ["app.js", "setup.js"]) assert.doesNotMatch(read(file), /\.toLocale(?:Date|Time)?String\(/);
+  for (const file of ["app.js", "setup.js", "tools.js"]) assert.doesNotMatch(read(file), /\.toLocale(?:Date|Time)?String\(/);
+});
+
+test("dashboard retains the shared backup dialog and passphrase checks", async () => {
+  const ui = await dashboard();
+  const doc = ui.document;
+  ui.click('#backup');
+  assert.equal(doc.querySelector('#backup-dialog').open, true);
+  doc.querySelector('#backup-pass').value = 'short';
+  await doc.querySelector('#backup-download').onclick();
+  assert.match(doc.querySelector('#backup-msg').textContent, /at least 12/);
+  doc.querySelector('#restore-ack').checked = true;
+  ui.click('#backup');
+  assert.equal(doc.querySelector('#restore-ack').checked, false);
+  assert.equal(doc.querySelector('#restore-go').disabled, true);
+  assert.equal(ui.calls.some(call => call.path === '/api/backup'), false);
 });
 
 test("OS-only default hides all Docker UI, including an old remembered Containers view", async () => {
