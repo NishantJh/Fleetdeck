@@ -569,7 +569,7 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .status-inline.unavailable .ui-icon { flex: none; }
 .dashboard-page .update-action-cell { padding-inline: 8px; text-align: left; }
 .dashboard-page .row-actions { display: flex; gap: 6px; }
-.dashboard-page .row-actions > button { width: 84px; justify-content: center; }
+.dashboard-page .row-actions > button { min-width: 84px; justify-content: center; white-space: nowrap; }
 .dashboard-page .update-status-cell { padding-inline: 6px; overflow: hidden; text-overflow: ellipsis; }
 .dashboard-page .update-status-cell .status-inline { max-width: 100%; }
 .dashboard-page .update-status-cell .ui-icon { flex: none; }
@@ -720,7 +720,7 @@ a.brand { color: var(--text); text-decoration: none; }
 .mc-footer { display: grid; grid-template-columns: auto minmax(0,1fr) 44px; gap: 4px; align-items: center; margin-top: 4px; padding-top: 4px; }
 .mc-action { grid-column: 1 / 3; display: flex; flex-wrap: wrap; gap: 6px; }
 .mc-action:empty { display: none; }
-.mc-action > button { position: relative; width: 96px; min-height: 36px; height: 36px; justify-content: center; }
+.mc-action > button { position: relative; min-width: 96px; min-height: 36px; height: 36px; justify-content: center; }
 .mc-card button.more-actions { position: relative; width: 44px; min-width: 44px; min-height: 28px; height: 28px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
 .mc-card .mc-footer button.more-actions { height: 44px; }
 
