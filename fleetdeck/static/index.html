@@ -109,6 +109,22 @@
     </form>
   </dialog>
 
+  <dialog id="cmd-dialog">
+    <form id="cmd-form" method="dialog">
+      <h3 id="cmd-title">Update command</h3>
+      <p class="muted">For machines with their own updater, such as <code>omv-upgrade</code> on OpenMediaVault. Update then runs this command as root instead of the built-in OS upgrade, with the same snapshot, live log and re-check. If it fails, the job fails: the OS upgrade is not tried instead. Scheduled security updates leave this machine alone. Leave it empty to go back to the built-in upgrade.</p>
+      <p id="cmd-config" class="muted" hidden>Set in the config file, so it can only be changed there.</p>
+      <input type="text" id="cmd-command" maxlength="1000" autocomplete="off" spellcheck="false" placeholder="omv-upgrade">
+      <p class="muted">It runs as root, so enter the dashboard password to change it. The change is logged.</p>
+      <input type="password" id="cmd-password" autocomplete="current-password" placeholder="Dashboard password">
+      <p id="cmd-msg" class="bad"></p>
+      <menu>
+        <button value="cancel" formnovalidate>Cancel</button>
+        <button id="cmd-save" class="primary">Save</button>
+      </menu>
+    </form>
+  </dialog>
+
   <dialog id="run-dialog" class="wide">
     <h3 id="run-title">Run command</h3>
     <div id="run-warn"></div>

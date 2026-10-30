@@ -162,7 +162,9 @@ function rowHtml(v, withBackup) {
   const pending = c && !c.error && c.packages.length > 0;
   const self = v.runs_dashboard ? ` <span class="chip" title="This dashboard runs here">dashboard</span>` : "";
   const monitor = v.monitor_only ? ` <span class="chip" title="${MONITOR_TIP}">monitor only</span>` : "";
-  const cs = c?.community_script
+  const cs = v.update_command
+    ? ` <span class="chip" title="${esc(`Update runs: ${v.update_command}`)}">own updater</span>`
+    : c?.community_script
     ? ` <span class="chip" title="${esc(csTip(c.community_script))}">helper script</span>` : "";
   let html = `<tr class="${t.kind === "host" ? "host" : "guest"}${v.hidden ? " is-hidden" : ""}">
     <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) ? "" : "disabled"}></td>
@@ -177,6 +179,7 @@ function rowHtml(v, withBackup) {
       <button class="small ${pending && !t.check_only && !v.monitor_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy && !v.blocked && !v.monitor_only ? "" : "disabled"} title="${t.check_only ? esc(t.note) : v.monitor_only ? MONITOR_TIP : esc(v.blocked || "")}">Update</button>
       <button class="small" data-act="reboot" data-id="${esc(t.id)}" ${canReboot(t) && !busy && !v.blocked ? "" : "disabled"} title="${esc(t.no_reboot || (t.check_only ? t.note : "") || v.blocked || "")}">Reboot</button>
       ${canUpgrade(t) ? `<button class="small ${dockerBehind(v) ? "primary" : ""}" data-act="docker" data-id="${esc(t.id)}" title="Docker Compose stacks on this machine">Docker${dockerBehind(v) ? ` (${dockerBehind(v)} ↑)` : ""}</button>` : ""}
+      ${canUpgrade(t) ? `<button class="small ghost" data-cmd="${esc(t.id)}" title="${esc(v.update_command ? `Update runs: ${v.update_command}` : "Use the machine's own update command instead of the built-in OS upgrade")}">Update command…</button>` : ""}
       ${t.can_backup ? `<button class="small" data-act="backup" data-id="${esc(t.id)}" ${busy ? "disabled" : ""} title="Back up this machine">Back up</button>` : ""}
       ${state.console?.enabled && t.status !== "stopped" && t.status !== "offline" ? `<button class="small" data-run="${esc(t.id)}" title="Run a command on this machine">Run command…</button>` : ""}
       <button class="small ghost" data-monitor="${v.monitor_only ? "0" : "1"}" data-id="${esc(t.id)}" ${t.monitor_only ? "disabled" : ""} title="${t.monitor_only ? "Set to monitor only in the config file" : v.monitor_only ? "Allow updates from the dashboard again" : "Keep checking this machine, but never install updates on it from here"}">${v.monitor_only ? "Allow updates" : "Monitor only"}</button>
@@ -310,7 +313,9 @@ function confirmAction(action, ids) {
   const byId = new Map(state.targets.map((v) => [v.target.id, v]));
   const c = CONFIRM[action];
   $("#confirm-title").textContent = c.title;
-  $("#confirm-text").textContent = c.text;
+  $("#confirm-text").textContent = action === "upgrade" && ids.every((id) => byId.get(id)?.update_command)
+    ? "Runs each machine's own update command as root (shown below), instead of the OS upgrade."
+    : c.text;
   $("#confirm-ok").textContent = c.ok;
   $("#confirm-reboot-row").hidden = action !== "upgrade";
   $("#confirm-reboot").checked = false;
@@ -341,12 +346,15 @@ function confirmAction(action, ids) {
     }
     if (action === "upgrade" && v?.target.no_reboot) detail += ` · won't reboot: ${v.target.no_reboot}`;
     const app = v?.check?.community_script;
-    if (action === "upgrade" && app) {
+    let own = "";
+    if (action === "upgrade" && v?.update_command) {
+      own = ` <span class="muted">· runs its own update command instead:</span> <code>${esc(v.update_command)}</code>`;
+    } else if (action === "upgrade" && app) {
       detail += state.settings.community_scripts_update
         ? ` · then runs ${app}'s own update (helper script)`
         : ` · ${app}'s own update is off: run "update" in it if it misbehaves`;
     }
-    return `<li>${esc(v?.target.name || id)} <span class="muted">${esc(detail)}</span></li>`;
+    return `<li>${esc(v?.target.name || id)} <span class="muted">${esc(detail)}</span>${own}</li>`;
   }).join("");
   const snapshottable = action === "upgrade" && ids.some((id) => byId.get(id)?.target.can_snapshot);
   $("#confirm-snapshot-row").hidden = !snapshottable;
@@ -407,6 +415,43 @@ async function showLog(jobId) {
   render();
 }
 
+function editUpdateCommand(id) {
+  const v = state.targets.find((x) => x.target.id === id);
+  if (!v) return;
+  const inConfig = !!v.target.update_command;
+  $("#cmd-title").textContent = `Update command for ${v.target.name}`;
+  $("#cmd-command").value = v.update_command || "";
+  $("#cmd-command").disabled = inConfig;
+  $("#cmd-password").disabled = inConfig;
+  $("#cmd-save").disabled = inConfig;
+  $("#cmd-config").hidden = !inConfig;
+  $("#cmd-password").value = "";
+  $("#cmd-msg").textContent = "";
+  $("#cmd-dialog").dataset.id = id;
+  $("#cmd-dialog").showModal();
+}
+
+$("#cmd-form").addEventListener("submit", async (e) => {
+  if (e.submitter?.value === "cancel") return;
+  e.preventDefault();
+  const id = $("#cmd-dialog").dataset.id;
+  $("#cmd-msg").textContent = "";
+  try {
+    const r = await api("/api/update-command", {
+      method: "PUT",
+      body: JSON.stringify({ target_id: id, command: $("#cmd-command").value.trim() || null, password: $("#cmd-password").value }),
+    });
+    for (const v of state.targets) if (v.target.id === id) v.update_command = r.update_command;
+    $("#cmd-password").value = "";
+    $("#cmd-dialog").close();
+    render();
+  } catch (err) {
+    let msg = err.message;
+    try { msg = JSON.parse(msg.slice(msg.indexOf(" ") + 1)).detail || msg; } catch { /* plain text */ }
+    $("#cmd-msg").textContent = msg;
+  }
+});
+
 async function setHidden(id, hidden) {
   try {
     await api("/api/hidden", { method: "POST", body: JSON.stringify({ target_ids: [id], hidden }) });
@@ -432,8 +477,12 @@ async function setMonitorOnly(id, on) {
 }
 
 document.addEventListener("click", (e) => {
-  const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide],[data-monitor],[data-stack]");
+  const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide],[data-monitor],[data-stack],[data-cmd]");
   if (!el) return;
+  if (el.dataset.cmd) {
+    editUpdateCommand(el.dataset.cmd);
+    return;
+  }
   if (el.dataset.stack) {
     const id = el.dataset.id, name = el.dataset.stack;
     const host = state.targets.find((v) => v.target.id === id)?.target.name || id;

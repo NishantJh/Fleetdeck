@@ -137,8 +137,8 @@ class Scheduler:
         # A hung check (an SSH session that never returns) must not hold back the whole report.
         stuck = sorted({j.target_id for j in submitted if j.status in ("queued", "running")})
         done = sorted({j.target_id for j in submitted} - set(stuck))
-        notes = await self._install_security_updates(done) if self.auto_security else []
-        await self._report(done, stuck, notes)
+        notes, skipped = await self._install_security_updates(done) if self.auto_security else ([], [])
+        await self._report(done, stuck, notes, skipped)
 
     async def _wait(self, jobs: list[Job], timeout: float) -> None:
         deadline = time.monotonic() + timeout
@@ -147,14 +147,16 @@ class Scheduler:
                 break
             await asyncio.sleep(POLL)
 
-    async def _install_security_updates(self, checked: list[str]) -> list[str]:
+    async def _install_security_updates(self, checked: list[str]) -> tuple[list[str], list[str]]:
         """Install the security updates the checks found: hosts first, then their containers and VMs.
 
         Each round finishes before the next starts, so a host is never updated while one of its guests is
         (a host's upgrade waits for its guests anyway, see JobManager.update_blocked). Never reboots, and
-        leaves Docker stacks alone: they have no security-only updates. Returns lines for the notification.
+        leaves Docker stacks alone: they have no security-only updates. Machines with their own update command are
+        left out. Returns lines for the notification: what was installed, and what was left out.
         """
         notes: list[str] = []
+        skipped: list[str] = []
         for hosts in (True, False):
             submitted: list[Job] = []
             for tid in checked:
@@ -169,6 +171,10 @@ class Scheduler:
                     continue
                 if not any(p.security for p in check.packages):
                     continue
+                if self.jobs.update_command(target):
+                    # Its own command may install more than security fixes: left for an Update by hand.
+                    skipped.append(f"{target.name}: security updates not installed, it has its own update command")
+                    continue
                 try:
                     # A snapshot first where the guest can take one, like the Upgrade button.
                     submitted.append(self.jobs.submit(tid, "upgrade", snapshot_first=True, security_only=True))
@@ -176,7 +182,7 @@ class Scheduler:
                     log.warning("not installing security updates on %s: %s", target.name, e)
             await self._wait(submitted, UPDATE_TIMEOUT)
             notes += self._outcomes(submitted, "security updates")
-        return notes
+        return notes, skipped
 
     @staticmethod
     def _outcomes(jobs: list[Job], what: str) -> list[str]:
@@ -191,7 +197,7 @@ class Scheduler:
         return notes
 
     def summarize(
-        self, target_ids: list[str], stuck: list[str] = (), notes: list[str] = ()
+        self, target_ids: list[str], stuck: list[str] = (), notes: list[str] = (), skipped: list[str] = ()
     ) -> tuple[str, str, Fingerprint]:
         lines: list[str] = []
         seen: set[tuple[str, ...]] = set()
@@ -228,11 +234,16 @@ class Scheduler:
         if failed:
             bits.append(f"{failed} check{'s' if failed > 1 else ''} failed")
         title = "Homelab: " + (", ".join(bits) or "all up to date")
-        body = "\n".join([*sorted(notes, key=str.lower), *sorted(lines, key=str.lower)])
+        body = "\n".join(
+            [*sorted(notes, key=str.lower), *sorted(skipped, key=str.lower), *sorted(lines, key=str.lower)]
+        )
         return title, body, frozenset(seen)
 
-    async def _report(self, target_ids: list[str], stuck: list[str] = (), notes: list[str] = ()) -> None:
-        title, body, seen = self.summarize(target_ids, stuck, notes)
+    async def _report(
+        self, target_ids: list[str], stuck: list[str] = (), notes: list[str] = (), skipped: list[str] = ()
+    ) -> None:
+        # ``skipped`` only explains: it is sent along when something else is new, never on its own.
+        title, body, seen = self.summarize(target_ids, stuck, notes, skipped)
         # Only speak up when something new appeared: an update that wasn't pending at the last run,
         # a new pending reboot, or a machine whose check started failing. Things that were fixed
         # since drop out, so they notify again if they come back.

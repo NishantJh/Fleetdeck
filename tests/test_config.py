@@ -146,3 +146,16 @@ def test_community_scripts_update_is_on_by_default():
     from fleetdeck.config import AppConfig
 
     assert AppConfig().community_scripts_update is True
+
+
+def test_update_commands_take_vmids_and_must_be_one_line():
+    from fleetdeck.config import HostConfig, ProxmoxConfig
+
+    pve = ProxmoxConfig(name="pve", api_url="https://x", token_id="a", token_secret="b", update_commands={105: " x "})
+    assert pve.update_commands == {"105": "x"}
+    assert HostConfig(name="nas", host="nas", update_command="omv-upgrade").update_command == "omv-upgrade"
+    for bad in ("", "a\nb", "x" * 1001):
+        with pytest.raises(ValidationError):
+            HostConfig(name="nas", host="nas", update_command=bad)
+    with pytest.raises(ValidationError):
+        IncusConfig(name="i", socket="/s", update_commands={"web": "a\rb"})

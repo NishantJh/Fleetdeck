@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import subprocess
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 from fleetdeck.app import create_app
 from fleetdeck.config import AppConfig, AuthConfig, HostConfig
 from fleetdeck.models import ExecResult
+from fleetdeck.store import Store
 from fleetdeck.updates import CHECK_SCRIPT, UPGRADE_SCRIPT
 
 
@@ -243,3 +245,44 @@ def test_monitor_only_set_in_the_config_cannot_be_turned_off_from_the_dashboard(
         assert client.get("/api/targets").json()["targets"][0]["monitor_only"]
         r = client.post("/api/monitor-only", json={"target_ids": [omv.id], "monitor_only": False})
         assert r.status_code == 400 and "config file" in r.json()["detail"]
+
+
+def test_update_command_from_dashboard_needs_the_password_and_runs_on_update(tmp_path):
+    cfg = AppConfig(
+        demo=True,
+        auth=AuthConfig(password="s3cret"),
+        state_file=str(tmp_path / "state.db"),
+        hosts=[HostConfig(name="nas", host="nas", update_command="omv-upgrade", insecure_skip_host_key_check=True)],
+    )
+    basic = {"Authorization": "Basic YWRtaW46czNjcmV0"}
+    with TestClient(create_app(cfg), headers=basic, client=("192.168.1.20", 5000)) as client:
+        targets = {t["target"]["name"]: t for t in client.get("/api/targets").json()["targets"]}
+        pi = targets["pi4"]["target"]["id"]
+        assert targets["nas"]["update_command"] == "omv-upgrade"
+        body = {"target_id": pi, "command": "pi-update --all", "password": "wrong"}
+        assert client.put("/api/update-command", json=body).status_code == 403
+        body["password"] = "s3cret"
+        assert client.put("/api/update-command", json={**body, "command": "a\nb"}).status_code == 400
+        nas = {**body, "target_id": targets["nas"]["target"]["id"]}
+        assert "config file" in client.put("/api/update-command", json=nas).json()["detail"]
+        assert client.put("/api/update-command", json=body).json() == {"update_command": "pi-update --all"}
+        pi_view = next(t for t in client.get("/api/targets").json()["targets"] if t["target"]["id"] == pi)
+        assert pi_view["update_command"] == "pi-update --all"
+
+        client.post("/api/actions", json={"action": "upgrade", "target_ids": [pi]})
+        job = _wait_for_jobs(client)[0]
+        assert job["status"] == "succeeded" and job["update_command"] == "pi-update --all"
+        log = client.get(f"/api/jobs/{job['id']}").json()["log"]
+        assert "== Running this machine's update command: pi-update --all" in log
+
+        assert client.put("/api/update-command", json={**body, "command": ""}).json() == {"update_command": None}
+    rows = [json.loads(d) for d in Store(str(tmp_path / "state.db")).load_console_log(10)]
+    assert [r["kind"] for r in rows] == ["update-command", "update-command", "update-command-failed"]
+    assert rows[1]["command"] == "pi-update --all" and rows[0]["before"] == "pi-update --all"
+
+
+def test_update_command_cannot_be_changed_from_outside_the_console_networks():
+    with TestClient(create_app(AppConfig(demo=True)), client=("8.8.8.8", 1)) as client:
+        pi = next(t for t in client.get("/api/targets").json()["targets"] if t["target"]["name"] == "pi4")
+        r = client.put("/api/update-command", json={"target_id": pi["target"]["id"], "command": "x", "password": ""})
+        assert r.status_code == 403 and "allow_from" in r.json()["detail"]

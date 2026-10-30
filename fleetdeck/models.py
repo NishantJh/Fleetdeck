@@ -36,6 +36,8 @@ class Target(BaseModel):
     source: str  # name of the configured Proxmox/Incus/host entry
     kind: Kind
     parent: str | None = None  # host this guest runs on
+    # Set in the config: runs instead of the built-in OS upgrade (see JobManager.update_command).
+    update_command: str | None = None
     status: str = "running"
     updatable: bool = True
     # Can be checked but not upgraded from here (e.g. a Proxmox node without SSH settings).
@@ -145,6 +147,8 @@ class Job(BaseModel):
     reboot_if_required: bool = False
     # Upgrade only: install just the packages from a security repository (see updates.SECURITY_UPGRADE_SCRIPT).
     security_only: bool = False
+    # Upgrade only: the machine's own update command, run instead of the built-in OS upgrade.
+    update_command: str | None = None
     # Upgrade: take a snapshot first (guests only). Upgrade/rollback: the snapshot taken / restored.
     snapshot_first: bool = False
     snapshot: str | None = None
