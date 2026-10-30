@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fleetdeck</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/style.css?v=34">
+  <link rel="stylesheet" href="/static/style.css?v=35">
   <script src="/static/theme.js?v=11"></script>
 </head>
 <body class="dashboard-page">
@@ -61,8 +61,13 @@
     <div class="overview-heading"><h2>Overview</h2><span id="overview-count" class="muted"></span><span id="schedule-status" class="muted"></span></div>
     <section id="summary" class="summary"></section>
     <p id="filter-status" class="muted filter-status" role="status" aria-live="polite" hidden></p>
+    <nav class="view-tabs" aria-label="Dashboard views">
+      <button type="button" data-view="machines" aria-pressed="true">Machines</button>
+      <button type="button" data-view="containers" aria-pressed="false">Containers <span id="docker-host-count" class="chip">0</span></button>
+    </nav>
     <div class="bulk-toolbar" id="bulk-toolbar" hidden><span id="selection-count" role="status"></span><button id="clear-selected" class="small">Clear</button><button id="update-selected" class="small primary" disabled>Update selected</button></div>
     <section id="groups"><div class="loading" role="status"><span class="spin"></span> Loading machines…</div></section>
+    <section id="containers" hidden aria-label="Docker Compose stacks"></section>
 
     <section class="activity">
       <div class="log-head">
@@ -176,7 +181,7 @@
 
   <script src="/static/format.js?v=1"></script>
   <script src="/static/tools.js?v=1"></script>
-  <script src="/static/app.js?v=31"></script>
+  <script src="/static/app.js?v=32"></script>
   <script src="/static/console.js?v=2"></script>
 </body>
 </html>

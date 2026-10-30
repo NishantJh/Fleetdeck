@@ -465,6 +465,9 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .summary:has(.stat:nth-child(4)) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .dashboard-page .stat { padding: 12px 15px 12px 19px; }
 .stat small { font-size: 11px; line-height: 1.5; }
+.view-tabs { display: flex; gap: 5px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.view-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; box-shadow: none; padding: 10px 13px; color: var(--muted); }
+.view-tabs button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: transparent; }
 .dashboard-menu { position: relative; }
 .dashboard-menu > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; min-width: 38px; padding: 7px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); cursor: pointer; background: var(--panel); }
 .dashboard-menu > summary::-webkit-details-marker { display: none; }
@@ -481,15 +484,17 @@ a.brand { color: var(--text); text-decoration: none; }
 .menu-count { min-width: 22px; padding: 1px 6px; border-radius: 999px; color: var(--muted); background: var(--chip); font-size: 11px; text-align: center; }
 .dashboard-menu-item .menu-state-icon { width: 14px; height: 14px; color: var(--accent); opacity: 0; }
 .dashboard-menu-item[aria-pressed="true"] .menu-state-icon { opacity: 1; }
-.bulk-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-bottom: 14px; }
+.bulk-toolbar, .containers-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-bottom: 14px; }
 .bulk-toolbar { background: var(--accent-soft); padding: 10px 13px; border: 1px solid var(--accent); border-radius: var(--radius-sm); }
-.bulk-toolbar > span { margin-right: auto; }
+.bulk-toolbar > span, .containers-toolbar > span { margin-right: auto; }
 .cell-detail { font-size: 11px; font-weight: 400; line-height: 1.5; margin-top: 3px; white-space: normal; overflow-wrap: anywhere; }
 .dashboard-page td.name { min-width: 160px; }
 .dashboard-page tr.guest td.name { padding-left: 24px; }
 .dashboard-page td.actions { min-width: 138px; }
 .dashboard-page .more-actions { font-size: 21px; line-height: 20px; min-width: 30px; padding: 3px 6px; }
 .docker-panel td { overflow-wrap: anywhere; }
+.docker-host .docker-panel { padding: 4px 8px 8px; }
+.discovery-note { font-size: 12px; }
 .docker-panel .docker-head label { white-space: normal; }
 .context-actions { position: fixed; z-index: 20; min-width: 220px; max-width: calc(100vw - 16px); padding: 6px; background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
 .context-actions > button { display: flex; width: 100%; }

@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), docker: new Set(), logJob: null, logLines: [], showHidden: false, filter: null };
+const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), docker: new Set(), logJob: null, logLines: [], showHidden: false, view: "machines", filter: null };
 const mobileDashboard = matchMedia("(max-width: 900px)");
 const $ = (sel) => document.querySelector(sel);
 const renderedHTML = new WeakMap();
@@ -43,6 +43,7 @@ const remember = {
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private window */ } },
 };
 state.showHidden = !!remember.get("showHidden");
+state.view = remember.get("dashboardView") === "containers" ? "containers" : "machines";
 // Hidden machines stay out of the counts, Check all and Update selected, even while shown.
 const active = () => state.targets.filter((v) => !v.hidden);
 
@@ -208,6 +209,12 @@ function csTip(app) {
 
 const dockerBehind = (v) => (v.stacks?.stacks || []).filter((s) => s.update_available && s.state !== "stopped" && !s.is_dashboard).length;
 const hasDockerButton = (v) => canUpgrade(v.target) && v.stacks?.docker !== "none";
+// Machines where the last Docker check found Docker; the Containers tab lists them.
+const dockerHosts = () => active().filter((v) => canUpgrade(v.target) && v.stacks && v.stacks.docker !== "none");
+const checkAllDocker = () => {
+  const ids = active().filter((v) => canUpgrade(v.target) && v.stacks?.docker !== "none").map((v) => v.target.id);
+  if (ids.length) confirmAction("stacks", ids);
+};
 
 function dockerButton(v) {
   if (!hasDockerButton(v)) return "";
@@ -215,7 +222,7 @@ function dockerButton(v) {
   return `<button class="small${n ? " primary" : ""}" data-act="docker" data-id="${id}" data-focus-key="docker:${id}" aria-expanded="${open}" aria-controls="docker-${id}" title="Docker Compose stacks on this machine">Docker${n ? ` (${n} ↑)` : ""}</button>`;
 }
 
-function stackPanel(v) {
+function stackPanel(v, inTab = false) {
   const id = esc(v.target.id), r = v.stacks, busy = !!v.active_job;
   const prune = !!remember.get("pruneImages");
   let body;
@@ -238,7 +245,7 @@ function stackPanel(v) {
     }).join("");
     body = `<div class="group-scroll"><table><thead><tr><th>Stack</th><th>Services</th><th>Image status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
-  return `<div class="docker-panel" id="docker-${id}"><div class="docker-head"><b>Docker Compose stacks</b>
+  return `<div class="docker-panel" id="docker-${inTab ? "tab-" : ""}${id}"><div class="docker-head"><b>Docker Compose stacks</b>
       <span class="muted">${r ? `checked ${ago(r.checked_at)}` : ""}</span>
       <button class="small" data-act="stacks" data-id="${id}" ${busy ? "disabled" : ""} title="Downloads newer images for every running stack. Nothing is restarted, but a later docker compose up on this machine will use them.">Check for new images</button>
       <label class="muted" title="Runs docker image prune: removes all unused, untagged images on this machine, not only this stack's"><input type="checkbox" data-prune ${prune ? "checked" : ""}> remove old images after an update (all unused ones on this machine)</label></div>
@@ -387,10 +394,21 @@ function render() {
       </table></div>
     </div>`;
   }).join("") || (state.filter ? `<div class="empty"><h3>No matching machines</h3><p class="muted">Click the selected KPI again to show all machines.</p></div>` : `<div class="empty"><h3>No machines yet</h3><p class="muted">Add a Proxmox node, an Incus server or any Linux host, and it shows up here with its updates, backups and state.</p><a class="button primary" href="/setup">Add machines</a></div>`));
+  const hosts = dockerHosts();
+  const unchecked = active().filter((v) => canUpgrade(v.target) && !v.stacks).length;
+  const behind = hosts.reduce((n, v) => n + dockerBehind(v), 0);
+  html("#containers", `<div class="containers-toolbar"><span class="muted">Docker Compose stacks on each machine. OS packages are updated separately on the Machines tab.</span><button class="small" data-check-docker title="Look for newer Docker images on every machine with Docker. This downloads them.">Check all Docker</button></div>` +
+    (hosts.map((v) => `<div class="group docker-host"><div class="group-head"><span class="chip">${PLATFORM[v.target.platform] || v.target.platform}</span> ${esc(v.target.name)}${v.monitor_only ? ` <span class="chip" title="${MONITOR_TIP}">monitor only</span>` : ""}</div>${stackPanel(v, true)}</div>`).join("") ||
+      `<div class="empty"><h3>No Docker found yet</h3><p class="muted">Check all Docker to look for Docker Compose stacks on your machines. It downloads newer images but restarts nothing.</p></div>`) +
+    (unchecked ? `<p class="muted discovery-note">${unchecked} ${plural(unchecked, "machine has", "machines have")} not been checked for Docker yet.</p>` : ""));
+  $("#docker-host-count").textContent = behind ? `${hosts.length} · ${behind} ↑` : hosts.length;
+  $("#groups").hidden = state.view !== "machines";
+  $("#containers").hidden = state.view !== "containers";
+  document.querySelectorAll("[data-view]").forEach((el) => el.setAttribute("aria-pressed", String(el.dataset.view === state.view)));
   const btn = $("#update-selected");
   btn.disabled = state.selected.size === 0;
   btn.textContent = `Update selected (${state.selected.size})`;
-  $("#bulk-toolbar").hidden = state.selected.size === 0;
+  $("#bulk-toolbar").hidden = state.selected.size === 0 || state.view !== "machines";
   $("#selection-count").textContent = `${state.selected.size} ${plural(state.selected.size, "machine", "machines")} selected`;
   document.querySelectorAll("[data-machine-menu]").forEach((el) => el.setAttribute("aria-expanded", String(el.dataset.machineMenu === machineMenuId)));
   document.querySelectorAll("[data-machine-info]").forEach((el) => el.setAttribute("aria-expanded", String(el.dataset.machineInfo === machineInfoId)));
@@ -782,6 +800,7 @@ document.addEventListener("click", (e) => {
   const kpi = e.target.closest("[data-kpi]");
   if (kpi) {
     state.filter = state.filter === kpi.dataset.kpi ? null : kpi.dataset.kpi;
+    state.view = "machines";
     for (const id of state.selected) if (!state.targets.some((v) => v.target.id === id && matchesKpi(v, state.filter))) state.selected.delete(id);
     closeMachineMenu(); closeMachineInformation(); render(); return;
   }
@@ -828,6 +847,13 @@ document.addEventListener("click", (e) => {
 
 document.addEventListener("click", (e) => {
   if (!e.target.closest("#dashboard-menu") || e.target.closest(".dashboard-menu-items button,.dashboard-menu-items a")) $("#dashboard-menu").open = false;
+  const view = e.target.closest("[data-view]");
+  if (view) {
+    state.view = view.dataset.view === "containers" ? "containers" : "machines";
+    remember.set("dashboardView", state.view);
+    closeMachineMenu(); closeMachineInformation(); render(); return;
+  }
+  if (e.target.closest("[data-check-docker]")) { checkAllDocker(); return; }
   const el = e.target.closest("[data-machine-menu],[data-machine-info]");
   if (el?.dataset.machineMenu) { openMachineMenu(el.dataset.machineMenu, el); return; }
   if (el?.dataset.machineInfo) { openMachineInformation(el.dataset.machineInfo, el); return; }
@@ -872,10 +898,7 @@ $("#rollback").onclick = async (e) => {
 window.FleetdeckTools.bindBackup($("#backup"), $("#backup-dialog"));
 
 $("#check-all").onclick = () => act("check", active().filter((v) => v.target.updatable).map((v) => v.target.id));
-$("#check-docker").onclick = () => {
-  const ids = active().filter((v) => canUpgrade(v.target) && v.stacks?.docker !== "none").map((v) => v.target.id);
-  if (ids.length) confirmAction("stacks", ids);
-};
+$("#check-docker").onclick = checkAllDocker;
 $("#update-selected").onclick = () => confirmAction("upgrade", [...state.selected]);
 
 // Poll fast while anything is running, slowly otherwise.
