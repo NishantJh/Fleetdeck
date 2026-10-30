@@ -2,7 +2,7 @@
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const HINTS = {
-  proxmox: "On Connect the dashboard creates its own API user, role and token on this node and pins its certificate. For a cluster, add one node and run the script on every node; Connect checks the others. Put the VMID of the LXC running this dashboard under protect: in the config editor below.",
+  proxmox: "On Connect the dashboard creates its own API user, role and token on this node and pins its certificate. For a cluster, add one node and run the script on every node; Connect checks the others. Put the VMID of the LXC running this dashboard under protect: in Settings.",
   incus: "On Connect the dashboard turns on the HTTPS API (port 8443, or the next free one; on this address only) if it's off and trusts its own client certificate for the existing projects. Works for LXD too.",
   host: "A Raspberry Pi, a VPS or any other Linux machine. If its firewall only accepts SSH from some addresses, allow the dashboard's (for a VPS: your home's public IP). Run the script before pressing Connect: failed logins can get the dashboard banned by fail2ban or CrowdSec.",
 };
@@ -18,6 +18,11 @@ if (hashToken) {
 }
 let token = sessionStorage.getItem("setup-token");
 let state = null;
+const settingsPage = location.pathname === "/settings";
+let configLoaded = false;
+let toolsLoaded = false;
+window.FleetdeckTools.bindBackup($("#admin-backup"), $("#admin-backup-dialog"), "admin-");
+$("#admin-test-notify").onclick = window.FleetdeckTools.testNotification;
 
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json" };
@@ -318,7 +323,7 @@ $("#restore-check").onclick = async () => {
     const data = await readBase64(file);
     const b = (await api("/api/setup/restore", { method: "POST", body: JSON.stringify({ passphrase: $("#restore-pass").value, data }) })).backup;
     restoreData = data;
-    const made = b.created_at ? new Date(b.created_at).toLocaleString() : "an unknown date";
+    const made = b.created_at ? window.FleetdeckDates.dateTime(b.created_at) : "an unknown date";
     $("#restore-summary").textContent = `Made ${made}. Login: ${b.username || "none"}. ${b.machines} machine${b.machines === 1 ? "" : "s"}${b.history ? ", with job history" : ""}.`;
     $("#restore-preview").hidden = false;
   } catch (err) {
@@ -382,17 +387,17 @@ $("#apply-btn").onclick = async (e) => {
   }
 };
 
-$("#advanced").addEventListener("toggle", async (e) => {
-  if (!e.target.open) return;
+async function loadConfiguration() {
   try {
     const r = await api("/api/setup/config");
     $("#config-text").value = r.yaml;
     $("#config-text").readOnly = !r.writable;
     $("#config-save").disabled = !r.writable;
+    configLoaded = true;
   } catch (err) {
     $("#config-status").textContent = err.message;
   }
-});
+}
 
 $("#config-save").onclick = async () => {
   const status = $("#config-status");
@@ -413,14 +418,35 @@ $("#config-save").onclick = async () => {
 async function render() {
   state = await api("/api/setup");
   $("#to-dashboard").hidden = state.first_run;
+  $("#setup-navigation").hidden = state.first_run;
+  $("#page-heading").hidden = state.first_run;
+  $("#page-title").textContent = settingsPage ? "Settings" : "Machines";
+  $("#page-description").textContent = settingsPage ? "Configure checks, notifications and dashboard behavior." : "Add and connect the sources Fleetdeck checks.";
+  document.title = state.first_run ? "Fleetdeck setup" : `Fleetdeck ${settingsPage ? "settings" : "machines"}`;
+  $("header h1").textContent = state.first_run ? "Fleetdeck setup" : "Fleetdeck";
   if (!state.writable) {
     notice(`${state.config_path} is read-only here (an older install's config folder), so machines can't be added from this page. Move to the single data volume (README) to use it.`);
   }
   $("#admin").hidden = !state.first_run || !state.writable;
   const ready = !state.first_run && state.writable;
-  $("#machines").hidden = !ready;
-  $("#advanced").hidden = state.first_run;
+  $("#machines").hidden = !ready || settingsPage;
+  $("#connection-security").hidden = !ready || settingsPage;
+  $("#advanced").hidden = state.first_run || !settingsPage;
   showApply(state.restart_pending);
+  if (!state.first_run && !toolsLoaded) {
+    try {
+      const schedule = await api("/api/schedule");
+      $("#admin-test-notify").hidden = !schedule.notify_targets;
+      toolsLoaded = true;
+    } catch {
+      // Keep the explicit action available; its handler reports any API error.
+      $("#admin-test-notify").hidden = false;
+    }
+  }
+  if (settingsPage) {
+    if (!state.first_run && !configLoaded) await loadConfiguration();
+    return;
+  }
   if (!ready) return;
   $("#cards").innerHTML = "";
   for (const m of state.machines) addCard(m, true);

@@ -11,7 +11,7 @@ import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .models import CheckResult, Job, StacksResult
+from .models import CheckResult, DockerSettings, Job, StacksResult
 
 log = logging.getLogger(__name__)
 # Upgrade logs can be long; keep the end, which is where errors are.
@@ -45,6 +45,7 @@ class Store:
         self.db.execute("CREATE TABLE IF NOT EXISTS hidden (target_id TEXT PRIMARY KEY)")
         self.db.execute("CREATE TABLE IF NOT EXISTS monitor_only (target_id TEXT PRIMARY KEY)")
         self.db.execute("CREATE TABLE IF NOT EXISTS backup_places (target_id TEXT PRIMARY KEY, path TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS docker_settings (target_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS console_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL,"
             " data TEXT NOT NULL)"
@@ -85,6 +86,24 @@ class Store:
             except ValueError:
                 log.warning("dropping unreadable stored Docker check for %s", target_id)
         return out
+
+    def load_docker_settings(self) -> dict[str, DockerSettings]:
+        out: dict[str, DockerSettings] = {}
+        for target_id, data in self.db.execute("SELECT target_id, data FROM docker_settings"):
+            try:
+                out[target_id] = DockerSettings.model_validate_json(data)
+            except ValueError:
+                # Fail closed: a corrupt policy must never silently re-enable stack updates.
+                log.warning("unreadable Docker settings for %s; disabling Docker management", target_id)
+                out[target_id] = DockerSettings(mode="disabled")
+        return out
+
+    def save_docker_settings(self, target_id: str, settings: DockerSettings) -> None:
+        self.db.execute(
+            "INSERT INTO docker_settings (target_id, data) VALUES (?, ?)"
+            " ON CONFLICT(target_id) DO UPDATE SET data = excluded.data",
+            (target_id, settings.model_dump_json()),
+        )
 
     def save_job(self, job: Job) -> None:
         if len(job.log) > MAX_STORED_LOG_LINES:

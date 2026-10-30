@@ -11,6 +11,8 @@ Check output on stdout looks like::
     __BEGIN__
     <package manager's list of upgradable packages>
     __END__
+    __PHASED__=package-one,package-two  (apt packages deferred for this machine; optional)
+    __PHASED_BLOCKED__=package-three   (apt packages waiting on those phased packages; optional)
     __REBOOT__=yes|no|unknown
     __SELF__=yes            (only on the machine whose Docker/Podman runs this dashboard)
     __CSAPP__=plex          (only in a container installed by the community-scripts helper scripts)
@@ -152,6 +154,10 @@ def _own_mountinfo() -> str:
 
 SELF_SCRIPT = self_script(_own_mountinfo())
 
+DOCKER_DETECT_SCRIPT = (
+    "if command -v docker >/dev/null 2>&1; then echo __DOCKER_INSTALLED__=yes; else echo __DOCKER_INSTALLED__=no; fi\n"
+)
+
 CHECK_SCRIPT = (
     _PRELUDE
     + r"""
@@ -161,7 +167,45 @@ case "$PM" in
     apt-get $APT_OPTS update -q >&2 || rc=$?
     echo "__BEGIN__"
     apt list --upgradable 2>/dev/null | grep -v '^Listing'
-    echo "__END__" ;;
+    echo "__END__"
+    # Read apt's old and new output formats. A package in "Not upgrading" can still be blocked
+    # by a related phased package (systemd commonly upgrades as a matched set), so compare with a
+    # second read-only simulation that includes phased updates. The only changed input is phasing.
+    apt_section() {
+      awk -v old="$1" -v new="$2" '
+        $0 == old || $0 == new { collect=1; next }
+        collect && /^[[:space:]]/ {
+          for (i=1; i<=NF; i++) {
+            name=$i
+            sub(/:[^:[:space:]]+$/, "", name)
+            if (name ~ /^[a-z0-9][a-z0-9+.-]*$/) print name
+          }
+          next
+        }
+        collect { exit }
+      '
+    }
+    simulation=$(apt-get $APT_OPTS -s -q upgrade 2>/dev/null || true)
+    phased=$(printf '%s\n' "$simulation" | apt_section \
+      "The following upgrades have been deferred due to phasing:" "Not upgrading yet due to phasing:" | sort -u)
+    not_upgrading=$(printf '%s\n' "$simulation" | apt_section \
+      "The following packages have been kept back:" "Not upgrading:" | sort -u)
+    if [ -n "$phased" ]; then
+      phased_csv=$(printf '%s\n' "$phased" | tr '\n' ',')
+      echo "__PHASED__=${phased_csv%,}"
+    fi
+    if [ -n "$phased" ] && [ -n "$not_upgrading" ]; then
+      forced=$(apt-get $APT_OPTS -s -q -o APT::Get::Always-Include-Phased-Updates=true upgrade 2>/dev/null || true)
+      forced_upgrading=$(printf '%s\n' "$forced" | apt_section \
+        "The following packages will be upgraded:" "Upgrading:" | sort -u)
+      phased_blocked=""
+      for package in $not_upgrading; do
+        if printf '%s\n' "$forced_upgrading" | grep -F -x -q "$package"; then
+          phased_blocked="${phased_blocked}${phased_blocked:+,}${package}"
+        fi
+      done
+      [ -n "$phased_blocked" ] && echo "__PHASED_BLOCKED__=$phased_blocked"
+    fi ;;
   dnf|yum)
     REFRESH=""; [ "$PM" = dnf ] && REFRESH="--refresh"  # yum has no --refresh
     echo "__BEGIN__"
@@ -382,6 +426,14 @@ def parse_check(result: ExecResult) -> CheckResult:
         error = f"exit code {result.rc}: {tail}" if tail else f"exit code {result.rc}"
     parser = PARSERS.get(pm or "")
     packages = parser(body) if parser else []
+    phased_direct = {name for name in meta.get("PHASED", "").split(",") if name}
+    phased_dependency = {name for name in meta.get("PHASED_BLOCKED", "").split(",") if name}
+    phased = phased_direct | phased_dependency
+    if phased:
+        packages = [
+            p.model_copy(update={"phased": p.name in phased, "phased_dependency": p.name in phased_dependency})
+            for p in packages
+        ]
     if parser is None and error is None:
         error = f"unsupported package manager: {pm or 'unknown'}"
     return CheckResult(
@@ -393,12 +445,18 @@ def parse_check(result: ExecResult) -> CheckResult:
         error=error,
         runs_dashboard=meta.get("SELF") == "yes",
         community_script=parse_community_script(result.stdout),
+        docker_installed={"yes": True, "no": False}.get(meta.get("DOCKER_INSTALLED")),
     )
 
 
 def parse_reboot(stdout: str) -> bool | None:
     meta, _ = _markers(stdout)
     return _reboot(meta)
+
+
+def parse_docker_installed(stdout: str) -> bool | None:
+    meta, _ = _markers(stdout)
+    return {"yes": True, "no": False}.get(meta.get("DOCKER_INSTALLED"))
 
 
 def parse_community_script(stdout: str) -> str | None:

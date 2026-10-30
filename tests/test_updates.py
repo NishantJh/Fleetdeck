@@ -2,6 +2,7 @@ import subprocess
 
 from fleetdeck.models import ExecResult
 from fleetdeck.updates import (
+    CHECK_SCRIPT,
     COMMUNITY_SCRIPT_DETECT,
     COMMUNITY_UPDATE_SCRIPT,
     clean_line,
@@ -90,6 +91,104 @@ def test_parse_check_full_output():
     assert res.reboot_required is True
     assert [p.name for p in res.packages] == ["tzdata"]
     assert res.error is None
+
+
+def test_parse_check_marks_only_packages_deferred_by_apt_phasing():
+    out = (
+        "__PM__=apt\n__OS__=Ubuntu 24.04 LTS\n__BEGIN__\n"
+        "curl/noble-updates 2 amd64 [upgradable from: 1]\n"
+        "tzdata/noble-updates 2025a all [upgradable from: 2024b]\n"
+        "__END__\n__PHASED__=tzdata\n__REBOOT__=no\n"
+    )
+    res = parse_check(ExecResult(rc=0, stdout=out))
+    assert [(p.name, p.phased) for p in res.packages] == [("curl", False), ("tzdata", True)]
+
+
+def test_parse_check_marks_packages_blocked_by_a_phased_transaction():
+    out = (
+        "__PM__=apt\n__OS__=Ubuntu 24.04 LTS\n__BEGIN__\n"
+        "systemd-sysv/noble-updates 2 amd64 [upgradable from: 1]\n"
+        "libsystemd0/noble-updates 2 amd64 [upgradable from: 1]\n"
+        "__END__\n__PHASED__=systemd-sysv\n__PHASED_BLOCKED__=libsystemd0\n__REBOOT__=no\n"
+    )
+    res = parse_check(ExecResult(rc=0, stdout=out))
+    assert [(p.name, p.phased, p.phased_dependency) for p in res.packages] == [
+        ("systemd-sysv", True, False),
+        ("libsystemd0", True, True),
+    ]
+
+
+def test_check_script_detects_the_whole_package_group_waiting_on_phasing(tmp_path):
+    direct = ["systemd-sysv", "systemd-timesyncd", "udev"]
+    dependent = [
+        "libpam-systemd",
+        "libsystemd-shared",
+        "libsystemd0",
+        "libudev1",
+        "systemd",
+        "systemd-cryptsetup",
+        "systemd-resolved",
+    ]
+    packages = direct + dependent
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    apt_lines = "\n".join(
+        f"{name}/noble-updates 255.4-1ubuntu8.12 amd64 [upgradable from: 255.4-1ubuntu8.11]" for name in packages
+    )
+    (bin_dir / "apt").write_text(
+        f"#!/bin/sh\nif [ \"$1\" = list ]; then\n  echo Listing...\n  printf '%s\\n' '{apt_lines}'\nfi\n"
+    )
+    (bin_dir / "apt-get").write_text(
+        """#!/bin/sh
+case " $* " in
+  *" update "*) exit 0 ;;
+  *"Always-Include-Phased-Updates=true"*)
+    cat <<'EOF'
+Upgrading:
+  systemd-sysv systemd-timesyncd udev
+  libpam-systemd libsystemd-shared libsystemd0 libudev1
+  systemd systemd-cryptsetup systemd-resolved
+Summary:
+  Upgrading: 10, Installing: 0, Removing: 0, Not Upgrading: 0
+EOF
+    ;;
+  *)
+    cat <<'EOF'
+Not upgrading yet due to phasing:
+  systemd-sysv systemd-timesyncd udev
+
+Not upgrading:
+  libpam-systemd libsystemd-shared libsystemd0 libudev1
+  systemd systemd-cryptsetup systemd-resolved
+
+Summary:
+  Upgrading: 0, Installing: 0, Removing: 0, Not Upgrading: 10
+Notice: Some packages may have been kept back due to phasing.
+EOF
+    ;;
+esac
+"""
+    )
+    for path in bin_dir.iterdir():
+        path.chmod(0o755)
+    modules = tmp_path / "modules"
+    modules.mkdir()
+    script = CHECK_SCRIPT.replace(
+        "export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH",
+        "",
+    )
+    result = subprocess.run(
+        ["sh", "-c", script],
+        capture_output=True,
+        text=True,
+        env={"PATH": f"{bin_dir}:/usr/bin:/bin", "MODULES_DIR": str(modules)},
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    parsed = parse_check(ExecResult(rc=result.returncode, stdout=result.stdout, stderr=result.stderr))
+    assert len(parsed.packages) == 10
+    assert {p.name for p in parsed.packages if p.phased and not p.phased_dependency} == set(direct)
+    assert {p.name for p in parsed.packages if p.phased_dependency} == set(dependent)
 
 
 def test_parse_check_error():
