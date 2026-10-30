@@ -423,7 +423,7 @@ async function render() {
   $("#page-title").textContent = settingsPage ? "Settings" : "Machines";
   $("#page-description").textContent = settingsPage ? "Configure checks, notifications and dashboard behavior." : "Add and connect the sources Fleetdeck checks.";
   document.title = state.first_run ? "Fleetdeck setup" : `Fleetdeck ${settingsPage ? "settings" : "machines"}`;
-  $("header h1").textContent = state.first_run ? "Fleetdeck setup" : "Fleetdeck";
+  $("header h1 a").textContent = state.first_run ? "Fleetdeck setup" : "Fleetdeck";
   if (!state.writable) {
     notice(`${state.config_path} is read-only here (an older install's config folder), so machines can't be added from this page. Move to the single data volume (README) to use it.`);
   }

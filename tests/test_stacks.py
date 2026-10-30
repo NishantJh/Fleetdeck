@@ -169,7 +169,7 @@ def _jobs(ex, store=None):
     t = Target(id="t1", name="t1", platform="ssh", source="hosts", kind="host")
     inv = Inventory([])
     inv.targets = {"t1": (t, ex)}
-    return JobManager(inv, store=store, docker_enabled=True)
+    return JobManager(inv, store=store)
 
 
 @pytest.fixture(autouse=True)
@@ -313,7 +313,7 @@ def test_pull_script_reports_failures_per_stack(tmp_path):
 def test_demo_docker_check_and_update_through_the_api():
     import time
 
-    with TestClient(create_app(AppConfig(demo=True, docker_enabled=True))) as client:
+    with TestClient(create_app(AppConfig(demo=True))) as client:
         views = client.get("/api/targets").json()["targets"]
         vm = next(v for v in views if v["target"]["name"] == "docker-vm")["target"]["id"]
         assert next(v for v in views if v["target"]["id"] == vm)["stacks"] is None

@@ -209,16 +209,23 @@ def test_static_files_are_revalidated_so_a_stale_app_js_is_not_kept():
     assert res.status_code == 200 and res.headers["cache-control"] == "no-cache"
 
 
-def test_monitor_only_cannot_be_changed_from_the_dashboard():
+def test_monitor_only_from_the_dashboard_blocks_updates_but_not_reboots():
     with TestClient(create_app(AppConfig(demo=True))) as client:
         targets = {t["target"]["name"]: t for t in client.get("/api/targets").json()["targets"]}
         pi = targets["pi4"]["target"]["id"]
-        for on in (True, False):
-            r = client.post("/api/monitor-only", json={"target_ids": [pi], "monitor_only": on})
-            assert r.status_code == 409 and "config.yaml" in r.json()["detail"]
-        assert not next(t for t in client.get("/api/targets").json()["targets"] if t["target"]["id"] == pi)[
-            "monitor_only"
-        ]
+        assert not targets["pi4"]["monitor_only"]
+        assert client.post("/api/monitor-only", json={"target_ids": [pi]}).json() == {"monitor_only": [pi]}
+        assert next(t for t in client.get("/api/targets").json()["targets"] if t["target"]["id"] == pi)["monitor_only"]
+        assert client.post("/api/monitor-only", json={"target_ids": ["nope"]}).status_code == 404
+
+        r = client.post("/api/actions", json={"action": "upgrade", "target_ids": [pi]}).json()
+        assert r["jobs"] == [] and "monitor only" in r["rejected"][pi]
+        r = client.post("/api/actions", json={"action": "reboot", "target_ids": [pi]}).json()
+        assert r["rejected"] == {} and len(r["jobs"]) == 1
+        _wait_for_jobs(client)
+
+        r = client.post("/api/monitor-only", json={"target_ids": [pi], "monitor_only": False})
+        assert r.json() == {"monitor_only": []}
 
 
 def test_monitor_only_set_in_the_config_cannot_be_turned_off_from_the_dashboard():
@@ -235,4 +242,4 @@ def test_monitor_only_set_in_the_config_cannot_be_turned_off_from_the_dashboard(
     with TestClient(create_app(AppConfig(demo=True), inv)) as client:
         assert client.get("/api/targets").json()["targets"][0]["monitor_only"]
         r = client.post("/api/monitor-only", json={"target_ids": [omv.id], "monitor_only": False})
-        assert r.status_code == 409 and "config.yaml" in r.json()["detail"]
+        assert r.status_code == 400 and "config file" in r.json()["detail"]

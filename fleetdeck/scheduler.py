@@ -128,10 +128,7 @@ class Scheduler:
             # Opt-in: the Docker check pulls images. Skipped where the last look found no Docker.
             if (
                 self.check_docker
-                and self.jobs.docker_enabled
                 and not target.check_only
-                and self.jobs.get_docker_settings(target.id).mode in ("managed", "monitor")
-                and getattr(self.jobs.checks.get(target.id), "docker_installed", None) is not False
                 and getattr(self.jobs.stacks.get(target.id), "docker", "") != "none"
             ):
                 with contextlib.suppress(KeyError, ValueError):

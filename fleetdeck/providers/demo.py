@@ -15,7 +15,6 @@ from ..updates import (
     CHECK_SCRIPT,
     COMMUNITY_SCRIPT_DETECT,
     COMMUNITY_UPDATE_SCRIPT,
-    DOCKER_DETECT_SCRIPT,
     REBOOT_NOW_SCRIPT,
 )
 from . import Discovered
@@ -156,8 +155,6 @@ class DemoExecutor:
     async def run(self, script, on_line=None, timeout=3600) -> ExecResult:
         await asyncio.sleep(random.uniform(0.3, 1.2))
         head = f"__PM__={self.pm}\n__OS__={self.os_name}\n"
-        if script == DOCKER_DETECT_SCRIPT:
-            return ExecResult(rc=0, stdout=f"__DOCKER_INSTALLED__={'yes' if self.stacks is not None else 'no'}\n")
         if self.app:
             head += f"__CSAPP__={self.app}\n"
         if script == BOOT_ID_SCRIPT:

@@ -154,10 +154,6 @@ def _own_mountinfo() -> str:
 
 SELF_SCRIPT = self_script(_own_mountinfo())
 
-DOCKER_DETECT_SCRIPT = (
-    "if command -v docker >/dev/null 2>&1; then echo __DOCKER_INSTALLED__=yes; else echo __DOCKER_INSTALLED__=no; fi\n"
-)
-
 CHECK_SCRIPT = (
     _PRELUDE
     + r"""
@@ -445,18 +441,12 @@ def parse_check(result: ExecResult) -> CheckResult:
         error=error,
         runs_dashboard=meta.get("SELF") == "yes",
         community_script=parse_community_script(result.stdout),
-        docker_installed={"yes": True, "no": False}.get(meta.get("DOCKER_INSTALLED")),
     )
 
 
 def parse_reboot(stdout: str) -> bool | None:
     meta, _ = _markers(stdout)
     return _reboot(meta)
-
-
-def parse_docker_installed(stdout: str) -> bool | None:
-    meta, _ = _markers(stdout)
-    return {"yes": True, "no": False}.get(meta.get("DOCKER_INSTALLED"))
 
 
 def parse_community_script(stdout: str) -> str | None:

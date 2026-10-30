@@ -521,7 +521,7 @@ async def test_monitor_only_machine_is_checked_and_rebooted_but_never_updated(fa
         (_guest("omv", "pve", monitor_only=True), RebootingExecutor()),
         (_guest("ct", "pve"), RebootingExecutor()),
     )
-    jobs = JobManager(inv, docker_enabled=True)
+    jobs = JobManager(inv)
     jobs.set_monitor_only(["ct"], True)
     for tid in ("omv", "ct"):
         for action in ("upgrade", "stack-update"):

@@ -23,7 +23,7 @@ from .console import Console
 from .console_routes import add_console_routes
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
-from .models import CheckResult, DockerSettings, Job, JobAction, StacksResult, Target
+from .models import CheckResult, Job, JobAction, StacksResult, Target
 from .notify import Notifier
 from .onboarding import Paths
 from .providers.proxmox import PROTECTED_NOTE
@@ -50,8 +50,7 @@ class TargetView(BaseModel):
     stacks: StacksResult | None = None
     # Looks like the machine this dashboard runs on: shown with a "dashboard" tag.
     runs_dashboard: bool = False
-    docker_settings: DockerSettings = Field(default_factory=DockerSettings)
-    # Configured monitor-only, including restrictions retained from legacy dashboard overrides.
+    # Checked and reported, never updated from here (set in the config: target.monitor_only, or on the dashboard).
     monitor_only: bool = False
 
 
@@ -78,10 +77,6 @@ class BackupPlaceRequest(BaseModel):
 class HideRequest(BaseModel):
     target_ids: list[str] = Field(max_length=1000)
     hidden: bool = True
-
-
-class DockerSettingsRequest(DockerSettings):
-    target_id: str
 
 
 class MonitorOnlyRequest(BaseModel):
@@ -134,7 +129,6 @@ def create_app(
         backup_folder,
         cfg.backup_age_recipient,
         cfg.backup_password,
-        docker_enabled=cfg.docker_enabled,
     )
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
     scheduler = Scheduler(
@@ -143,7 +137,7 @@ def create_app(
         jobs,
         notifier,
         store,
-        cfg.docker_enabled and cfg.schedule.check_docker,
+        cfg.schedule.check_docker,
         cfg.schedule.auto_security_updates,
     )
 
@@ -227,7 +221,6 @@ def create_app(
                 blocked=jobs.update_blocked(t),
                 stacks=jobs.stacks.get(t.id),
                 runs_dashboard=_runs_dashboard(t, check, hostname),
-                docker_settings=jobs.get_docker_settings(t.id),
                 monitor_only=jobs.monitor_only(t),
             )
             for t, _ in inventory.targets.values()
@@ -240,21 +233,8 @@ def create_app(
             "settings": {
                 "snapshot_before_upgrade": cfg.snapshot_before_upgrade,
                 "community_scripts_update": cfg.community_scripts_update,
-                "docker_enabled": cfg.docker_enabled,
             },
         }
-
-    @app.put("/api/docker-settings")
-    async def set_docker_settings(req: DockerSettingsRequest):
-        await inventory.refresh()
-        try:
-            settings = DockerSettings.model_validate(req.model_dump(exclude={"target_id"}))
-            jobs.set_docker_settings(req.target_id, settings)
-        except KeyError:
-            raise HTTPException(404, "unknown target") from None
-        except ValueError as e:
-            raise HTTPException(409, str(e)) from None
-        return {"docker_settings": settings}
 
     @app.post("/api/actions")
     async def run_action(req: ActionRequest):
@@ -311,8 +291,20 @@ def create_app(
 
     @app.post("/api/monitor-only")
     async def set_monitor_only(req: MonitorOnlyRequest):
-        """Retired dashboard override: update policy is managed through configuration."""
-        raise HTTPException(409, "Manage monitor-only machines in config.yaml on the Settings page")
+        """Only monitor machines (checks and reports, no updates), or allow updates again. Machines set to
+        monitor-only in the config stay that way."""
+        ids = list(dict.fromkeys(req.target_ids))
+        await inventory.refresh()
+        unknown = [t for t in ids if t not in inventory.targets]
+        if req.monitor_only and unknown:
+            raise HTTPException(404, f"unknown target: {', '.join(unknown)}")
+        in_config = [
+            inventory.targets[t][0].name for t in ids if t not in unknown and inventory.targets[t][0].monitor_only
+        ]
+        if not req.monitor_only and in_config:
+            raise HTTPException(400, f"set to monitor only in the config file: {', '.join(in_config)}")
+        jobs.set_monitor_only(ids, req.monitor_only)
+        return {"monitor_only": sorted(jobs.monitor_only_ids)}
 
     @app.get("/api/jobs")
     async def list_jobs(limit: int = Query(50, ge=1, le=500)):

@@ -29,10 +29,8 @@
     }
     const h1 = document.querySelector("header h1");
     if (h1) {
-      const brand = document.createElement("a");
+      const brand = document.createElement("div");
       brand.className = "brand";
-      brand.href = "/";
-      brand.setAttribute("aria-label", "Fleetdeck dashboard");
       brand.innerHTML = `<span class="logo">${LOGO}</span>`;
       h1.replaceWith(brand);
       brand.append(h1);

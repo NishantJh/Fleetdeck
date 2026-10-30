@@ -1,9 +1,5 @@
 # Fleetdeck
 
-> **Fork preview:** this branch has a compact, OS-focused dashboard with Docker checks and
-> management disabled by default. See [preview instructions and changes](docs/CONTEXTUAL-DASHBOARD.md).
-> The screenshots and ordinary Compose image below are still from upstream, not this preview.
-
 > **Built with help from Claude Code, tested on real homelab hardware.** It has been run on a Proxmox VE host
 > with Proxmox Backup Server, an Incus host, a Raspberry Pi 4 and an Ubuntu VPS. CI runs the linter and the
 > test suite on every change, and the owner approves each merge. It has **not** had an independent security
