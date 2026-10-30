@@ -130,6 +130,8 @@ def add_setup_routes(
         return PlainTextResponse(found[0])
 
     @app.get("/setup")
+    @app.get("/machines")
+    @app.get("/settings")
     async def setup_page():
         return FileResponse(STATIC / "setup.html")
 

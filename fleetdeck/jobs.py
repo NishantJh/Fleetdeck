@@ -12,7 +12,7 @@ from pathlib import Path
 from . import detached
 from .backup_runs import DASHBOARD
 from .inventory import Inventory
-from .models import CheckResult, Job, JobAction, Stack, StacksResult, Target
+from .models import CheckResult, Job, JobAction, Stack, StacksResult, SuccessfulCheck, Target
 from .snapshots import Snapshots, prune, snapshot_name, unsupported
 from .stacks import SCAN_SCRIPT, _own_id, parse_pull_failures, parse_scan, pull_script, update_script
 from .store import Store, mark_interrupted
@@ -145,6 +145,19 @@ class JobManager:
             self.jobs = OrderedDict((j.id, j) for j in store.load_jobs(MAX_JOBS))
 
     def _set_check(self, target_id: str, check: CheckResult) -> None:
+        prev = self.checks.get(target_id)
+        if check.error and prev:
+            check.last_successful = (
+                prev.last_successful
+                if prev.error
+                else SuccessfulCheck(
+                    packages=prev.packages, reboot_required=prev.reboot_required, checked_at=prev.checked_at
+                )
+            )
+            check.os = check.os or prev.os
+            check.package_manager = check.package_manager or prev.package_manager
+            check.runs_dashboard = prev.runs_dashboard
+            check.community_script = prev.community_script
         self.checks[target_id] = check
         if self.store is not None:
             self._persist(self.store.save_check, target_id, check)
@@ -838,15 +851,15 @@ class JobManager:
             job.log.append(f"! could not delete old snapshots: {e}")
 
     def _record_check_error(self, target_id: str, error: str) -> None:
-        """Show a failed check as an error, keeping the OS name from the last good check."""
+        """Record the latest attempt and retain a separate historical successful result."""
         prev = self.checks.get(target_id)
-        if prev is not None and prev.error == error:
-            return
         self._set_check(
             target_id,
             CheckResult(
                 os=prev.os if prev else None,
                 package_manager=prev.package_manager if prev else None,
+                runs_dashboard=prev.runs_dashboard if prev else False,
+                community_script=prev.community_script if prev else None,
                 checked_at=_now(),
                 error=error,
             ),

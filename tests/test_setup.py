@@ -94,6 +94,25 @@ def test_login_works_after_restart(configured):
     assert client.post("/api/setup/admin", json={"password": PASSWORD}).status_code == 409
 
 
+def test_machines_and_settings_pages_keep_authentication(configured):
+    client, _ = configured
+    anonymous = TestClient(client.app)
+    for path in ("/machines", "/settings"):
+        assert anonymous.get(path).status_code == 401
+        response = client.get(path)
+        assert response.status_code == 200
+        assert 'id="connection-security"' in response.text
+        assert 'id="config-text"' in response.text
+        assert response.headers["X-Frame-Options"] == "DENY"
+
+
+def test_separate_admin_pages_do_not_bypass_first_run(fresh):
+    client, _, _ = fresh
+    for path in ("/machines", "/settings"):
+        assert client.get(path).status_code == 403
+    assert client.get("/setup").status_code == 200
+
+
 def test_script(configured):
     client, _ = configured
     m = {"kind": "host", "name": "pi4", "address": "192.168.1.30", "allow_from": "192.168.1.50, 10.0.0.0/8"}

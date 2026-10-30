@@ -1,14 +1,41 @@
 "use strict";
 
-const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), docker: new Set(), logJob: null, logLines: [], showHidden: false };
+const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), docker: new Set(), logJob: null, logLines: [], showHidden: false, view: "machines", filter: null };
+const mobileDashboard = matchMedia("(max-width: 900px)");
 const $ = (sel) => document.querySelector(sel);
+const renderedHTML = new WeakMap();
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const PLATFORM = { proxmox: "Proxmox", incus: "Incus", ssh: "Standalone", demo: "Demo" };
-const KIND = { host: "host", lxc: "LXC", vm: "VM", container: "container" };
+const KIND = { host: "Host", lxc: "LXC", vm: "VM", container: "Container" };
+const ICON = {
+  monitor: '<rect x="3" y="3" width="18" height="14" rx="2"/><path d="M8 21h8"/><path d="M12 17v4"/>',
+  server: '<rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/>',
+  reboot: '<path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/>',
+  power: '<path d="M12 2v10"/><path d="M18.4 6.6a9 9 0 1 1-12.8 0"/>',
+  refresh: '<path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2M20 20v-5h-5"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3v8Z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
+  package: '<path d="m7.5 4.27 9 5.15"/><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/>',
+  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+  backup: '<path d="M3 6h18"/><path d="M19 6v14H5V6"/><path d="M8 3h8l1 3H7Z"/><path d="M9 11h6"/>',
+  terminal: '<path d="m4 17 6-6-6-6"/><path d="M12 19h8"/>',
+  eye: '<path d="M2.1 12a10.8 10.8 0 0 1 19.8 0 10.8 10.8 0 0 1-19.8 0Z"/><circle cx="12" cy="12" r="3"/>',
+  eyeOff: '<path d="m3 3 18 18"/><path d="M10.6 10.6A2 2 0 0 0 13.4 13.4"/><path d="M9.9 4.2A10.7 10.7 0 0 1 21.9 12a10.5 10.5 0 0 1-2.1 3.1"/><path d="M6.2 6.2A10.8 10.8 0 0 0 2.1 12a10.8 10.8 0 0 0 12 7.8"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>',
+  check: '<circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/>',
+  backupJob: '<path d="M8 2v4"/><path d="M16 2v4"/><path d="M21 11V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/><path d="M3 10h18"/><circle cx="17" cy="17" r="5"/><path d="M17 14v3l2 1"/>',
+  noBackup: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6"/><path d="m15 9-6 6"/>',
+  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><path d="M12 8h.01"/>',
+  help: '<circle cx="12" cy="12" r="9"/><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 2-3 4"/><path d="M12 17h.01"/>',
+  alert: '<path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4"/><path d="M12 17h.01"/>',
+};
+const icon = (name) => `<svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[name]}</svg>`;
+const plural = (count, one, many) => count === 1 ? one : many;
+const kindLabel = (t) => t.kind === "host" && t.platform === "proxmox" ? "Node" : KIND[t.kind] || t.kind;
+const isProxmox = (t) => t.platform === "proxmox";
+const isProxmoxNode = (t) => t.kind === "host" && t.platform === "proxmox";
 // Status dot: Proxmox says online/offline for nodes, running/stopped for guests; anything else is grey.
 const DOT = { running: "on", online: "on", stopped: "off", offline: "off" };
-// Short state words keep the State column on one line; the full word is the tooltip.
-const SHORT = { running: "up", online: "up", stopped: "off", offline: "down" };
 
 // Per-browser conveniences only; the hidden machines themselves are kept on the server.
 const remember = {
@@ -16,6 +43,7 @@ const remember = {
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private window */ } },
 };
 state.showHidden = !!remember.get("showHidden");
+state.view = remember.get("dashboardView") === "containers" ? "containers" : "machines";
 // Hidden machines stay out of the counts, Check all and Update selected, even while shown.
 const active = () => state.targets.filter((v) => !v.hidden);
 
@@ -31,7 +59,8 @@ function ago(iso) {
   if (s < 60) return "just now";
   if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`;
-  return `${Math.round(s / 86400)} d ago`;
+  if (s < 604800) return `${Math.round(s / 86400)} d ago`;
+  return `${Math.round(s / 604800)} w ago`;
 }
 
 function until(iso) {
@@ -50,10 +79,10 @@ function every(seconds) {
 
 function scheduleStat() {
   const sc = state.schedule;
-  if (!sc?.check_every) return `<div class="stat" title="Set schedule.check_every in config.yaml"><b>off</b><span class="muted">auto-check</span></div>`;
+  if (!sc?.check_every) return "Automatic checks off";
   const next = sc.next_run ? until(sc.next_run) : "running now";
   const notify = sc.notify_targets ? `notifies ${sc.notify_targets} target${sc.notify_targets > 1 ? "s" : ""}` : "no notifications set up";
-  return `<div class="stat" title="Every ${every(sc.check_every)}; ${notify}"><b>${next}</b><span class="muted">next auto-check</span></div>`;
+  return `<span class="schedule-next" title="Every ${every(sc.check_every)}; ${notify}">${icon("clock")}Next check ${next}</span>`;
 }
 
 function groupKey(t) {
@@ -68,49 +97,108 @@ function groups() {
     if (!map.has(k)) map.set(k, { key: k, platform: v.target.platform, title: v.target.platform === "ssh" ? "Standalone hosts" : v.target.parent || v.target.name, rows: [] });
     map.get(k).rows.push(v);
   }
-  for (const g of map.values()) g.rows.sort((a, b) => (a.target.kind === "host" ? -1 : b.target.kind === "host" ? 1 : a.target.name.localeCompare(b.target.name)));
-  return [...map.values()].sort((a, b) => a.platform.localeCompare(b.platform) || a.key.localeCompare(b.key) || a.title.localeCompare(b.title));
+  const compare = (a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" });
+  for (const g of map.values()) g.rows.sort((a, b) => Number(b.target.kind === "host") - Number(a.target.kind === "host") || compare(a.target.name, b.target.name) || compare(a.target.id, b.target.id));
+  const order = { proxmox: 0, incus: 1, ssh: 2, demo: 3 };
+  return [...map.values()].sort((a, b) => (order[a.platform] ?? 4) - (order[b.platform] ?? 4) || compare(a.title, b.title) || compare(a.key, b.key));
 }
 
 const canUpgrade = (t) => t.updatable && !t.check_only;
-const selectable = (v) => canUpgrade(v.target) && !v.hidden && !v.blocked && !v.monitor_only;
+const phasedPackages = (check) => check?.packages?.filter((p) => p.phased) || [];
+const actionablePackages = (check) => check?.packages?.filter((p) => !p.phased) || [];
+const securityPackages = (check) => actionablePackages(check).filter((p) => p.security);
+const regularPackages = (check) => actionablePackages(check).filter((p) => !p.security);
+const displayCheck = (v) => v.check?.error ? v.check.last_successful : v.check;
+const staleCheck = (v) => !!displayCheck(v) && (!v.target.updatable || !!v.check?.error);
+const needsRecheck = (v) => !v.target.updatable || !v.check || !!v.check.error;
+function matchesKpi(v, filter) {
+  if (!filter) return true;
+  if (v.hidden) return false;
+  if (filter === "recheck") return needsRecheck(v);
+  if (filter === "updates") return actionablePackages(displayCheck(v)).length > 0;
+  if (filter === "security") return securityPackages(displayCheck(v)).length > 0;
+  if (needsRecheck(v)) return false;
+  if (filter === "reboot") return v.check.reboot_required === true;
+  return true;
+}
+const selectable = (v) => canUpgrade(v.target) && !v.check?.error && actionablePackages(v.check).length > 0 && !v.hidden && !v.blocked && !v.active_job && !v.monitor_only;
 const MONITOR_TIP = "Monitor only: checked and reported, but updates are installed elsewhere, not from here. Reboot, backups and snapshots still work.";
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
 const BUSY = { upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "checking Docker", "stack-update": "updating Docker" };
 
-function updatesCell(v) {
-  const t = v.target;
-  if (v.active_job) return `<span class="spin"></span> ${BUSY[v.active_job.action] || v.active_job.action}…`;
-  if (!t.updatable) return `<span class="muted">${esc(t.note || "unavailable")}</span>`;
-  const c = v.check;
-  if (!c) return `<span class="muted">not checked</span>`;
-  if (c.error) return `<span class="bad" title="${esc(c.error)}">error</span>`;
-  const n = c.packages.length;
-  if (n === 0) return `<span class="ok">up to date</span>`;
-  const open = state.expanded.has(t.id);
-  const sec = c.packages.filter((p) => p.security).length;
-  const secChip = sec ? ` <span class="chip sec" title="From a security repository">${sec} security</span>` : "";
-  return `<button class="small" data-toggle="${esc(t.id)}">${n} update${n > 1 ? "s" : ""} ${open ? "▴" : "▾"}</button>${secChip}`;
+function metricButton(v, kind, count) {
+  if (!displayCheck(v)?.packages?.length) return "";
+  const id = esc(v.target.id), open = state.expanded.has(v.target.id);
+  const label = { security: "security", package: "package", phased: "phased" }[kind];
+  const iconName = { security: "shield", package: "package", phased: "clock" }[kind];
+  const metric = count ? `<span class="update-metric ${kind}${staleCheck(v) ? " stale" : ""}">${icon(iconName)}<span>${count}</span></span>` : "";
+  const caption = count ? `${count} ${label} update${count === 1 ? "" : "s"}${staleCheck(v) ? " from the last successful check" : ""}; ` : "";
+  return `<button class="update-list-hit" data-toggle="${id}" data-focus-key="updates:${id}:${kind}" aria-expanded="${open}" aria-controls="packages-${id}" aria-label="${caption}${open ? "Hide" : "Show"} package list for ${esc(v.target.name)}">${metric}</button>`;
+}
+
+function updateColumns(v) {
+  const c = displayCheck(v);
+  const security = securityPackages(c).length;
+  const regular = regularPackages(c).length;
+  const phased = phasedPackages(c).length;
+  return `<td class="update-metric-cell" data-label="Security">${metricButton(v, "security", security)}</td><td class="update-metric-cell" data-label="Package">${metricButton(v, "package", regular)}</td><td class="update-metric-cell" data-label="Phased">${metricButton(v, "phased", phased)}</td>`;
+}
+
+function updateState(v) {
+  const t = v.target, c = v.check;
+  const busy = !!v.active_job;
+  if (busy) {
+    return `<span class="status-inline muted"><span class="spin"></span>${esc(BUSY[v.active_job.action] || v.active_job.action)}…</span>`;
+  }
+  if (!t.updatable) {
+    const stopped = t.status === "stopped" || t.note?.toLowerCase() === "not running";
+    const offline = t.status === "offline";
+    const label = stopped ? "Not running" : offline ? "Offline" : t.note || "Unavailable";
+    return `<span class="status-inline unavailable" title="${esc(t.note || label)}">${icon(stopped || offline ? "power" : "alert")}${esc(label)}</span>`;
+  }
+  if (!c) return `<span class="status-inline muted">${icon("help")}Not checked</span>`;
+  if (c.error) return `<span class="status-inline bad" title="${esc(c.error)}">${icon("alert")}Check failed</span>`;
+  const pending = actionablePackages(c).length > 0;
+  if (pending) return `<span class="status-inline updates-available">${icon("package")}Updates available</span>`;
+  if (!pending) return `<span class="status-inline ok">${icon("check")}Up to date</span>`;
+  return "";
+}
+
+function nextAction(v) {
+  const t = v.target, c = v.check, id = esc(t.id);
+  if (!t.updatable || v.active_job) return "";
+  if (!c || c.error) return `<button class="small" data-act="check" data-id="${id}" data-focus-key="check:${id}">${icon("refresh")}<span>${c?.error ? "Retry" : "Check"}</span></button>`;
+  if (actionablePackages(c).length && canUpgrade(t) && !v.monitor_only) return `<button class="small primary" data-act="upgrade" data-id="${id}" data-focus-key="upgrade:${id}" ${v.blocked ? "disabled" : ""} title="${esc(v.blocked || "Install available OS packages")}">${icon("download")}<span>Update</span></button>`;
+  if (c.reboot_required && canReboot(t)) return `<button class="small reboot-action" data-act="reboot" data-id="${id}" data-focus-key="reboot:${id}" ${v.blocked ? "disabled" : ""} title="${esc(v.blocked || "Reboot required — reboot this machine")}">${icon("reboot")}<span>Reboot</span></button>`;
+  return "";
+}
+
+function compactOS(os) {
+  return String(os || "").replace(/^Debian GNU\/Linux /, "Debian ").replace(/^Proxmox VE /, "PVE ").replace(/\s*\([^)]*\)/g, "").replace(/ LTS$/, "");
 }
 
 function backupCell(t) {
   const b = t.backup;
-  if (!b) return "";
-  let html;
+  if (!b) return isProxmoxNode(t) ? "" : `<span class="backup-missing muted" aria-label="Backup information unavailable">—</span>`;
   if (b.last) {
-    const tip = `${new Date(b.last).toLocaleString()} on ${b.storage} · ${b.count} backup${b.count > 1 ? "s" : ""}`;
-    html = `<span class="${b.stale ? "warn" : ""}" title="${esc(tip)}">${ago(b.last)}</span>`;
-  } else if (b.not_set_up) {
-    html = `<span class="muted" title="${esc(b.note)}">not set up ⓘ</span>`;
-  } else if (b.note) {
-    html = `<span class="muted" title="${esc(b.note)}">?</span>`;
-  } else {
-    html = `<span class="bad">none</span>`;
+    return `<span class="${b.stale ? "warn" : ""}">${ago(b.last)}</span>`;
   }
-  if (b.verified === false) html += ` <span class="chip bad" title="The newest backup failed verification">verify failed</span>`;
-  if (b.in_job === false) html += ` <span class="chip warn" title="Not in any scheduled backup job">no job</span>`;
-  if (b.last && b.note) html += ` <span class="muted" title="${esc(b.note)}">ⓘ</span>`;
-  return html;
+  if (isProxmoxNode(t)) {
+    // Proxmox node configuration-backup context is available from the neutral information popover.
+    return "";
+  }
+  const label = b.note && !b.stale && !b.not_set_up ? "Backup information unavailable" : "No backup found";
+  return `<span class="backup-missing muted" aria-label="${label}">—</span>`;
+}
+
+function backupJobCell(t) {
+  if (!t.backup || isProxmoxNode(t) || t.backup.in_job !== true) return "";
+  return `<span class="backup-job muted" role="img" aria-label="Covered by a backup job">${icon("backupJob")}</span>`;
+}
+
+function machineInfoButton(t, c) {
+  const id = esc(t.id);
+  return `<button class="small ghost machine-info-trigger" data-machine-info="${id}" data-focus-key="machine-info:${id}" aria-label="Information for ${esc(t.name)}" aria-controls="machine-information" aria-expanded="false">${icon("info")}</button>`;
 }
 
 function csTip(app) {
@@ -120,8 +208,21 @@ function csTip(app) {
 }
 
 const dockerBehind = (v) => (v.stacks?.stacks || []).filter((s) => s.update_available && s.state !== "stopped" && !s.is_dashboard).length;
+const hasDockerButton = (v) => canUpgrade(v.target) && v.stacks?.docker !== "none";
+// Machines where the last Docker check found Docker; the Containers tab lists them.
+const dockerHosts = () => active().filter((v) => canUpgrade(v.target) && v.stacks && v.stacks.docker !== "none");
+const checkAllDocker = () => {
+  const ids = active().filter((v) => canUpgrade(v.target) && v.stacks?.docker !== "none").map((v) => v.target.id);
+  if (ids.length) confirmAction("stacks", ids);
+};
 
-function stackPanel(v) {
+function dockerButton(v) {
+  if (!hasDockerButton(v)) return "";
+  const id = esc(v.target.id), n = dockerBehind(v), open = state.docker.has(v.target.id);
+  return `<button class="small${n ? " primary" : ""}" data-act="docker" data-id="${id}" data-focus-key="docker:${id}" aria-expanded="${open}" aria-controls="docker-${id}" title="Docker Compose stacks on this machine">Docker${n ? ` (${n} ↑)` : ""}</button>`;
+}
+
+function stackPanel(v, inTab = false) {
   const id = esc(v.target.id), r = v.stacks, busy = !!v.active_job;
   const prune = !!remember.get("pruneImages");
   let body;
@@ -138,106 +239,179 @@ function stackPanel(v) {
       else status = `<span class="ok">up to date</span>`;
       const up = s.state === "partial" ? ` <span class="chip warn" title="Services that are stopped stay stopped">partly running</span>` : "";
       const self = s.is_dashboard ? ` <span class="chip" title="This dashboard runs in this stack. Updating it would stop the update itself: run docker compose pull && docker compose up -d in a terminal.">dashboard</span>` : "";
-      const can = !busy && s.state !== "stopped" && !s.is_dashboard && r.compose !== "none" && !v.monitor_only;
-      const btn = `<button class="small ${behind.length && can ? "primary" : ""}" data-stack="${esc(s.name)}" data-id="${id}" ${can ? "" : "disabled"} title="${v.monitor_only ? MONITOR_TIP : ""}">Update</button>`;
-      return `<tr><td>${esc(s.name)}${self}${up}</td><td class="muted">${s.services.map((x) => esc(x.name)).join(", ")}</td><td>${status}</td><td>${btn}</td></tr>`;
+      const can = !busy && !v.blocked && s.state !== "stopped" && !s.is_dashboard && r.compose !== "none" && !v.monitor_only;
+      const btn = `<button class="small ${behind.length && can ? "primary" : ""}" data-stack="${esc(s.name)}" data-id="${id}" ${can ? "" : "disabled"} title="${esc(v.monitor_only ? MONITOR_TIP : v.blocked || "")}">Update</button>`;
+      return `<tr><td class="name">${esc(s.name)}${self}${up}</td><td class="muted" data-label="Services">${s.services.map((x) => esc(x.name)).join(", ")}</td><td data-label="Image status">${status}</td><td class="actions">${btn}</td></tr>`;
     }).join("");
-    body = `<table>${rows}</table>`;
+    body = `<div class="group-scroll"><table><thead><tr><th>Stack</th><th>Services</th><th>Image status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
-  return `<tr class="pkgs"><td></td><td colspan="8">
-    <div class="docker-head"><b>Docker Compose stacks</b>
+  return `<div class="docker-panel" id="docker-${inTab ? "tab-" : ""}${id}"><div class="docker-head"><b>Docker Compose stacks</b>
       <span class="muted">${r ? `checked ${ago(r.checked_at)}` : ""}</span>
       <button class="small" data-act="stacks" data-id="${id}" ${busy ? "disabled" : ""} title="Downloads newer images for every running stack. Nothing is restarted, but a later docker compose up on this machine will use them.">Check for new images</button>
       <label class="muted" title="Runs docker image prune: removes all unused, untagged images on this machine, not only this stack's"><input type="checkbox" data-prune ${prune ? "checked" : ""}> remove old images after an update (all unused ones on this machine)</label></div>
-    ${body}</td></tr>`;
+    ${body}</div>`;
 }
 
-function rowHtml(v, withBackup) {
+function rowHtml(v, withBackup, relation = {}, mobile = false) {
   const t = v.target, c = v.check;
-  const busy = !!v.active_job;
-  const reboot = c?.reboot_required ? `<span class="chip warn" title="Reboot needed">reboot</span>` : "";
-  const notes = c?.notes?.length
-    ? ` <span class="chip ${c.notes.length > 1 ? "warn" : ""}" title="${esc(c.notes.join("\n"))}">${c.notes.length > 1 ? "repo warning" : "repos"}</span>`
-    : "";
-  const pending = c && !c.error && c.packages.length > 0;
+  const shown = displayCheck(v);
   const self = v.runs_dashboard ? ` <span class="chip" title="This dashboard runs here">dashboard</span>` : "";
-  const monitor = v.monitor_only ? ` <span class="chip" title="${MONITOR_TIP}">monitor only</span>` : "";
+  const monitor = v.monitor_only ? ` <span class="chip monitor-policy" role="img" aria-label="Monitor only" title="${MONITOR_TIP}">${icon("eye")}</span>` : "";
   const cs = v.update_command
     ? ` <span class="chip" title="${esc(`Update runs: ${v.update_command}`)}">own updater</span>`
     : c?.community_script
     ? ` <span class="chip" title="${esc(csTip(c.community_script))}">helper script</span>` : "";
-  let html = `<tr class="${t.kind === "host" ? "host" : "guest"}${v.hidden ? " is-hidden" : ""}">
-    <td><input type="checkbox" data-select="${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) ? "" : "disabled"}></td>
-    <td class="name">${esc(t.name)} <span class="chip">${KIND[t.kind] || t.kind}</span>${self}${monitor}${cs}${t.updatable && t.note ? ` <span class="muted" title="${esc(t.note)}">ⓘ</span>` : ""}</td>
-    <td class="muted os" data-label="OS">${esc(c?.os || "")}</td>
-    <td data-label="State"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span>${esc(SHORT[t.status] || t.status)}</span></td>
-    ${withBackup ? `<td data-label="Last backup">${backupCell(t)}</td>` : ""}
-    <td data-label="Updates">${updatesCell(v)} ${reboot}${notes}</td>
-    <td class="muted" data-label="Checked">${c ? ago(c.checked_at) : ""}</td>
-    <td class="actions">
-      <button class="small" data-act="check" data-id="${esc(t.id)}" ${t.updatable && !busy ? "" : "disabled"}>Check</button>
-      <button class="small ${pending && !t.check_only && !v.monitor_only ? "primary" : ""}" data-act="upgrade" data-id="${esc(t.id)}" ${t.updatable && !t.check_only && !busy && !v.blocked && !v.monitor_only ? "" : "disabled"} title="${t.check_only ? esc(t.note) : v.monitor_only ? MONITOR_TIP : esc(v.blocked || "")}">Update</button>
-      <button class="small" data-act="reboot" data-id="${esc(t.id)}" ${canReboot(t) && !busy && !v.blocked ? "" : "disabled"} title="${esc(t.no_reboot || (t.check_only ? t.note : "") || v.blocked || "")}">Reboot</button>
-      ${canUpgrade(t) ? `<button class="small ${dockerBehind(v) ? "primary" : ""}" data-act="docker" data-id="${esc(t.id)}" title="Docker Compose stacks on this machine">Docker${dockerBehind(v) ? ` (${dockerBehind(v)} ↑)` : ""}</button>` : ""}
-      ${canUpgrade(t) ? `<button class="small ghost" data-cmd="${esc(t.id)}" title="${esc(v.update_command ? `Update runs: ${v.update_command}` : "Use the machine's own update command instead of the built-in OS upgrade")}">Update command…</button>` : ""}
-      ${t.can_backup ? `<button class="small" data-act="backup" data-id="${esc(t.id)}" ${busy ? "disabled" : ""} title="Back up this machine">Back up</button>` : ""}
-      ${state.console?.enabled && t.status !== "stopped" && t.status !== "offline" ? `<button class="small" data-run="${esc(t.id)}" title="Run a command on this machine">Run command…</button>` : ""}
-      <button class="small ghost" data-monitor="${v.monitor_only ? "0" : "1"}" data-id="${esc(t.id)}" ${t.monitor_only ? "disabled" : ""} title="${t.monitor_only ? "Set to monitor only in the config file" : v.monitor_only ? "Allow updates from the dashboard again" : "Keep checking this machine, but never install updates on it from here"}">${v.monitor_only ? "Allow updates" : "Monitor only"}</button>
-      <button class="small ghost" data-hide="${v.hidden ? "0" : "1"}" data-id="${esc(t.id)}" title="${v.hidden ? "Show this machine on the dashboard again" : "Hide from the dashboard, Check all and scheduled checks"}">${v.hidden ? "Unhide" : "Hide"}</button>
-    </td></tr>`;
-  if (pending && state.expanded.has(t.id)) {
-    // Security updates first, so they stand out in a long list.
-    const pkgs = [...c.packages].sort((a, b) => b.security - a.security);
-    const rows = pkgs.map((p) => `<tr><td>${esc(p.name)}${p.security ? ` <span class="chip sec">security</span>` : ""}</td><td>${esc(p.current || "")}</td><td>→ ${esc(p.available)}</td></tr>`).join("");
-    html += `<tr class="pkgs"><td></td><td colspan="${withBackup ? 7 : 6}"><table>${rows}</table></td></tr>`;
+  const note = t.updatable && t.note
+    ? ` <span class="machine-note warn" title="${esc(t.note)}" aria-label="${esc(t.note)}">${icon("alert")}</span>` : "";
+  const repoNote = !isProxmox(t) && c?.notes?.length
+    ? `<span class="repo-note ${c.notes.length > 1 ? "warn" : "muted"}" title="${esc(c.notes.join("\n"))}" aria-label="Repository information">${icon("alert")}</span>` : "";
+  const machineInfo = machineInfoButton(t, c);
+  const information = `${machineInfo}${repoNote}`;
+  const rebootTitle = t.no_reboot || v.blocked || "Reboot needed";
+  const reboot = !needsRecheck(v) && c?.reboot_required === true
+    ? `<span class="reboot-status required" role="img" aria-label="Reboot required" title="${esc(rebootTitle)}">${icon("reboot")}</span>` : "";
+  const rowClasses = [t.kind === "host" ? "host" : "guest", "machine-row"];
+  if (relation.hasGuests) rowClasses.push("has-guests");
+  if (relation.firstGuest) rowClasses.push("first-guest");
+  if (relation.lastGuest) rowClasses.push("last-guest");
+  if (v.hidden) rowClasses.push("is-hidden");
+  if (relation.context) rowClasses.push("is-context");
+  if (state.selected.has(t.id)) rowClasses.push("is-selected");
+  let html = `<tr class="${rowClasses.join(" ")}" data-machine-row="${esc(t.id)}">
+    <td class="selection-cell"><label class="machine-select"><input type="checkbox" aria-label="Select ${esc(t.name)}" data-select="${esc(t.id)}" data-focus-key="select:${esc(t.id)}" ${state.selected.has(t.id) ? "checked" : ""} ${selectable(v) && !relation.context ? "" : "disabled"}><span class="mobile-select-label">Select</span></label></td>
+    <td class="name machine-cell" data-label="Machine"><span class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name" title="${esc(t.name)}">${esc(t.name)}</span>${monitor}<span class="machine-meta"><span class="chip type-chip">${esc(kindLabel(t))}</span>${c?.os ? `<span class="machine-os" title="${esc(c.os)}">${esc(compactOS(c.os))}</span>` : ""}${self}${cs}${note}</span></span></td>
+    ${withBackup ? `<td class="backup-cell" data-label="Last backup">${backupCell(t)}</td><td class="backup-job-cell" data-label="Job">${backupJobCell(t)}</td>` : ""}
+    ${updateColumns(v)}
+    <td class="reboot-cell" data-label="Reboot">${reboot}</td>
+    <td class="update-status-cell" data-label="Status">${updateState(v)}</td>
+    <td class="update-action-cell" data-label="Actions">${relation.context ? "" : `<span class="row-actions">${nextAction(v)}${dockerButton(v)}</span>`}</td>
+    <td class="last-check" data-label="Checked">${c ? ago(c.checked_at) : "Never"}</td>
+    <td class="info-cell" data-label="Info">${information ? `<span class="info-cell-content">${information}</span>` : ""}</td>
+    <td class="more-cell"><button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="More actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button></td>
+  </tr>`;
+  if (mobile) {
+    const backup = withBackup ? backupCell(t) : "";
+    const os = shown?.os || c?.os;
+    const action = relation.context ? "" : `${nextAction(v)}${dockerButton(v)}`;
+    const more = `<button class="small ghost more-actions" data-machine-menu="${esc(t.id)}" data-focus-key="menu:${esc(t.id)}" aria-label="More actions for ${esc(t.name)}" aria-controls="machine-actions" aria-expanded="false">⋯</button>`;
+    const metrics = [["security", securityPackages(shown).length], ["package", regularPackages(shown).length], ["phased", phasedPackages(shown).length]]
+      .filter(([, count]) => count > 0).map(([kind, count]) => metricButton(v, kind, count)).join("");
+    html = `<article class="mc-card${relation.context ? " is-context" : ""}${v.hidden ? " is-hidden" : ""}" data-machine-row="${esc(t.id)}">
+      <div class="mc-header"><div class="machine-main"><span class="state" title="${esc(t.status)}"><span class="dot ${DOT[t.status] || ""}"></span></span><span class="machine-name">${esc(t.name)}</span>${monitor}</div>
+        <div class="mc-status-group">${updateState(v)}<div class="mc-check-line"><span class="mc-check-time">Checked ${c ? ago(c.checked_at) : "Never"}</span>${information}</div></div></div>
+      <div class="mc-meta-row"><div class="machine-meta"><span class="chip type-chip">${esc(kindLabel(t))}</span>${os ? `<span class="machine-os" title="${esc(os)}">${esc(compactOS(os))}</span>` : ""}${self}${cs}${note}</div></div>
+      ${metrics || reboot ? `<div class="mc-counts">${metrics}${reboot ? `<span class="mc-reboot">${reboot}</span>` : ""}</div>` : ""}
+      ${backup ? `<div class="mc-details"><div class="mc-detail-line"><span>Backup</span><div class="mc-backup-value">${backup}${backupJobCell(t)}</div>${!action ? more : ""}</div></div>` : ""}
+      ${!action && !backup ? `<div class="mc-utility-row">${more}</div>` : ""}
+      ${action ? `<div class="mc-footer"><div class="mc-action">${action}</div>${more}</div>` : ""}
+    </article>`;
   }
-  if (state.docker.has(t.id) && canUpgrade(t)) html += stackPanel(v);
+  if (shown?.packages?.length && state.expanded.has(t.id)) {
+    // Security updates first, so they stand out in a long list.
+    const rank = (p) => p.phased_dependency ? 3 : p.phased ? 2 : p.security ? 0 : 1;
+    const pkgs = [...shown.packages].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+    const rows = pkgs.map((p) => {
+      const kind = p.phased ? "phased" : p.security ? "security" : "package";
+      const label = p.phased_dependency ? "Waiting" : p.phased ? "Phased" : p.security ? "Security" : "Package";
+      const iconName = p.phased ? "clock" : p.security ? "shield" : "package";
+      const reason = p.phased_dependency ? ` title="Waiting on related phased packages"` : "";
+      return `<tr><td><span class="package-type ${kind}"${reason}>${icon(iconName)}${label}</span></td><td class="package-name">${esc(p.name)}</td><td class="package-version">${esc(p.current || "—")}</td><td class="package-version">${esc(p.available)}</td></tr>`;
+    }).join("");
+    const detailClasses = ["pkgs"];
+    if (state.selected.has(t.id)) detailClasses.push("is-selected");
+    if (relation.hasGuests || (t.kind !== "host" && !relation.lastGuest)) detailClasses.push("tree-continues");
+    const history = staleCheck(v) ? `<p class="last-known-note">Last known · ${esc(ago(shown.checked_at))}. Check again before installation.</p>` : "";
+    const panel = `<div class="packages-panel">${history}<table class="packages-table"><thead><tr><th>Type</th><th>Package</th><th>Installed</th><th>Available</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    html += mobile ? `<div class="mc-package-panel" id="packages-${esc(t.id)}">${panel}</div>` : `<tr class="${detailClasses.join(" ")}" id="packages-${esc(t.id)}"><td></td><td colspan="${10 + (2 * Number(!!withBackup))}">${panel}</td></tr>`;
+  }
+  if (state.docker.has(t.id) && canUpgrade(t) && !relation.context) {
+    html += mobile ? `<div class="mc-package-panel">${stackPanel(v)}</div>` : `<tr class="pkgs"><td></td><td colspan="${10 + (2 * Number(!!withBackup))}">${stackPanel(v)}</td></tr>`;
+  }
   return html;
 }
 
 function render() {
+  const mobile = mobileDashboard.matches;
+  if (mobile) state.selected.clear();
+  $("#groups").classList.toggle("mobile-layout", mobile);
+  const focused = document.activeElement?.dataset?.focusKey;
+  // Avoid replacing live controls on every poll when their rendered data did not change.
+  const html = (selector, content) => {
+    const el = $(selector);
+    // Compare our templates, not serialized DOM (browsers normalize boolean attributes, etc.).
+    if (renderedHTML.get(el) !== content) { el.innerHTML = content; renderedHTML.set(el, content); }
+  };
   $("#errors").innerHTML = Object.entries(state.errors)
     .map(([p, e]) => `<div class="error-banner"><b>${esc(p)}</b>: ${esc(e)}</div>`).join("");
 
   const updatable = active().filter((v) => v.target.updatable);
-  const pending = updatable.filter((v) => v.check && !v.check.error && v.check.packages.length);
-  const pkgCount = pending.reduce((n, v) => n + v.check.packages.length, 0);
-  const secMachines = pending.filter((v) => v.check.packages.some((p) => p.security)).length;
-  const reboot = updatable.filter((v) => v.check?.reboot_required).length;
-  const unchecked = updatable.filter((v) => !v.check).length;
-  // Leave out guests whose backups couldn't be read (a note but no date): unknown isn't "fine".
-  const withBackups = active().filter((v) => v.target.backup && (v.target.backup.last || !v.target.backup.note));
-  const staleBackups = withBackups.filter((v) => v.target.backup.stale || v.target.backup.verified === false).length;
-  $("#summary").innerHTML = `
-    <div class="stat"><b>${updatable.length}</b><span class="muted">machines</span></div>
-    <div class="stat"><b class="${pending.length ? "warn" : "ok"}">${pending.length}</b><span class="muted">need updates (${pkgCount} packages)</span></div>
-    <div class="stat"><b class="${secMachines ? "bad" : ""}">${secMachines}</b><span class="muted">have security updates</span></div>
-    <div class="stat"><b class="${reboot ? "warn" : ""}">${reboot}</b><span class="muted">need a reboot</span></div>
-    <div class="stat"><b>${unchecked}</b><span class="muted">not checked yet</span></div>
-    ${withBackups.length ? `<div class="stat"><b class="${staleBackups ? "warn" : "ok"}">${staleBackups}</b><span class="muted">machines with old or no backups</span></div>` : ""}
-    ${scheduleStat()}`;
+  const pending = active().filter((v) => actionablePackages(displayCheck(v)).length);
+  const secMachines = pending.filter((v) => securityPackages(displayCheck(v)).length).length;
+  const reboot = updatable.filter((v) => !v.check?.error && v.check?.reboot_required).length;
+  const recheck = active().filter(needsRecheck).length;
+  const kpi = (key, count, tone, label) => `<button type="button" class="stat" data-kpi="${key}" data-focus-key="kpi:${key}" aria-pressed="${state.filter === key}"><b class="${count ? tone : "ok"}">${count}</b><span>${label}</span></button>`;
+  html("#summary", `
+    ${kpi("updates", pending.length, "warn", plural(pending.length, "Machine needing updates", "Machines needing updates"))}
+    ${kpi("security", secMachines, "bad", plural(secMachines, "Machine with security updates", "Machines with security updates"))}
+    ${kpi("reboot", reboot, "reboot", plural(reboot, "Machine requiring reboot", "Machines requiring reboot"))}
+    ${kpi("recheck", recheck, "muted", plural(recheck, "Machine needing recheck", "Machines needing recheck"))}`);
+  $("#overview-count").textContent = `${active().length} ${plural(active().length, "machine", "machines")}`;
+  $("#schedule-status").innerHTML = scheduleStat();
   $("#test-notify").hidden = !state.schedule?.notify_targets;
 
   const hiddenCount = state.targets.length - active().length;
   const toggle = $("#show-hidden");
   toggle.hidden = hiddenCount === 0;
-  toggle.textContent = `Show hidden (${hiddenCount})`;
+  $("#hidden-count").textContent = hiddenCount;
   toggle.setAttribute("aria-pressed", String(state.showHidden));
-  $("#groups").innerHTML = groups().map((g) => {
-    const withBackup = g.rows.some((v) => v.target.backup);
+  const allGroups = groups();
+  const withBackup = allGroups.some((g) => g.rows.some((v) => v.target.backup));
+  const filteredGroups = allGroups.map((g) => {
+    const matches = g.rows.filter((v) => matchesKpi(v, state.filter));
+    return { ...g, rows: !state.filter ? g.rows : matches.length ? g.rows.filter((v) => matches.includes(v) || (v.target.kind === "host" && g.rows.some((guest) => guest.target.kind !== "host"))) : [] };
+  }).filter((g) => g.rows.length);
+  const matchingCount = active().filter((v) => matchesKpi(v, state.filter)).length;
+  if (state.filter) $("#overview-count").textContent = `${matchingCount} of ${active().length} machines`;
+  $("#filter-status").hidden = !state.filter;
+  $("#filter-status").textContent = state.filter ? `${matchingCount} matching ${plural(matchingCount, "machine", "machines")} · parent nodes kept for context · click the selected KPI to clear` : "";
+  html("#groups", filteredGroups.map((g) => {
+    const guestIndexes = g.rows.map((v, index) => v.target.kind === "host" ? -1 : index).filter((index) => index >= 0);
+    const firstGuest = guestIndexes[0], lastGuest = guestIndexes.at(-1);
+    const rows = g.rows.map((v, index) => rowHtml(v, withBackup, {
+      hasGuests: v.target.kind === "host" && guestIndexes.length > 0,
+      firstGuest: index === firstGuest,
+      lastGuest: index === lastGuest,
+      context: !!state.filter && !matchesKpi(v, state.filter),
+    }, mobile)).join("");
+    if (mobile) return `<section class="group"><div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div><div class="mc-stack">${rows}</div></section>`;
     return `
     <div class="group">
       <div class="group-head"><span class="chip">${PLATFORM[g.platform] || g.platform}</span> ${esc(g.title)}</div>
-      <div class="group-scroll"><table>
-        <thead><tr><th></th><th>Name</th><th>OS</th><th>State</th>${withBackup ? "<th>Last backup</th>" : ""}<th>Updates</th><th>Checked</th><th></th></tr></thead>
-        <tbody>${g.rows.map((v) => rowHtml(v, withBackup)).join("")}</tbody>
+      <div class="group-scroll"><table class="machine-table${withBackup ? " has-backup" : ""}" aria-label="${esc(g.title)} machines">
+        <colgroup><col class="col-select"><col class="col-machine">${withBackup ? '<col class="col-backup"><col class="col-backup-job">' : ""}<col class="col-metric"><col class="col-metric"><col class="col-metric"><col class="col-reboot"><col class="col-status"><col class="col-update"><col class="col-checked"><col class="col-info"><col class="col-more"></colgroup>
+        <thead><tr class="column-headings"><th></th><th>Machine</th>${withBackup ? '<th>Last backup</th><th class="backup-job-heading">Job</th>' : ""}<th class="update-heading">Security</th><th class="update-heading">Package</th><th class="update-heading">Phased</th><th class="reboot-heading">Reboot</th><th>Status</th><th>Actions</th><th>Checked</th><th class="info-heading">Info</th><th class="more-heading">More</th></tr></thead>
+        <tbody>${rows}</tbody>
       </table></div>
     </div>`;
-  }).join("") || `<div class="empty"><h3>No machines yet</h3><p class="muted">Add a Proxmox node, an Incus server or any Linux host, and it shows up here with its updates, backups and state.</p><a class="button primary" href="/setup">Add machines</a></div>`;
-
+  }).join("") || (state.filter ? `<div class="empty"><h3>No matching machines</h3><p class="muted">Click the selected KPI again to show all machines.</p></div>` : `<div class="empty"><h3>No machines yet</h3><p class="muted">Add a Proxmox node, an Incus server or any Linux host, and it shows up here with its updates, backups and state.</p><a class="button primary" href="/setup">Add machines</a></div>`));
+  const hosts = dockerHosts();
+  const unchecked = active().filter((v) => canUpgrade(v.target) && !v.stacks).length;
+  const behind = hosts.reduce((n, v) => n + dockerBehind(v), 0);
+  html("#containers", `<div class="containers-toolbar"><span class="muted">Docker Compose stacks on each machine. OS packages are updated separately on the Machines tab.</span><button class="small" data-check-docker title="Look for newer Docker images on every machine with Docker. This downloads them.">Check all Docker</button></div>` +
+    (hosts.map((v) => `<div class="group docker-host"><div class="group-head"><span class="chip">${PLATFORM[v.target.platform] || v.target.platform}</span> ${esc(v.target.name)}${v.monitor_only ? ` <span class="chip" title="${MONITOR_TIP}">monitor only</span>` : ""}</div>${stackPanel(v, true)}</div>`).join("") ||
+      `<div class="empty"><h3>No Docker found yet</h3><p class="muted">Check all Docker to look for Docker Compose stacks on your machines. It downloads newer images but restarts nothing.</p></div>`) +
+    (unchecked ? `<p class="muted discovery-note">${unchecked} ${plural(unchecked, "machine has", "machines have")} not been checked for Docker yet.</p>` : ""));
+  $("#docker-host-count").textContent = behind ? `${hosts.length} · ${behind} ↑` : hosts.length;
+  $("#groups").hidden = state.view !== "machines";
+  $("#containers").hidden = state.view !== "containers";
+  document.querySelectorAll("[data-view]").forEach((el) => el.setAttribute("aria-pressed", String(el.dataset.view === state.view)));
   const btn = $("#update-selected");
   btn.disabled = state.selected.size === 0;
-  btn.textContent = state.selected.size ? `Update selected (${state.selected.size})` : "Update selected";
+  btn.textContent = `Update selected (${state.selected.size})`;
+  $("#bulk-toolbar").hidden = state.selected.size === 0 || state.view !== "machines";
+  $("#selection-count").textContent = `${state.selected.size} ${plural(state.selected.size, "machine", "machines")} selected`;
+  document.querySelectorAll("[data-machine-menu]").forEach((el) => el.setAttribute("aria-expanded", String(el.dataset.machineMenu === machineMenuId)));
+  document.querySelectorAll("[data-machine-info]").forEach((el) => el.setAttribute("aria-expanded", String(el.dataset.machineInfo === machineInfoId)));
 
   $("#jobs").innerHTML = state.jobs.map((j) => {
     const cls = j.status === "failed" ? "bad" : j.status === "succeeded" ? "ok" : "";
@@ -245,6 +419,121 @@ function render() {
     return `<li data-job="${j.id}" class="${state.logJob === j.id ? "sel" : ""}">
       <span>${icon} ${esc(j.target_name)} · ${j.action}</span><span class="${cls}">${j.status}</span></li>`;
   }).join("") || `<li class="muted">No jobs yet. Checks, updates, reboots and backups you start show up here.</li>`;
+  if (focused && document.activeElement === document.body) {
+    [...document.querySelectorAll("[data-focus-key]")].find((el) => el.dataset.focusKey === focused)?.focus({ preventScroll: true });
+  }
+}
+
+let machineMenuId = null;
+function closeMachineMenu(restoreFocus = false) {
+  $("#machine-actions").hidden = true;
+  if (machineMenuId) {
+    const trigger = [...document.querySelectorAll("[data-machine-menu]")].find((el) => el.dataset.machineMenu === machineMenuId);
+    trigger?.setAttribute("aria-expanded", "false");
+    if (restoreFocus) trigger?.focus();
+  }
+  machineMenuId = null;
+}
+
+function openMachineMenu(id, trigger) {
+  const open = machineMenuId === id;
+  closeMachineMenu();
+  closeMachineInformation();
+  if (open) return;
+  const v = state.targets.find((item) => item.target.id === id);
+  if (!v) return;
+  const t = v.target, busy = !!v.active_job;
+  const action = (kind, label, iconName, enabled, reason = "") => `<button data-act="${kind}" data-id="${esc(id)}" ${enabled ? "" : "disabled"} title="${esc(reason)}">${icon(iconName)}${label}</button>`;
+  const menu = $("#machine-actions");
+  menu.innerHTML = `<div class="muted menu-caption">${esc(t.name)}</div>` +
+    action("check", "Check updates", "refresh", t.updatable && !busy) +
+    (nextAction(v).includes('data-act="reboot"') ? "" : action("reboot", "Reboot", "reboot", canReboot(t) && !busy && !v.blocked, t.no_reboot || v.blocked || t.note)) +
+    (t.can_backup ? action("backup", "Back up configuration", "backup", !busy) : "") +
+    (state.console?.enabled && !["stopped", "offline"].includes(t.status) ? `<button data-run="${esc(id)}">${icon("terminal")}Run command</button>` : "") +
+    (canUpgrade(t) ? `<button data-cmd="${esc(id)}" title="${esc(v.update_command ? `Update runs: ${v.update_command}` : "Use the machine's own update command instead of the built-in OS upgrade")}">${icon("settings")}Update command…</button>` : "") +
+    `<button data-monitor="${v.monitor_only ? "0" : "1"}" data-id="${esc(id)}" ${t.monitor_only ? "disabled" : ""} title="${t.monitor_only ? "Set to monitor only in the config file" : v.monitor_only ? "Allow updates from the dashboard again" : "Keep checking this machine, but never install updates on it from here"}">${icon(v.monitor_only ? "download" : "eye")}${v.monitor_only ? "Allow updates" : "Monitor only"}</button>` +
+    `<button data-hide="${v.hidden ? "0" : "1"}" data-id="${esc(id)}">${icon(v.hidden ? "eye" : "eyeOff")}${v.hidden ? "Unhide machine" : "Hide machine"}</button>`;
+  machineMenuId = id;
+  trigger.setAttribute("aria-expanded", "true");
+  menu.hidden = false;
+  const rect = trigger.getBoundingClientRect();
+  menu.style.left = `${Math.max(8, Math.min(rect.right - menu.offsetWidth, innerWidth - menu.offsetWidth - 8))}px`;
+  menu.style.top = `${Math.max(8, rect.bottom + menu.offsetHeight < innerHeight ? rect.bottom + 6 : rect.top - menu.offsetHeight - 6)}px`;
+  menu.querySelector("button:not(:disabled)")?.focus();
+}
+
+let machineInfoId = null;
+function closeMachineInformation(restoreFocus = false) {
+  const panel = $("#machine-information");
+  panel.hidden = true;
+  if (machineInfoId) {
+    const trigger = [...document.querySelectorAll("[data-machine-info]")].find((el) => el.dataset.machineInfo === machineInfoId);
+    trigger?.setAttribute("aria-expanded", "false");
+    if (restoreFocus) trigger?.focus();
+  }
+  machineInfoId = null;
+}
+
+function machineInfoSection(title, lines) {
+  if (!lines.length) return "";
+  return `<section class="machine-info-section"><h3>${esc(title)}</h3>${lines.map((line) => `<p>${esc(line)}</p>`).join("")}</section>`;
+}
+
+function backupInformation(t) {
+  const b = t.backup;
+  if (!b) return isProxmoxNode(t) ? [] : ["Backup information is not available for this machine."];
+  const lines = [];
+  if (b.last) {
+    const count = `${b.count} backup${b.count === 1 ? "" : "s"} found`;
+    lines.push(`Last backup ${window.FleetdeckDates.dateTime(b.last)}${b.storage ? ` on ${b.storage}` : ""}; ${count}.`);
+    if (b.note) lines.push(b.note);
+  } else if (b.note) {
+    lines.push(b.note);
+  } else if (b.not_set_up) {
+    lines.push("Fleetdeck backup is not configured for this machine.");
+  } else {
+    lines.push("No backup was found for this machine.");
+  }
+  if (b.verified === false) lines.push("The newest backup failed verification.");
+  if (b.in_job === true) lines.push("Covered by a backup job.");
+  if (b.in_job === false) lines.push("No backup job covers this machine.");
+  return lines;
+}
+
+function openMachineInformation(id, trigger) {
+  const open = machineInfoId === id;
+  closeMachineInformation();
+  closeMachineMenu();
+  if (open) return;
+  const v = state.targets.find((item) => item.target.id === id);
+  if (!v) return;
+  const backup = backupInformation(v.target);
+  const repositories = isProxmox(v.target) ? v.check?.notes || [] : [];
+  const updates = [];
+  if (v.monitor_only) {
+    updates.push("Monitor only: checked and reported, but updates are installed elsewhere, not from here. Reboot, backups and snapshots still work.");
+    updates.push(v.target.monitor_only ? "Set to monitor only in the config file." : "Set to monitor only from the dashboard; use Allow updates in the ⋯ menu to change it.");
+  }
+  if (!v.check) updates.push("No update check has completed for this machine.");
+  if (v.check?.os) updates.push(`Operating system: ${v.check.os}`);
+  if (!v.target.updatable) updates.push(`Machine unavailable: ${v.target.note || v.target.status}`);
+  if (v.check?.error) updates.push(`Latest check failed: ${v.check.error}`);
+  if (v.check) updates.push(`Last attempt: ${window.FleetdeckDates.dateTime(v.check.checked_at)}`);
+  if (staleCheck(v)) {
+    const last = displayCheck(v);
+    updates.push(`Displayed counts are from the last successful check: ${window.FleetdeckDates.dateTime(last.checked_at)}`);
+    if (last.reboot_required) updates.push("A reboot was required at that check; this needs to be verified again.");
+  }
+  if (!backup.length && !repositories.length && !updates.length) return;
+  const panel = $("#machine-information");
+  panel.innerHTML = `<div class="machine-info-heading"><span>${icon("info")}<strong id="machine-information-title">${isProxmoxNode(v.target) ? "Node" : "Machine"} information</strong></span><span class="muted">${esc(v.target.name)}</span></div>${machineInfoSection("Updates", updates)}${machineInfoSection("Backup", backup)}${machineInfoSection("Repositories", repositories)}`;
+  machineInfoId = id;
+  trigger.setAttribute("aria-expanded", "true");
+  panel.hidden = false;
+  const rect = trigger.getBoundingClientRect();
+  panel.style.left = `${Math.max(8, Math.min(rect.right - panel.offsetWidth, innerWidth - panel.offsetWidth - 8))}px`;
+  panel.style.top = `${Math.max(8, rect.bottom + panel.offsetHeight < innerHeight ? rect.bottom + 6 : rect.top - panel.offsetHeight - 6)}px`;
+  panel.focus();
 }
 
 async function load(refresh = false) {
@@ -258,7 +547,7 @@ async function load(refresh = false) {
     state.jobs = await api("/api/jobs");
     state.schedule = await api("/api/schedule");
     // Drop selections for targets that disappeared or can no longer be upgraded.
-    const ok = new Set(state.targets.filter(selectable).map((v) => v.target.id));
+    const ok = new Set(state.targets.filter((v) => selectable(v) && matchesKpi(v, state.filter)).map((v) => v.target.id));
     for (const id of state.selected) if (!ok.has(id)) state.selected.delete(id);
   } catch (e) {
     state.errors = { dashboard: e.message };
@@ -313,12 +602,20 @@ function confirmAction(action, ids) {
   const byId = new Map(state.targets.map((v) => [v.target.id, v]));
   const c = CONFIRM[action];
   $("#confirm-title").textContent = c.title;
-  $("#confirm-text").textContent = action === "upgrade" && ids.every((id) => byId.get(id)?.update_command)
-    ? "Runs each machine's own update command as root (shown below), instead of the OS upgrade."
-    : c.text;
-  $("#confirm-ok").textContent = c.ok;
+  $("#confirm-text").textContent = c.text;
+  const upgradeAction = action === "upgrade";
+  $("#confirm").classList.toggle("upgrade-confirm", upgradeAction);
+  $("#confirm-symbol").innerHTML = icon(upgradeAction ? "download" : action === "reboot" ? "reboot" : action === "backup" ? "backup" : "refresh");
+  $("#confirm-ok").innerHTML = `${upgradeAction ? icon("download") : ""}<span>${esc(upgradeAction && ids.length > 1 ? `Update ${ids.length} machines` : c.ok)}</span>`;
+  if (upgradeAction) {
+    $("#confirm-title").textContent = ids.length === 1 ? "Update machine?" : `Update ${ids.length} machines?`;
+    $("#confirm-text").textContent = ids.every((id) => byId.get(id)?.update_command)
+      ? "Runs each machine's own update command as root (shown below), instead of the OS upgrade."
+      : `Install the available OS updates on ${ids.length === 1 ? "this machine" : "these machines"}.`;
+  }
   $("#confirm-reboot-row").hidden = action !== "upgrade";
   $("#confirm-reboot").checked = false;
+  $("#confirm-reboot-note").hidden = true;
   const placeRow = $("#confirm-place-row");
   placeRow.hidden = action !== "backup";
   if (action === "backup") {
@@ -333,8 +630,19 @@ function confirmAction(action, ids) {
   }
   $("#confirm-list").innerHTML = ids.map((id) => {
     const v = byId.get(id);
-    const n = v?.check?.packages?.length;
-    let detail = n != null ? `${n} package(s)` : "not checked";
+    const n = v?.check ? actionablePackages(v.check).length : null;
+    const phased = phasedPackages(v?.check).length;
+    let detail = n != null ? `${n} package${n === 1 ? "" : "s"}${phased ? ` · ${phased} phased, waiting` : ""}` : "not checked";
+    let typeSummary = "";
+    if (upgradeAction && n != null) {
+      const security = securityPackages(v?.check).length, regular = regularPackages(v?.check).length;
+      detail = [security ? `${security} security` : "", regular ? `${regular} package${regular === 1 ? "" : "s"}` : "", phased ? `${phased} phased, waiting` : ""].filter(Boolean).join(" · ") || "0 packages";
+      typeSummary = [
+        security ? `<span class="confirm-update-type">${icon("shield")}<span>${security} security</span></span>` : "",
+        regular ? `<span class="confirm-update-type">${icon("package")}<span>${regular} package${regular === 1 ? "" : "s"}</span></span>` : "",
+        phased ? `<span class="confirm-update-type phased">${icon("clock")}<span>${phased} phased, waiting</span></span>` : "",
+      ].filter(Boolean).join("");
+    }
     if (action === "backup" || action === "stacks") detail = "";
     if (action === "reboot") {
       detail = v?.check?.reboot_required ? "reboot needed" : "";
@@ -344,6 +652,7 @@ function confirmAction(action, ids) {
       // Waits for running guest jobs first, but the guests themselves go down with it.
       if (guests) detail += `${detail ? " · " : ""}and every guest running on it (${guests})`;
     }
+    const summaryText = detail;
     if (action === "upgrade" && v?.target.no_reboot) detail += ` · won't reboot: ${v.target.no_reboot}`;
     const app = v?.check?.community_script;
     let own = "";
@@ -354,11 +663,18 @@ function confirmAction(action, ids) {
         ? ` · then runs ${app}'s own update (helper script)`
         : ` · ${app}'s own update is off: run "update" in it if it misbehaves`;
     }
+    if (upgradeAction) {
+      const machineIcon = v?.target.kind === "host" ? "server" : "monitor";
+      const extra = detail.slice(summaryText.length).replace(/^ · /, "");
+      const summary = typeSummary ? `${typeSummary}${extra ? `<span class="confirm-detail-note">${esc(extra)}</span>` : ""}` : `${icon("package")}<span>${esc(detail)}</span>`;
+      return `<li class="confirm-machine"><span class="confirm-machine-name">${icon(machineIcon)}<strong>${esc(v?.target.name || id)}</strong>${v ? `<span class="chip">${esc(kindLabel(v.target))}</span>` : ""}</span><span class="confirm-machine-detail muted">${summary}${own}</span></li>`;
+    }
     return `<li>${esc(v?.target.name || id)} <span class="muted">${esc(detail)}</span>${own}</li>`;
   }).join("");
   const snapshottable = action === "upgrade" && ids.some((id) => byId.get(id)?.target.can_snapshot);
   $("#confirm-snapshot-row").hidden = !snapshottable;
   $("#confirm-snapshot").checked = snapshottable && !!state.settings.snapshot_before_upgrade;
+  $("#confirm-snapshot-label").textContent = ids.length === 1 ? "Take a snapshot first" : "Take snapshots first";
   const dlg = $("#confirm");
   dlg.returnValue = "";
   dlg.showModal();
@@ -476,9 +792,22 @@ async function setMonitorOnly(id, on) {
   render();
 }
 
+$("#confirm-reboot").addEventListener("change", () => {
+  $("#confirm-reboot-note").hidden = !$("#confirm-reboot").checked;
+});
+
 document.addEventListener("click", (e) => {
+  const kpi = e.target.closest("[data-kpi]");
+  if (kpi) {
+    state.filter = state.filter === kpi.dataset.kpi ? null : kpi.dataset.kpi;
+    state.view = "machines";
+    for (const id of state.selected) if (!state.targets.some((v) => v.target.id === id && matchesKpi(v, state.filter))) state.selected.delete(id);
+    closeMachineMenu(); closeMachineInformation(); render(); return;
+  }
   const el = e.target.closest("[data-act],[data-toggle],[data-job],[data-hide],[data-monitor],[data-stack],[data-cmd]");
-  if (!el) return;
+  if (!el || el.disabled) return;
+  closeMachineMenu();
+  $("#dashboard-menu").open = false;
   if (el.dataset.cmd) {
     editUpdateCommand(el.dataset.cmd);
     return;
@@ -516,6 +845,28 @@ document.addEventListener("click", (e) => {
   }
 });
 
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#dashboard-menu") || e.target.closest(".dashboard-menu-items button,.dashboard-menu-items a")) $("#dashboard-menu").open = false;
+  const view = e.target.closest("[data-view]");
+  if (view) {
+    state.view = view.dataset.view === "containers" ? "containers" : "machines";
+    remember.set("dashboardView", state.view);
+    closeMachineMenu(); closeMachineInformation(); render(); return;
+  }
+  if (e.target.closest("[data-check-docker]")) { checkAllDocker(); return; }
+  const el = e.target.closest("[data-machine-menu],[data-machine-info]");
+  if (el?.dataset.machineMenu) { openMachineMenu(el.dataset.machineMenu, el); return; }
+  if (el?.dataset.machineInfo) { openMachineInformation(el.dataset.machineInfo, el); return; }
+  if (!e.target.closest("#machine-actions")) closeMachineMenu();
+  if (!e.target.closest("#machine-information")) closeMachineInformation();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeMachineMenu(true); closeMachineInformation(true); $("#dashboard-menu").open = false; }
+});
+window.addEventListener("resize", () => { closeMachineMenu(); closeMachineInformation(); });
+mobileDashboard.addEventListener?.("change", () => { closeMachineMenu(); closeMachineInformation(); render(); });
+window.addEventListener("scroll", () => { closeMachineMenu(); closeMachineInformation(); }, true);
+$("#clear-selected").onclick = () => { state.selected.clear(); render(); };
 document.addEventListener("change", (e) => {
   if (e.target.matches("[data-prune]")) { remember.set("pruneImages", e.target.checked); return; }
   const id = e.target.dataset?.select;
@@ -531,15 +882,7 @@ $("#show-hidden").onclick = () => {
   remember.set("showHidden", state.showHidden);
   render();
 };
-$("#test-notify").onclick = async () => {
-  try {
-    const r = await api("/api/notify/test", { method: "POST" });
-    const failed = Object.entries(r.errors);
-    alert(failed.length ? `Sent to ${r.sent}. Failed:\n${failed.map(([n, e]) => `${n}: ${e}`).join("\n")}` : `Sent to ${r.sent} target(s).`);
-  } catch (e) {
-    alert(`Could not send: ${e.message}`);
-  }
-};
+$("#test-notify").onclick = window.FleetdeckTools.testNotification;
 $("#rollback").onclick = async (e) => {
   const { rollbackJob: job, snapshot, name } = e.currentTarget.dataset;
   if (!confirm(`Roll ${name} back to snapshot ${snapshot}? Everything changed on it since the snapshot is lost.`)) return;
@@ -552,109 +895,10 @@ $("#rollback").onclick = async (e) => {
     alert(`Could not roll back: ${err.message}`);
   }
 };
-// Backup: an encrypted file of the config, keys and history; restoring one restarts the app.
-const backup = { data: null };
-$("#backup").onclick = () => {
-  for (const id of ["backup-pass", "backup-pass2", "restore-file", "restore-pass"]) $(`#${id}`).value = "";
-  for (const id of ["backup-msg", "restore-msg"]) $(`#${id}`).textContent = "";
-  resetRestore();
-  $("#backup-dialog").showModal();
-};
-
-function resetRestore() {
-  backup.data = null;
-  $("#restore-preview").hidden = true;
-  $("#restore-ack").checked = false;
-  $("#restore-go").hidden = true;
-  $("#restore-go").disabled = true;
-  $("#restore-check").hidden = false;
-}
-
-function say(id, text, bad = false) {
-  const el = $(`#${id}`);
-  el.textContent = text;
-  el.className = bad ? "bad-text" : "muted";
-}
-
-$("#backup-download").onclick = async () => {
-  const pass = $("#backup-pass").value;
-  if (pass.length < 12) return say("backup-msg", "Use a passphrase of at least 12 characters.", true);
-  if (pass !== $("#backup-pass2").value) return say("backup-msg", "The two passphrases don't match.", true);
-  say("backup-msg", "Encrypting…");
-  try {
-    const r = await fetch("/api/backup", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ passphrase: pass }) });
-    if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
-    const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") || "")?.[1] || "homelab-backup.hlmbackup";
-    const url = URL.createObjectURL(await r.blob());
-    const a = Object.assign(document.createElement("a"), { href: url, download: name });
-    document.body.append(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-    say("backup-msg", `Downloaded ${name}. Keep it somewhere safe, away from this server, and remember the passphrase.`);
-  } catch (e) {
-    say("backup-msg", `Could not make the backup: ${e.message}`, true);
-  }
-};
-
-const readBase64 = (file) => new Promise((resolve, reject) => {
-  const fr = new FileReader();
-  fr.onload = () => resolve(String(fr.result).split(",", 2)[1] || "");
-  fr.onerror = () => reject(fr.error);
-  fr.readAsDataURL(file);
-});
-
-$("#restore-file").onchange = resetRestore;
-$("#restore-pass").oninput = resetRestore;
-$("#restore-ack").onchange = (e) => { $("#restore-go").disabled = !e.target.checked; };
-
-$("#restore-check").onclick = async () => {
-  const file = $("#restore-file").files[0];
-  if (!file) return say("restore-msg", "Choose a backup file first.", true);
-  if (!$("#restore-pass").value) return say("restore-msg", "Enter the backup's passphrase.", true);
-  say("restore-msg", "Opening the backup…");
-  try {
-    backup.data = await readBase64(file);
-    const r = await api("/api/backup/restore", { method: "POST", body: JSON.stringify({ passphrase: $("#restore-pass").value, data: backup.data }) });
-    const b = r.backup;
-    const made = b.created_at ? new Date(b.created_at).toLocaleString() : "an unknown date";
-    $("#restore-summary").textContent = `Made ${made}. Login: ${b.username || "none"}. ${b.machines} machine${b.machines === 1 ? "" : "s"} in the config` +
-      `${b.history ? ", with job history" : ""}. ${b.files.length} file${b.files.length === 1 ? "" : "s"}.`;
-    $("#restore-preview").hidden = false;
-    $("#restore-check").hidden = true;
-    $("#restore-go").hidden = false;
-    say("restore-msg", "");
-  } catch (e) {
-    backup.data = null;
-    say("restore-msg", e.message.replace(/^400 /, "").replace(/^\{"detail":"(.*)"\}$/, "$1"), true);
-  }
-};
-
-$("#restore-go").onclick = async () => {
-  if (!backup.data || !$("#restore-ack").checked) return;
-  $("#restore-go").disabled = true;
-  say("restore-msg", "Restoring…");
-  try {
-    const r = await api("/api/backup/restore", { method: "POST", body: JSON.stringify({ passphrase: $("#restore-pass").value, data: backup.data, confirm: true }) });
-    if (!r.restarting) return say("restore-msg", "Restored. Restart the container to use it.");
-    say("restore-msg", "Restored. Restarting with it; this page reloads when it's back (log in with the backup's login).");
-    await new Promise((ok) => setTimeout(ok, 1500));
-    for (let i = 0; i < 60; i++) {
-      // Any answer means it is back; 401 if the restored login differs from the one in this browser.
-      try { await fetch("/api/schedule"); break; } catch { await new Promise((ok) => setTimeout(ok, 1000)); }
-    }
-    location.reload();
-  } catch (e) {
-    $("#restore-go").disabled = false;
-    say("restore-msg", `Could not restore: ${e.message}`, true);
-  }
-};
+window.FleetdeckTools.bindBackup($("#backup"), $("#backup-dialog"));
 
 $("#check-all").onclick = () => act("check", active().filter((v) => v.target.updatable).map((v) => v.target.id));
-$("#check-docker").onclick = () => {
-  const ids = active().filter((v) => canUpgrade(v.target) && v.stacks?.docker !== "none").map((v) => v.target.id);
-  if (ids.length) confirmAction("stacks", ids);
-};
+$("#check-docker").onclick = checkAllDocker;
 $("#update-selected").onclick = () => confirmAction("upgrade", [...state.selected]);
 
 // Poll fast while anything is running, slowly otherwise.

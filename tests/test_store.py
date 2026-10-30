@@ -21,12 +21,17 @@ def _job(jid: str, status="succeeded", log=None, started=False) -> Job:
 
 def test_checks_round_trip(tmp_path):
     s = Store(tmp_path / "state.db")
-    check = CheckResult(checked_at=datetime.now(UTC), os="Debian", packages=[Package(name="curl", available="2")])
+    check = CheckResult(
+        checked_at=datetime.now(UTC),
+        os="Debian",
+        packages=[Package(name="curl", available="2", phased=True)],
+    )
     s.save_check("t1", check)
     s.save_check("t1", check.model_copy(update={"os": "Debian 13"}))
     s.close()
     loaded = Store(tmp_path / "state.db").load_checks()
     assert loaded["t1"].os == "Debian 13" and loaded["t1"].packages[0].name == "curl"
+    assert loaded["t1"].packages[0].phased is True
 
 
 def test_jobs_keep_order_trim_and_mark_interrupted(tmp_path):

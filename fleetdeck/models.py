@@ -60,6 +60,18 @@ class Package(BaseModel):
     current: str | None = None
     # Comes from a security repository (apt only: e.g. bookworm-security, jammy-security).
     security: bool = False
+    # Ubuntu apt has deferred this package for this machine while a phased rollout is in progress.
+    phased: bool = False
+    # The package is not itself phased, but apt can upgrade it only when related phased packages are included.
+    phased_dependency: bool = False
+
+
+class SuccessfulCheck(BaseModel):
+    """Historical context only; never used to authorize an upgrade or reboot."""
+
+    packages: list[Package] = Field(default_factory=list)
+    reboot_required: bool | None = None
+    checked_at: datetime
 
 
 class CheckResult(BaseModel):
@@ -69,6 +81,7 @@ class CheckResult(BaseModel):
     reboot_required: bool | None = None
     checked_at: datetime
     error: str | None = None
+    last_successful: SuccessfulCheck | None = None
     # Extra context to show next to the result, e.g. which repositories were used.
     notes: list[str] = Field(default_factory=list)
     # The dashboard's own container runs on this machine (see updates.self_script).

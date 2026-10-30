@@ -27,6 +27,28 @@ _APT = [
     "tzdata/stable-updates 2025a-0+deb12u1 all [upgradable from: 2024b-0+deb12u1]",
     "proxmox-kernel-6.8/stable 6.8.12-5 amd64 [upgradable from: 6.8.12-4]",
 ]
+_PHASED_SYSTEMD = [
+    "systemd-sysv/noble-updates 255.4-1ubuntu8.12 amd64 [upgradable from: 255.4-1ubuntu8.11]",
+    "systemd-timesyncd/noble-updates 255.4-1ubuntu8.12 amd64 [upgradable from: 255.4-1ubuntu8.11]",
+    "udev/noble-updates 255.4-1ubuntu8.12 amd64 [upgradable from: 255.4-1ubuntu8.11]",
+    "libpam-systemd/noble-updates 255.4-1ubuntu8.12 amd64 [upgradable from: 255.4-1ubuntu8.11]",
+    "libsystemd-shared/noble-updates 255.4-1ubuntu8.12 amd64 [upgradable from: 255.4-1ubuntu8.11]",
+    "libsystemd0/noble-updates 255.4-1ubuntu8.12 amd64 [upgradable from: 255.4-1ubuntu8.11]",
+    "libudev1/noble-updates 255.4-1ubuntu8.12 amd64 [upgradable from: 255.4-1ubuntu8.11]",
+    "systemd/noble-updates 255.4-1ubuntu8.12 amd64 [upgradable from: 255.4-1ubuntu8.11]",
+    "systemd-cryptsetup/noble-updates 255.4-1ubuntu8.12 amd64 [upgradable from: 255.4-1ubuntu8.11]",
+    "systemd-resolved/noble-updates 255.4-1ubuntu8.12 amd64 [upgradable from: 255.4-1ubuntu8.11]",
+]
+_PHASED_DIRECT = {"systemd-sysv", "systemd-timesyncd", "udev"}
+_PHASED_DEPENDENCY = {
+    "libpam-systemd",
+    "libsystemd-shared",
+    "libsystemd0",
+    "libudev1",
+    "systemd",
+    "systemd-cryptsetup",
+    "systemd-resolved",
+}
 _APK = ["busybox-1.36.1-r31 x86_64 {busybox} (GPL-2.0-only) [upgradable from: busybox-1.36.1-r29]"]
 
 
@@ -57,8 +79,18 @@ class DemoSnapshots:
 
 
 class DemoExecutor:
-    def __init__(self, pm: str, os_name: str, lines: list[str], app: str | None = None):
+    def __init__(
+        self,
+        pm: str,
+        os_name: str,
+        lines: list[str],
+        app: str | None = None,
+        phased: set[str] | None = None,
+        phased_dependency: set[str] | None = None,
+    ):
         self.pm, self.os_name, self.lines = pm, os_name, lines
+        self.phased = phased or set()
+        self.phased_dependency = phased_dependency or set()
         # Made by a community-scripts helper script for this app.
         self.app = app
         self.boot_id = uuid.uuid4().hex
@@ -105,7 +137,12 @@ class DemoExecutor:
         """What the real check script prints, so the Activity log looks like a real run."""
         out = [("stdout", "__BEGIN__")]
         out += [("stdout", line) for line in body.splitlines()]
-        out += [("stdout", "__END__"), ("stdout", f"__REBOOT__={'yes' if self.reboot_pending else 'no'}")]
+        out += [("stdout", "__END__")]
+        if self.phased:
+            out.append(("stdout", f"__PHASED__={','.join(sorted(self.phased))}"))
+        if self.phased_dependency:
+            out.append(("stdout", f"__PHASED_BLOCKED__={','.join(sorted(self.phased_dependency))}"))
+        out.append(("stdout", f"__REBOOT__={'yes' if self.reboot_pending else 'no'}"))
         if self.pm == "apt":
             out += [
                 ("stderr", "Hit:1 http://deb.debian.org/debian bookworm InRelease"),
@@ -149,19 +186,29 @@ class DemoExecutor:
             if on_line:
                 for line in self._check_output(body):
                     on_line(*line)
-            return ExecResult(rc=0, stdout=f"{head}__BEGIN__\n{body}\n__END__\n__REBOOT__={reboot}\n")
+            phased = f"__PHASED__={','.join(sorted(self.phased))}\n" if self.phased else ""
+            blocked = (
+                f"__PHASED_BLOCKED__={','.join(sorted(self.phased_dependency))}\n" if self.phased_dependency else ""
+            )
+            return ExecResult(
+                rc=0,
+                stdout=f"{head}__BEGIN__\n{body}\n__END__\n{phased}{blocked}__REBOOT__={reboot}\n",
+            )
         if on_line and self.pm == "apt":
             on_line("stdout", "Reading package lists...")
             on_line("stdout", "Building dependency tree...")
-            on_line("stdout", f"The following packages will be upgraded: {' '.join(_name(x) for x in self.lines)}")
-        for line in self.lines:
+        waiting = self.phased | self.phased_dependency
+        installable = [line for line in self.lines if _name(line) not in waiting]
+        if on_line and self.pm == "apt":
+            on_line("stdout", f"The following packages will be upgraded: {' '.join(_name(x) for x in installable)}")
+        for line in installable:
             name = line.split("/")[0].split(" ")[0]
             if on_line:
                 on_line("stdout", f"Unpacking {name} ...")
             await asyncio.sleep(0.4)
             if on_line:
                 on_line("stdout", f"Setting up {name} ...")
-        self.lines = []
+        self.lines = [line for line in self.lines if _name(line) in waiting]
         return ExecResult(rc=0, stdout=f"{head}__REBOOT__={reboot}\n")
 
 
@@ -210,7 +257,7 @@ class DemoProvider:
             ("proxmox", "pve", "host", None, "apt", "Proxmox VE 8.3 (Debian 12)", _APT),
             ("proxmox", "pihole", "lxc", "pve", "apt", deb, _APT[:2]),
             ("proxmox", "alpine-dns", "lxc", "pve", "apk", "Alpine Linux v3.20", _APK),
-            ("proxmox", "docker-vm", "vm", "pve", "apt", "Ubuntu 24.04.1 LTS", _APT[:4]),
+            ("proxmox", "docker-vm", "vm", "pve", "apt", "Ubuntu 24.04.1 LTS", _PHASED_SYSTEMD),
             ("incus", "incus01", "host", None, "apt", deb, _APT[1:3]),
             ("incus", "web", "container", "incus01", "apt", deb, []),
             ("incus", "fedora-vm", "vm", "incus01", "dnf", "Fedora Linux 40", []),
@@ -242,7 +289,14 @@ class DemoProvider:
             )
             if t.can_backup:
                 self.backup_runs[t.id] = DemoBackup(_DEMO_BACKUPS[name])
-            ex = DemoExecutor(pm, os_name, list(lines), app="pihole" if name == "pihole" else None)
+            ex = DemoExecutor(
+                pm,
+                os_name,
+                list(lines),
+                app="pihole" if name == "pihole" else None,
+                phased=_PHASED_DIRECT if name == "docker-vm" else None,
+                phased_dependency=_PHASED_DEPENDENCY if name == "docker-vm" else None,
+            )
             if name == "docker-vm":
                 ex.stacks = {"arcane": (["arcane"], False), "media": (["jellyfin", "sonarr"], True)}
             elif name == "pi4":
