@@ -8,7 +8,7 @@ jobs:
   image:
     # The runner is the owner's own machine: never run code from a fork's pull request on it.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: self-hosted
+    runs-on: [self-hosted, vm]
     permissions:
       contents: read
       packages: write
