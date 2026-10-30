@@ -23,6 +23,7 @@ Refresh logs go to stderr so they never pollute the package list.
 from __future__ import annotations
 
 import re
+import shlex
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -284,6 +285,17 @@ esac
 """
     + REBOOT_SCRIPT
 )
+
+
+# How a custom update script is told apart (by the demo).
+CUSTOM_MARK = "</dev/null\nrc=$?\n"
+
+
+def custom_update_script(command: str) -> str:
+    """A machine's own update command (e.g. omv-upgrade, set in the config or on the dashboard) instead of the
+    package-manager upgrade, then the same reboot check. Its exit code is the job's: no fallback to UPGRADE_SCRIPT.
+    stdin is /dev/null, so a command that asks a question fails instead of hanging."""
+    return _PRELUDE + f"sh -c {shlex.quote(command)} " + CUSTOM_MARK + REBOOT_SCRIPT + "exit $rc\n"
 
 
 # Identifies one boot of the target, so a reboot can be confirmed: the kernel's boot_id changes

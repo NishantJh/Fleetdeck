@@ -328,3 +328,22 @@ async def test_auto_security_updates_skip_monitor_only_machines(monkeypatch):
     ((_, body),) = notifier.messages
     # Still reported, so their own updater can be run.
     assert "omv: 1 update" in body and "ct1: 1 update" in body
+
+
+async def test_auto_security_updates_skip_machines_with_their_own_update_command(monkeypatch):
+    monkeypatch.setattr(fleetdeck.scheduler, "POLL", 0)
+    calls: list[str] = []
+    inv = _inventory(
+        (_target("nas", update_command="omv-upgrade"), SecExecutor("nas", calls)),
+        (_target("pve"), SecExecutor("pve", calls)),
+    )
+    inv.refresh = _noop_refresh
+    notifier = RecordingNotifier()
+    sched = Scheduler(3600, inv, JobManager(inv), notifier, auto_security=True)
+    await sched.run_once()
+    assert calls == ["pve:security"]
+    ((_, body),) = notifier.messages
+    assert "nas: security updates not installed, it has its own update command" in body
+    # Nothing new next time: the note alone doesn't send another message.
+    await sched.run_once()
+    assert len(notifier.messages) == 1

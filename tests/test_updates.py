@@ -6,6 +6,7 @@ from fleetdeck.updates import (
     COMMUNITY_SCRIPT_DETECT,
     COMMUNITY_UPDATE_SCRIPT,
     clean_line,
+    custom_update_script,
     parse_apk,
     parse_apt,
     parse_check,
@@ -308,3 +309,11 @@ def test_apt_upgrade_never_removes_packages_except_on_proxmox_and_raspberry_pi_o
     assert "UPG=dist-upgrade" in UPGRADE_SCRIPT
     assert "pveversion" in UPGRADE_SCRIPT and "/etc/rpi-issue" in UPGRADE_SCRIPT
     assert 'UPG="upgrade --with-new-pkgs"' in UPGRADE_SCRIPT and "$UPG" in UPGRADE_SCRIPT
+
+
+def test_custom_update_script_keeps_the_command_and_its_exit_code():
+    # Quotes reach the command as typed; a question it asks gets end-of-input instead of hanging.
+    script = custom_update_script("""echo "it's $((1+1))"; read x || echo no-input; exit 3""")
+    p = subprocess.run(["sh", "-c", script], capture_output=True, text=True, timeout=30, stdin=subprocess.PIPE)
+    assert p.returncode == 3
+    assert "it's 2\nno-input\n" in p.stdout and "__REBOOT__=" in p.stdout

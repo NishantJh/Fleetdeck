@@ -342,6 +342,8 @@ td.os { white-space: normal; min-width: 150px; max-width: 230px; }
 /* Run command dialog */
 dialog.wide { max-width: 760px; }
 #run-dialog textarea, #run-dialog input[type="text"], #run-dialog input[type="password"] { width: 100%; box-sizing: border-box; font: 13px/1.5 var(--mono); }
+#cmd-dialog input[type="text"], #cmd-dialog input[type="password"] { width: 100%; box-sizing: border-box; }
+#cmd-dialog #cmd-command { font: 13px/1.5 var(--mono); }
 #run-dialog .dlg-field { display: block; margin: 8px 0; }
 .run-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
 .run-num { width: 64px; }

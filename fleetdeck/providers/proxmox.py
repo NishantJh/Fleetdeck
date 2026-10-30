@@ -292,6 +292,11 @@ class ProxmoxProvider:
         held = {priv for privs in (perms or {}).values() for priv, ok in privs.items() if ok}
         return not set(BACKUP_PRIVS) <= held
 
+    def _update_command(self, vmid: int, name: str | None) -> str | None:
+        """The guest's own update command from the config, by VMID or by name."""
+        cmds = self.cfg.update_commands
+        return cmds.get(str(vmid)) or (cmds.get(name) if name else None)
+
     def _backup_for(self, vmid: int, index: BackupIndex | None) -> BackupInfo | None:
         if index is None:
             return None
@@ -341,6 +346,7 @@ class ProxmoxProvider:
                 name=nname,
                 platform="proxmox",
                 source=self.name,
+                update_command=self.cfg.update_commands.get(nname),
                 kind="host",
                 status=node.get("status", "unknown"),
                 updatable=online,
@@ -375,6 +381,7 @@ class ProxmoxProvider:
                     name=ct.get("name") or f"ct{vmid}",
                     platform="proxmox",
                     source=self.name,
+                    update_command=self._update_command(vmid, ct.get("name")),
                     kind="lxc",
                     parent=nname,
                     status=ct.get("status", "unknown"),
@@ -407,6 +414,7 @@ class ProxmoxProvider:
                     name=vm.get("name") or f"vm{vmid}",
                     platform="proxmox",
                     source=self.name,
+                    update_command=self._update_command(vmid, vm.get("name")),
                     kind="vm",
                     parent=nname,
                     status=vm.get("status", "unknown"),

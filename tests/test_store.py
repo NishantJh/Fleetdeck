@@ -127,3 +127,12 @@ async def test_shutdown_stops_jobs_and_records_them(tmp_path):
     store.close()
     stored = {j.id: j for j in Store(tmp_path / "state.db").load_jobs(limit=10)}
     assert stored[running.id].error == INTERRUPTED and stored[queued.id].error == NEVER_STARTED
+
+
+def test_update_commands_round_trip(tmp_path):
+    s = Store(str(tmp_path / "s.db"))
+    s.set_update_command("t1", "omv-upgrade")
+    s.set_update_command("t1", "omv-upgrade --yes")
+    s.set_update_command("t2", "x")
+    s.set_update_command("t2", None)
+    assert Store(str(tmp_path / "s.db")).load_update_commands() == {"t1": "omv-upgrade --yes"}

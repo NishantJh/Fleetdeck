@@ -130,6 +130,9 @@ proxmox:
     # OpenMediaVault VM you update with its own tools). Reboots and the node's reboot still work.
     # The machine's "Monitor only" button on the dashboard does the same for any machine.
     monitor_only: [] # e.g. [110]
+    # Guests (or nodes) with their own updater: Update runs this command as root instead of the OS upgrade.
+    # Keyed by VMID, guest name or node name. Can also be set per machine on the dashboard (Update command…).
+    # update_commands: { 105: omv-upgrade }
     # Flag guests whose newest backup is older than this (0 = don't track backups). Needs
     # Datastore.Audit, Datastore.AllocateSpace and VM.Backup for the token.
     backup_max_age_hours: 48
@@ -153,6 +156,7 @@ incus:
       # backup: { type: path, path: /var/backups/incus-host } # this host's own backup, see hosts: below
     exclude: [] # "name" or "project/name"
     monitor_only: [] # "name" or "project/name": checked, never updated from here
+    # update_commands: { "nas": omv-upgrade } # instance "name" or "project/name", or incus01 for the host
     # Last backup = newest snapshot or export (incus export / incus backup) of each instance.
     backup_max_age_hours: 48 # 0 = don't track
 
@@ -178,6 +182,10 @@ hosts:
     user: ubuntu
     key_file: /config/id_ed25519
     sudo: true
+  # - name: nas
+  #   host: 192.168.1.40
+  #   key_file: /config/id_ed25519
+  #   update_command: omv-upgrade # runs as root instead of the built-in OS upgrade
   # - name: old-box
   #   host: 192.168.1.40
   #   insecure_skip_host_key_check: true # accept any host key; anyone on the path can pose as it

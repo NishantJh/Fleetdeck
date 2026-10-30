@@ -195,7 +195,8 @@ the HTTP middleware's CSRF check doesn't cover a GET upgrade.
 ## Audit log
 
 - A new SQLite table `console_log` in `store.py`: time, user, client address, user agent, machine id and name,
-  container, kind (`run`, `terminal`, `unlock`, `unlock-failed`), command text, guarded yes/no, plain HTTP yes/no,
+  container, kind (`run`, `terminal`, `unlock`, `unlock-failed`; also `update-command` and `update-command-failed`
+  for changes to a machine's update command, written even when the console is off), command text, guarded yes/no, plain HTTP yes/no,
   exit code, duration,
   and for one-off runs the last 4 KB of output.
 - For terminal sessions it records open and close with the duration, not the keystrokes: they would hold passwords

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import secrets
@@ -10,7 +11,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -18,8 +19,8 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .backup import add_backup_routes
 from .backup_runs import check_destination
-from .config import AppConfig, config_path, load_config
-from .console import Console
+from .config import MAX_UPDATE_COMMAND, AppConfig, check_update_command, config_path, load_config
+from .console import Console, client_ip, network_problem
 from .console_routes import add_console_routes
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
@@ -29,7 +30,7 @@ from .onboarding import Paths
 from .providers.proxmox import PROTECTED_NOTE
 from .report import build_report
 from .scheduler import Scheduler
-from .security import LoginThrottle, Sessions, add_login_routes, make_guard, session_secret
+from .security import LoginThrottle, Sessions, add_login_routes, make_guard, password_ok, session_secret
 from .setup_routes import add_setup_routes
 from .store import Store
 from .tunnels import TunnelManager
@@ -52,6 +53,8 @@ class TargetView(BaseModel):
     runs_dashboard: bool = False
     # Checked and reported, never updated from here (set in the config: target.monitor_only, or on the dashboard).
     monitor_only: bool = False
+    # The machine's own command that Update runs instead of the OS upgrade (from the config or set here).
+    update_command: str | None = None
 
 
 class ActionRequest(BaseModel):
@@ -72,6 +75,14 @@ class BackupPlaceRequest(BaseModel):
     target_id: str
     # The folder to always back up to; None goes back to the default place.
     path: str | None = Field(None, max_length=1024)
+
+
+class UpdateCommandRequest(BaseModel):
+    target_id: str
+    # None or empty removes it: Update runs the built-in OS upgrade again.
+    command: str | None = Field(None, max_length=MAX_UPDATE_COMMAND)
+    # The dashboard password again: the command runs as root.
+    password: str = Field(max_length=1024)
 
 
 class HideRequest(BaseModel):
@@ -208,6 +219,7 @@ def create_app(
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=cfg.allowed_hosts)
 
     hostname = socket.gethostname().split(".")[0].lower()
+    background: set[asyncio.Task] = set()  # notifications being sent, kept so they aren't garbage collected
 
     @app.get("/api/targets")
     async def list_targets(refresh: bool = False):
@@ -222,6 +234,7 @@ def create_app(
                 stacks=jobs.stacks.get(t.id),
                 runs_dashboard=_runs_dashboard(t, check, hostname),
                 monitor_only=jobs.monitor_only(t),
+                update_command=jobs.update_command(t),
             )
             for t, _ in inventory.targets.values()
         ]
@@ -276,6 +289,46 @@ def create_app(
             raise HTTPException(400, str(e)) from None
         jobs.set_backup_place(req.target_id, path)
         return {"backup_places": jobs.backup_places}
+
+    @app.put("/api/update-command")
+    async def set_update_command(req: UpdateCommandRequest, request: Request):
+        """Set a machine's own update command (e.g. omv-upgrade), or remove it. It runs as root, so this asks for
+        the password again, works only from the console's networks (console.allow_from), and is logged."""
+        if (why := network_problem(request, cfg.console.allow_from, cfg.trusted_proxies)) is not None:
+            raise HTTPException(403, f"update commands can't be changed from here: {why}")
+        ip = client_ip(request)
+        if (left := throttle.blocked_for(ip)) > 0:
+            raise HTTPException(429, f"too many failed attempts, try again in {int(left) + 1} s")
+        user = cfg.auth.username if cfg.auth else "demo"
+        if not await asyncio.to_thread(password_ok, cfg.auth, req.password):
+            throttle.failed(ip)  # not the password: CodeQL flags hashing it, and the audit row counts each try
+            _audit(store, {"kind": "update-command-failed", "user": user, "ip": ip, "target": req.target_id})
+            raise HTTPException(403, "wrong password")
+        throttle.succeeded(ip)
+        await inventory.refresh()
+        if req.target_id not in inventory.targets:
+            raise HTTPException(404, "unknown target")
+        target = inventory.targets[req.target_id][0]
+        if target.update_command:
+            raise HTTPException(400, f"{target.name}: its update command is set in the config file; change it there")
+        try:
+            command = check_update_command(req.command) if req.command and req.command.strip() else None
+        except ValueError as e:
+            raise HTTPException(400, str(e)) from None
+        before = jobs.update_commands.get(target.id)
+        jobs.set_update_command(target.id, command)
+        row = {"kind": "update-command", "user": user, "ip": ip, "target": target.id, "machine": target.name}
+        _audit(store, {**row, "command": command, "before": before})
+        what = f"set to: {command}" if command else "removed (back to the built-in OS upgrade)"
+        log.warning("%s changed the update command of %s from %s: %s", user, target.name, ip, what)
+        if notifier is not None and command != before:
+            # Another way to run commands as root on the machine: worth telling about, like the console does.
+            task = asyncio.create_task(
+                notifier.send(f"Update command changed on {target.name}", f"{user} ({ip}) {what}")
+            )
+            background.add(task)
+            task.add_done_callback(background.discard)
+        return {"update_command": command}
 
     @app.post("/api/hidden")
     async def set_hidden(req: HideRequest):
@@ -446,6 +499,17 @@ def _open_store(path: str | None) -> Store | None:
     except Exception:  # noqa: BLE001 - a bad volume shouldn't stop the dashboard from starting
         log.exception("Could not open state file %s; keeping state in memory only.", path)
         return None
+
+
+def _audit(store: Store | None, row: dict) -> None:
+    """Into the console's audit log (shown under Run command when the console is on)."""
+    if store is None:
+        return
+    at = datetime.now(UTC).isoformat(timespec="seconds")
+    try:
+        store.add_console_log(at, json.dumps({**row, "at": at}))
+    except Exception:  # noqa: BLE001 - the change itself is logged to the app log too
+        log.exception("could not write the audit log")
 
 
 def _light(job: Job | None) -> Job | None:

@@ -1,9 +1,10 @@
 import httpx
 
-from fleetdeck.config import IncusConfig, ProxmoxConfig, SSHConfig
+from fleetdeck.config import HostConfig, IncusConfig, ProxmoxConfig, SSHConfig
 from fleetdeck.models import ExecResult
 from fleetdeck.providers.incus import IncusProvider
 from fleetdeck.providers.proxmox import ProxmoxProvider
+from fleetdeck.providers.ssh_hosts import SSHHostsProvider
 
 PVE = {
     "/api2/json/cluster/status": [{"type": "node", "name": "pve", "ip": "10.0.0.1"}],
@@ -580,3 +581,34 @@ async def test_incus_backup_failure_retries_only_that_instance(monkeypatch):
     found = {t.name: t.backup for t, _ in await p.discover()}
     assert sorted(calls) == ["/1.0/instances/bad/backups", "/1.0/instances/bad/snapshots"]
     assert found["good"].note is None and "could not list" in found["bad"].note
+
+
+async def test_update_commands_by_vmid_name_or_node():
+    cfg = ProxmoxConfig(
+        name="lab", api_url="https://pve:8006", token_id="t", token_secret="x",
+        ssh=SSHConfig(host="pve", known_hosts="/kh"), update_commands={101: "pihole -up", "docker": "d", "pve": "n"},
+    )  # fmt: skip
+    p = ProxmoxProvider(cfg)
+    p.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(
+            lambda req: (
+                httpx.Response(200, json={"data": PVE[req.url.path]})
+                if req.url.path in PVE
+                else httpx.Response(500, json={"data": None})
+            )
+        ),
+        base_url=p.client.base_url,
+    )
+    found = {t.name: t.update_command for t, _ in await p.discover()}
+    assert found["pihole"] == "pihole -up" and found["docker"] == "d" and found["pve"] == "n"
+    assert found["old"] is None
+
+    inc = IncusProvider(IncusConfig(name="incus01", socket="/x", update_commands={"lab/vm1": "a", "incus01": "h"}))
+    meta = [{"name": "vm1", "project": "lab", "type": "virtual-machine", "status": "Running"}]
+    inc.client = httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"metadata": meta})), base_url="http://i"
+    )
+    assert {t.name: t.update_command for t, _ in await inc.discover()} == {"incus01": "h", "lab/vm1": "a"}
+
+    ((host, _),) = await SSHHostsProvider([HostConfig(name="nas", host="nas", update_command="omv-upgrade")]).discover()
+    assert host.update_command == "omv-upgrade"
