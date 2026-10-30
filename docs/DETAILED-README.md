@@ -161,6 +161,11 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
 ![The dashboard (demo data)](screenshots/dashboard-light.png#gh-light-mode-only)
 ![The dashboard (demo data)](screenshots/dashboard-dark.png#gh-dark-mode-only)
 
+On a phone, each machine becomes a card with its own Update and Docker buttons:
+
+![The dashboard on a phone (demo data)](screenshots/dashboard-phone-light.png#gh-light-mode-only)
+![The dashboard on a phone (demo data)](screenshots/dashboard-phone-dark.png#gh-dark-mode-only)
+
 The first-run setup page creates the admin login:
 
 ![The setup page](screenshots/setup-light.png#gh-light-mode-only)
