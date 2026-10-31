@@ -188,7 +188,9 @@ Updates performed directly in Dockhand need a matching API result for the replac
 Eligible stopped Proxmox VMs and LXCs have a confirmed **Boot up** action. It uses the configured
 Proxmox API client, requires the appropriate audit/power permissions and respects protected guests
 and conflicting host jobs. It does not need a working guest executor. The job confirms the Proxmox
-task and running state; uncertain starts are not automatically retried. No force or skiplock option
+task and running state; uncertain starts are not automatically retried. After a start is accepted,
+the status shows a spinner and **Booting up…** while queued or running. On completion, refreshed
+inventory supplies the current machine state; booting does not imply a successful OS update check. No force or skiplock option
 is sent. This is independent of container provider selection and installs no updates.
 
 ## Development and verification

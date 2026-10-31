@@ -245,3 +245,53 @@ def test_inventory_api_hides_start_capability_without_a_current_provider_handle(
         assert view["target"]["id"] == target.id and not view["target"]["can_start"]
         result = client.post("/api/actions", json={"action": "start", "target_ids": [target.id]}).json()
         assert not result["jobs"] and target.id in result["rejected"]
+
+
+@pytest.mark.parametrize("kind", ["vm", "lxc"])
+def test_completed_boot_refreshes_stopped_inventory_on_next_dashboard_poll(monkeypatch, kind):
+    from types import SimpleNamespace
+
+    # Model a recently booted dashboard without freezing the event loop's clock.
+    monkeypatch.setattr("fleetdeck.inventory.time", SimpleNamespace(monotonic=lambda: 1.0))
+    inv, target, _ = stopped_inventory()
+    target.kind = kind
+    inv._refreshed = 1.0
+
+    class Provider:
+        name = "lab"
+        running = False
+        power = {}
+
+        async def discover(self):
+            current = (
+                target.model_copy(update={"status": "running", "updatable": True, "can_start": False})
+                if self.running
+                else target
+            )
+            self.power = {} if self.running else {target.id: power}
+            return [(current, None)]
+
+    provider = Provider()
+
+    class Power:
+        async def start(self):
+            provider.running = True  # The platform has confirmed the completed boot.
+
+    power = Power()
+    inv.providers = [provider]
+    inv.power[target.id] = power
+    with TestClient(create_app(AppConfig(demo=True), inventory=inv)) as client:
+        before = client.get("/api/targets").json()["targets"][0]
+        assert before["target"]["status"] == "stopped"
+        result = client.post("/api/actions", json={"action": "start", "target_ids": [target.id]}).json()
+        assert not result["rejected"]
+        for _ in range(50):
+            job = client.get("/api/jobs").json()[0]
+            if job["status"] not in ("queued", "running"):
+                break
+            time.sleep(0.01)
+        assert job["status"] == "succeeded"
+        after = client.get("/api/targets").json()["targets"][0]
+        assert after["target"]["status"] == "running"
+        assert not after["target"]["can_start"]
+        assert after["active_job"] is None

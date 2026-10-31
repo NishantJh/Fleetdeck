@@ -135,7 +135,7 @@ function matchesKpi(v, filter) {
 const selectable = (v) => canUpgrade(v.target) && !v.check?.error && actionablePackages(v.check).length > 0 && !v.hidden && !v.blocked && !v.active_job && !v.monitor_only;
 const MONITOR_TIP = "Monitor only: checked and reported; updates are installed elsewhere. Reboots, backups and snapshots remain available.";
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
-const BUSY = { start: "starting", upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "checking Docker", "stack-update": "updating Docker", "dockhand-update": "updating containers" };
+const BUSY = { start: "Booting up", upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "checking Docker", "stack-update": "updating Docker", "dockhand-update": "updating containers" };
 
 function detailsCloseButton(id, scope) {
   const label = `Close ${scope === "os" ? "OS update" : "container"} details`;
@@ -761,6 +761,14 @@ async function act(action, ids, { rebootIfRequired = false, snapshotFirst = fals
   if (res.jobs.length === 1) {
     state.logJob = res.jobs[0].id;
     state.logLines = [];
+  }
+  if (action === "start") {
+    for (const job of res.jobs) {
+      if (!["queued", "running"].includes(job.status)) continue;
+      const target = state.targets.find(v => v.target.id === job.target_id);
+      if (target) target.active_job = job;
+    }
+    render();
   }
   schedule(200);
 }
