@@ -33,13 +33,14 @@ function containerView(v) {
       status: "failed", state: "Stack check unavailable", check_issue: "stack", checked_at: r.checked_at, source: "fleetdeck_native", nativeStack: stack });
   }
   return { provider: "native", rows, checking: ["stacks", "stack-update"].includes(v.active_job?.action),
-    stale: !!r?.error || (!v.target.updatable && !!r), error: r?.error, checkedAt: r?.checked_at, syncedAt: r?.checked_at };
+    stale: !!r?.error || (!v.target.updatable && !!r), error: r?.error, checkedAt: r?.checked_at, syncedAt: r?.checked_at,
+    emptyStacks: r?.docker === "yes" && Array.isArray(r.stacks) && !r.stacks.length && !r.error && Number.isFinite(Date.parse(r.checked_at)) };
 }
 
 function containerSummary(v) {
   const view = containerView(v), rows = view.rows, facts = rows.map(containerFacts);
   const count = key => facts.filter(f => f[key]).length;
-  const useful = facts.some((f, i) => f.update || f.current || (f.review && rows[i].image_update === false && !f.failure && rows[i].status !== "unknown"));
+  const useful = (view.emptyStacks && !view.stale) || facts.some((f, i) => f.update || f.current || (f.review && rows[i].image_update === false && !f.failure && rows[i].status !== "unknown"));
   return { ...view, updates: count("update"), reviews: count("review"), coverage: count("coverage"), failures: count("failure"),
     current: count("current"), usable: useful, unknown: !useful, value: useful ? count("update") : "—" };
 }
@@ -52,9 +53,10 @@ function containerStatus(v) {
   else if (v.active_job?.action === "dockhand-update") return '<span class="status-inline muted"><span class="spin"></span>Updating containers…</span>';
   else if (s.checking) return '<span class="status-inline muted"><span class="spin"></span>Checking containers…</span>';
   else if (s.error || s.checkError) { symbol = "alert"; label = "Check unavailable"; tone = "bad"; }
-  else if (s.stale && s.rows.length) { symbol = "clock"; label = "Last-known results"; }
+  else if (s.stale && (s.rows.length || s.emptyStacks)) { symbol = "clock"; label = "Last-known results"; }
   else if (s.failures) { symbol = "alert"; label = s.usable ? "Partial results" : "Check failed"; tone = s.usable ? "warn" : "bad"; }
   else if (s.historyError || s.scheduledStatus === "failed") { symbol = "alert"; label = "History warning"; tone = "warn"; }
+  else if (s.emptyStacks) { symbol = "layersOff"; label = "No stacks found"; }
   else if (s.updates) { symbol = "container"; label = "Updates available"; tone = "container-tone"; }
   else if (s.reviews) { symbol = "tag"; label = "Review needed"; tone = "container-review-tone"; }
   else if (s.current || s.coverage) { symbol = "check"; label = "Up to date"; tone = "ok"; }
@@ -70,6 +72,7 @@ function containerCheckTime(v, withLabel = false) {
   const times = dated.map(r => Date.parse(r.checked_at));
   const updated = relevant.filter(r => !r.checked_at && r.source === "fleetdeck_update" && r.status === "current" && Number.isFinite(Date.parse(r.updated_at)));
   if (!times.length) {
+    if (s.emptyStacks) return `<span title="Last completed native scan found no Compose stacks; standalone containers are not covered">${withLabel ? "Checked " : ""}${ago(s.checkedAt)}</span>`;
     if (updated.length) return `<span title="Confirmed Dockhand update time; not a registry-check timestamp">Updated ${ago(new Date(Math.max(...updated.map(r => Date.parse(r.updated_at)))).toISOString())}</span>`;
     if (s.provider === "native" && s.checkedAt && s.error) return `<span title="Latest native container check attempt">${withLabel ? "Attempt " : ""}${ago(s.checkedAt)}<span class="cell-detail">Latest attempt</span></span>`;
     return `<span>${s.rows.length && !relevant.length ? "Not applicable" : "Not checked"}</span>`;

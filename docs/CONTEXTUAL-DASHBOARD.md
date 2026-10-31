@@ -44,7 +44,11 @@ there is no global `docker_enabled` option.
 Ordinary OS checks also discover whether the Docker executable is installed, without calling
 the daemon or downloading images. Native image comparison remains an explicit or scheduled
 Docker operation. It covers Compose services, not standalone containers or newer version tags.
-This general scope limitation is explained in details, without an empty coverage icon/tab.
+This general scope limitation is explained in details, without an empty coverage icon/tab. A completed,
+successful native scan with no stacks shows **No stacks found**, a muted slashed-layers icon
+and its scan time, without an update counter. Missing scans remain Not checked; stale or failed
+scans retain their own status. An empty Compose scan does not establish that no standalone
+containers exist.
 
 Dockhand-mapped machines cannot run native Docker checks or stack updates. Other external and
 Disabled modes also block native Docker jobs on the server, not just in the interface.
