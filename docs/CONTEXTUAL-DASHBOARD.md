@@ -12,6 +12,11 @@ optional; installing Fleetdeck does not require Dockhand, Node or a JavaScript b
 OS and container rows have independent status, update counters, timestamps and actions.
 Machine identity and backup context are shared in All. Opening details never starts a check
 or installs updates. On phones, the same information appears in separate card sections.
+Both detail panels have matching text headings and a top close button. Closing OS details
+leaves container details open, and vice versa, and returns keyboard focus to the status control.
+Container-only phone cards follow the OS card layout; empty counters and missing backup
+placeholders do not reserve rows. Container detail actions fit their contents, with check times
+beside their labels and failed attempts clearly distinguished.
 Theme and Sign out are in the top More menu on narrow screens; Sign out requires authentication.
 
 OS counters filter security, regular and phased package details. Container counters filter
@@ -224,6 +229,9 @@ For a manual UI review using fake machines:
 3. Open status and individual counters; verify their detail filters and independent timestamps.
 4. Open Docker management and inspect check/install permissions; cancelling saves nothing.
 5. Open an eligible Dockhand Update confirmation; inspect selection/exclusions, then cancel.
-6. At phone width, verify card alignment and theme/logout placement in the top More menu.
+6. At phone width, compare All, Machines and Containers; check names, status/check times,
+   backup spacing, content-sized actions and theme/logout placement in the top More menu.
+7. Close OS and container details independently with the top button and verify focus returns
+   to the corresponding status. Check both native and external-provider headers.
 
 Use mocked Proxmox API tests for guest boot; do not point the demo at a real Proxmox host.

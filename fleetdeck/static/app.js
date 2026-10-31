@@ -26,6 +26,7 @@ const ICON = {
   eye: '<path d="M2.1 12a10.8 10.8 0 0 1 19.8 0 10.8 10.8 0 0 1-19.8 0Z"/><circle cx="12" cy="12" r="3"/>',
   eyeOff: '<path d="m3 3 18 18"/><path d="M10.6 10.6A2 2 0 0 0 13.4 13.4"/><path d="M9.9 4.2A10.7 10.7 0 0 1 21.9 12a10.5 10.5 0 0 1-2.1 3.1"/><path d="M6.2 6.2A10.8 10.8 0 0 0 2.1 12a10.8 10.8 0 0 0 12 7.8"/>',
   settings: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6 1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z"/>',
+  close: '<path d="m6 6 12 12M18 6 6 18"/>',
   check: '<circle cx="12" cy="12" r="9"/><path d="m8 12 2.5 2.5L16 9"/>',
   backupJob: '<path d="M8 2v4"/><path d="M16 2v4"/><path d="M21 11V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h6"/><path d="M3 10h18"/><circle cx="17" cy="17" r="5"/><path d="M17 14v3l2 1"/>',
   noBackup: '<circle cx="12" cy="12" r="9"/><path d="m9 9 6 6"/><path d="m15 9-6 6"/>',
@@ -135,6 +136,11 @@ const selectable = (v) => canUpgrade(v.target) && !v.check?.error && actionableP
 const MONITOR_TIP = "Monitor only: checked and reported; updates are installed elsewhere. Reboots, backups and snapshots remain available.";
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
 const BUSY = { start: "starting", upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "checking Docker", "stack-update": "updating Docker", "dockhand-update": "updating containers" };
+
+function detailsCloseButton(id, scope) {
+  const label = `Close ${scope === "os" ? "OS update" : "container"} details`;
+  return `<button type="button" class="small ghost detail-close-top" data-close-details="${scope}" data-id="${esc(id)}" data-focus-key="close-details:${scope}:${esc(id)}" aria-label="${label}" title="${label}">${icon("close")}</button>`;
+}
 
 function metricButton(v, kind, count) {
   if (!displayCheck(v)?.packages?.length) return "";
@@ -299,7 +305,7 @@ function rowHtml(v, withBackup, relation = {}, mobile = false) {
     <td class="container-action-cell section-start" data-label="Container actions"><div class="scope-actions">${relation.context ? "" : containerRowAction(v)}${rowMenu(v, "containers")}</div></td>
   </tr>`;
   if (mobile) {
-    const backup = withBackup ? backupCell(t) : "";
+    const backup = withBackup && (showOs || t.backup?.last || t.backup?.in_job) ? backupCell(t) : "";
     const os = shown?.os || c?.os;
     const action = relation.context ? "" : nextAction(v);
     const more = rowMenu(v);
@@ -329,7 +335,7 @@ function rowHtml(v, withBackup, relation = {}, mobile = false) {
     if (state.selected.has(t.id)) detailClasses.push("is-selected");
     if (relation.hasGuests || (t.kind !== "host" && !relation.lastGuest)) detailClasses.push("tree-continues");
     const history = staleCheck(v) ? `<p class="last-known-note">Last known · ${esc(ago(shown.checked_at))}. Check again before installation.</p>` : "";
-    const panel = `<div class="packages-panel">${history}<table class="packages-table"><thead><tr><th>Type</th><th>Package</th><th>Installed</th><th>Available</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    const panel = `<div class="packages-panel"><div class="details-panel-heading"><strong>OS updates · ${esc(t.name)}</strong>${detailsCloseButton(t.id, "os")}</div>${history}<div class="packages-table-scroll"><table class="packages-table"><thead><tr><th>Type</th><th>Package</th><th>Installed</th><th>Available</th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
     html += mobile ? `<div class="mc-package-panel" id="packages-${esc(t.id)}">${panel}</div>` : `<tr class="${detailClasses.join(" ")}" id="packages-${esc(t.id)}"><td colspan="${7 + Number(!!withBackup)}">${panel}</td></tr>`;
   }
   if (state.containerExpanded.has(t.id) && hasContainers) {
@@ -1066,7 +1072,16 @@ document.addEventListener("click", (e) => {
 
 document.addEventListener("click", (e) => {
   if (!e.target.closest("#dashboard-menu") || e.target.closest(".dashboard-menu-items button,.dashboard-menu-items a")) $("#dashboard-menu").open = false;
-  const el = e.target.closest("[data-machine-menu],[data-machine-info],[data-open-docker],[data-docker-settings],[data-view],[data-fetch-docker],[data-discover-docker],[data-dockhand-check],[data-container-view-filter]");
+  const el = e.target.closest("[data-close-details],[data-machine-menu],[data-machine-info],[data-open-docker],[data-docker-settings],[data-view],[data-fetch-docker],[data-discover-docker],[data-dockhand-check],[data-container-view-filter]");
+  if (el?.dataset.closeDetails) {
+    const id = el.dataset.id, scope = el.dataset.closeDetails;
+    if (scope === "os") state.expanded.delete(id);
+    else state.containerExpanded.delete(id);
+    render();
+    const focusKey = `${scope === "os" ? "os-status" : "container-status"}:${id}`;
+    [...document.querySelectorAll("[data-focus-key]")].find(button => button.dataset.focusKey === focusKey)?.focus({ preventScroll: true });
+    return;
+  }
   if (el?.dataset.machineMenu) { openMachineMenu(el.dataset.machineMenu, el); return; }
   if (el?.dataset.machineInfo) { openMachineInformation(el.dataset.machineInfo, el); return; }
   if (!e.target.closest("#machine-actions")) closeMachineMenu();
