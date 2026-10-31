@@ -152,6 +152,11 @@ an overall host status: if no updates, reviews, active checks or errors remain, 
 says Up to date. Individual local, excluded and unknown rows retain their actual meanings.
 If the last coverage exception clears while its filter is open, details return to All.
 
+For stopped or offline machines, container rows match the OS power status: Not running or
+Offline. Saved check times are marked Last known, including empty native scans and confirmed
+deployment timestamps. Saved nonzero counters remain visible; a saved zero never becomes an
+unknown-count badge merely because the machine stopped.
+
 **Synced** means reports were fetched. **Last checked** means a matched per-container result or
 labelled failed attempt. **Updated** means a confirmed deployment, not a registry-check timestamp.
 Saved results are scoped to the connection, mapping, container ID and image, and persist in
