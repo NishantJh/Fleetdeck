@@ -494,6 +494,8 @@ a.brand { color: var(--text); text-decoration: none; }
 .view-tabs { display: flex; gap: 5px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
 .view-tabs button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; box-shadow: none; padding: 10px 13px; color: var(--muted); }
 .view-tabs button[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); background: transparent; }
+/* Keep tree labels and detail panels below the header and its menu. */
+.dashboard-page > header { z-index: 30; background: var(--panel); }
 .dashboard-menu { position: relative; }
 .dashboard-menu > summary { list-style: none; display: inline-flex; align-items: center; justify-content: center; min-width: 38px; padding: 7px 9px; border: 1px solid var(--border-strong); border-radius: var(--radius-sm); cursor: pointer; background: var(--panel); }
 .dashboard-menu > summary::-webkit-details-marker { display: none; }
@@ -810,6 +812,7 @@ a.brand { color: var(--text); text-decoration: none; }
   .dashboard-page > header, .management-page > header {
     display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 12px 14px; position: static;
   }
+  .dashboard-page > header { position: sticky; top: 0; }
   .dashboard-page header h1, .management-page header h1 { font-size: 17px; }
   .dashboard-page .brand, .management-page .brand { gap: 9px; }
   .dashboard-page .logo, .management-page .logo { width: 30px; height: 30px; }
