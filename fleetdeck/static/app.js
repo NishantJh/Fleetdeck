@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), docker: new Set(), logJob: null, logLines: [], showHidden: false, view: "machines", filter: null };
+const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), docker: new Set(), stackOpen: new Set(), logJob: null, logLines: [], showHidden: false, view: "machines", filter: null };
 const mobileDashboard = matchMedia("(max-width: 900px)");
 const $ = (sel) => document.querySelector(sel);
 const renderedHTML = new WeakMap();
@@ -222,6 +222,16 @@ function dockerButton(v) {
   return `<button class="small${n ? " primary" : ""}" data-act="docker" data-id="${id}" data-focus-key="docker:${id}" aria-expanded="${open}" aria-controls="docker-${id}" title="Docker Compose stacks on this machine">Docker${n ? ` (${n} ↑)` : ""}</button>`;
 }
 
+const serviceState = (x) => (x.status !== "running" && x.status !== "restarting" ? `<span class="muted">stopped</span>` : x.outdated ? `<span class="warn">update available</span>` : `<span class="ok">up to date</span>`);
+const shortId = (i) => (i ? esc(i.replace(/^sha256:/, "").slice(0, 12)) : "unknown");
+
+function stackDetails(s) {
+  const items = s.services.map((x) => `<li><span class="svc-name">${esc(x.name)}</span> ${serviceState(x)}
+    <span class="muted svc-image">${esc(x.image)} · ${esc(x.status)}</span>
+    <span class="muted svc-ids" title="The container is made from the first image ID. The second is what the tag points at on this machine now. They can differ for an image that is current (multi-platform images) when Docker keeps a separate ID per platform.">container image ${shortId(x.image_id)} · tag ${shortId(x.tag_id)}</span></li>`).join("");
+  return `<ul class="stack-services" aria-label="Services of ${esc(s.name)}">${items}</ul>`;
+}
+
 function stackPanel(v, inTab = false) {
   const id = esc(v.target.id), r = v.stacks, busy = !!v.active_job;
   const prune = !!remember.get("pruneImages");
@@ -241,7 +251,10 @@ function stackPanel(v, inTab = false) {
       const self = s.is_dashboard ? ` <span class="chip" title="This dashboard runs in this stack. Updating it would stop the update itself: run docker compose pull && docker compose up -d in a terminal.">dashboard</span>` : "";
       const can = !busy && !v.blocked && s.state !== "stopped" && !s.is_dashboard && r.compose !== "none" && !v.monitor_only;
       const btn = `<button class="small ${behind.length && can ? "primary" : ""}" data-stack="${esc(s.name)}" data-id="${id}" ${can ? "" : "disabled"} title="${esc(v.monitor_only ? MONITOR_TIP : v.blocked || "")}">Update</button>`;
-      return `<tr><td class="name">${esc(s.name)}${self}${up}</td><td class="muted" data-label="Services">${s.services.map((x) => esc(x.name)).join(", ")}</td><td data-label="Image status">${status}</td><td class="actions">${btn}</td></tr>`;
+      const key = `${v.target.id}/${s.name}`, open = state.stackOpen.has(key);
+      const more = `<button class="small" data-act="stack-details" data-id="${id}" data-name="${esc(s.name)}" data-focus-key="stack-details:${key}" aria-expanded="${open}" aria-controls="stack-${esc(key)}" aria-label="${open ? "Hide" : "Show"} services of ${esc(s.name)}">${open ? "Hide" : "Details"}</button>`;
+      const detail = open ? `<tr class="pkgs" id="stack-${esc(key)}"><td></td><td colspan="3">${stackDetails(s)}</td></tr>` : "";
+      return `<tr><td class="name">${esc(s.name)}${self}${up}</td><td class="muted" data-label="Services">${s.services.map((x) => esc(x.name)).join(", ")}</td><td data-label="Image status">${status}</td><td class="actions">${more} ${btn}</td></tr>${detail}`;
     }).join("");
     body = `<div class="group-scroll"><table><thead><tr><th>Stack</th><th>Services</th><th>Image status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
@@ -825,6 +838,10 @@ document.addEventListener("click", (e) => {
       // Nothing known yet: look right away.
       if (!state.targets.find((v) => v.target.id === id)?.stacks) act("stacks", [id]);
     }
+    render();
+  } else if (el.dataset.act === "stack-details") {
+    const key = `${el.dataset.id}/${el.dataset.name}`;
+    if (!state.stackOpen.delete(key)) state.stackOpen.add(key);
     render();
   } else if (el.dataset.act === "stacks") {
     act("stacks", [el.dataset.id]);

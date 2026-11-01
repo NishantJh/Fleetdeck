@@ -493,6 +493,10 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page td.actions { min-width: 138px; }
 .dashboard-page .more-actions { font-size: 21px; line-height: 20px; min-width: 30px; padding: 3px 6px; }
 .docker-panel td { overflow-wrap: anywhere; }
+.stack-services { list-style: none; margin: 0; padding: 4px 10px 10px; display: grid; gap: 8px; }
+.stack-services li { display: flex; flex-wrap: wrap; gap: 2px 12px; align-items: baseline; overflow-wrap: anywhere; }
+.stack-services .svc-name { font-weight: 600; }
+.stack-services .svc-image, .stack-services .svc-ids { flex-basis: 100%; font-size: 12px; }
 .docker-host .docker-panel { padding: 4px 8px 8px; }
 .discovery-note { font-size: 12px; }
 .docker-panel .docker-head label { white-space: normal; }
