@@ -552,7 +552,7 @@ a.brand { color: var(--text); text-decoration: none; }
    Content budgets scale together at wider viewports; long names/counts retain full labels. */
 .dashboard-page .machine-table { min-width: 946px; table-layout: fixed; }
 .dashboard-page .machine-table.has-backup { min-width: 1044px; }
-.dashboard-page .machine-table col.col-select { width: 30px; }
+.dashboard-page .machine-table col.col-select { width: 42px; }
 .dashboard-page .machine-table col.col-machine { width: 230px; }
 .dashboard-page .machine-table col.col-scope { width: 90px; }
 .dashboard-page .machine-table col.col-status { width: 164px; }
@@ -664,11 +664,11 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .context-actions .ui-icon { width: 16px; height: 16px; }
 @media (min-width: 901px) {
   .dashboard-page .machine-table .machine-cell {
-    position: relative; --tree-x: 11px; --tree-line: 2px; --guest-indent: 26px; --guest-branch: 33px; --guest-curve: 11px;
+    position: relative; --tree-x: 11px; --tree-line: 2px; --guest-indent: 26px; --guest-branch: 18px; --guest-curve: 11px;
     --tree-color: color-mix(in srgb, var(--accent) 62%, var(--border-strong));
   }
   .dashboard-page .machine-table tr.host.has-guests .machine-cell::after {
-    content: ""; position: absolute; z-index: 1; left: var(--tree-x); top: 50%; bottom: -2px;
+    content: ""; position: absolute; z-index: 1; left: var(--tree-x); top: calc(50% + 8px); bottom: -2px;
     width: var(--tree-line); transform: translateX(-50%); border-radius: 999px; background: var(--tree-color);
   }
   .dashboard-page .machine-table tr.guest .machine-main { margin-left: var(--guest-indent); }
@@ -874,6 +874,8 @@ a.brand { color: var(--text); text-decoration: none; }
 
 /* A machine shares identity and backup context across independent OS/container rows. */
 .dashboard-page .machine-table > tbody.machine-rows > tr > td { padding: 10px 6px; vertical-align: middle; }
+/* Shift identity and tree together, preserving the checkbox gutter and guest spacing. */
+.dashboard-page .machine-table > tbody.machine-rows > tr > td.machine-cell { padding-inline: 6px; }
 .dashboard-page .machine-table > tbody.machine-rows > tr.container-row > td { height: 54px; background: color-mix(in srgb, var(--panel-2) 35%, var(--panel)); border-top-color: color-mix(in srgb, var(--border) 60%, var(--panel)); }
 .dashboard-page .machine-table .row-actions-heading { text-align: left; }
 .machine-cell-inner { display: flex; align-items: center; gap: 6px; min-width: 0; }
