@@ -175,6 +175,7 @@ class StacksResult(BaseModel):
     docker: str = "yes"
     # "v2" (docker compose), "v1" (docker-compose) or "none".
     compose: str = "none"
+    docker_version: str | None = Field(default=None, max_length=64)
     stacks: list[Stack] = Field(default_factory=list)
     checked_at: datetime
     error: str | None = None

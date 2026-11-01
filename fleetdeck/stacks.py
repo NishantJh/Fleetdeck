@@ -37,12 +37,13 @@ export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 export LC_ALL=C
 US=$(printf '\037')
 if ! command -v docker >/dev/null 2>&1; then echo "__DOCKER__=none"; exit 0; fi
-if ! docker info >/dev/null 2>&1; then
+if ! docker_version=$(docker info --format '{{.ServerVersion}}' 2>/dev/null); then
   echo "__DOCKER__=down"
   docker info 2>&1 | tail -n 3 | sed 's/^/! /'
   exit 0
 fi
 echo "__DOCKER__=yes"
+printf '__DOCKER_VERSION__=%s\n' "$docker_version"
 if docker compose version >/dev/null 2>&1; then echo "__COMPOSE__=v2"
 elif command -v docker-compose >/dev/null 2>&1; then echo "__COMPOSE__=v1"
 else echo "__COMPOSE__=none"; fi
@@ -79,12 +80,16 @@ def _own_id() -> str | None:
 
 def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
     """The stacks a scan found. ``own_id``: the dashboard's own container, whose stack is marked."""
-    docker, compose = "yes", "none"
+    docker, compose, docker_version = "yes", "none", None
     local: dict[str, str] = {}  # image reference -> ID of what that tag points at now
     rows: list[list[str]] = []
     for line in res.stdout.splitlines():
         if line.startswith("__DOCKER__="):
             docker = line.split("=", 1)[1]
+        elif line.startswith("__DOCKER_VERSION__="):
+            value = line.split("=", 1)[1]
+            if re.fullmatch(r"[0-9][A-Za-z0-9.+~_-]{0,63}", value):
+                docker_version = value
         elif line.startswith("__COMPOSE__="):
             compose = line.split("=", 1)[1]
         elif line.startswith("__I__" + US):
@@ -120,6 +125,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
     return StacksResult(
         docker=docker,
         compose=compose,
+        docker_version=docker_version,
         stacks=sorted(stacks.values(), key=lambda s: s.name),
         checked_at=datetime.now(UTC),
         error=error,

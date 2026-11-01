@@ -345,3 +345,20 @@ def test_a_hostile_working_dir_is_never_expanded_by_the_shell():
     script = _in_dir(stack)
     assert '"' not in script  # no double quotes, where $( ) and backticks would still run
     assert "echo 'its folder /x$(id>/tmp/p)`id` is gone'" in script
+
+
+@pytest.mark.parametrize(
+    "version, expected",
+    [
+        ("28.5.1", "28.5.1"),
+        ("27.5.0+vendor.1", "27.5.0+vendor.1"),
+        ("unknown", None),
+        ("<script>bad</script>", None),
+        ("1" * 65, None),
+    ],
+)
+def test_scan_reports_engine_version_without_requiring_it(version, expected):
+    result = parse_scan(ExecResult(rc=0, stdout=f"__DOCKER__=yes\n__DOCKER_VERSION__={version}\n__COMPOSE__=v2\n"))
+    assert result.docker_version == expected
+    assert not result.error
+    assert not result.stacks

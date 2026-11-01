@@ -10,7 +10,7 @@ optional; installing Fleetdeck does not require Dockhand, Node or a JavaScript b
 - **Containers** shows container hosts and their container details.
 
 OS and container rows have independent status, update counters, timestamps and actions.
-Machine identity and backup context are shared in All. Opening details never starts a check
+In All, Containers has its own nested identity below the machine; backup context spans both rows. Opening details never starts a check
 or installs updates. On phones, the same information appears in separate card sections.
 Both detail panels have matching text headings and a top close button. Closing OS details
 leaves container details open, and vice versa, and returns keyboard focus to the status control.
@@ -246,3 +246,35 @@ For a manual UI review using fake machines:
    to the corresponding status. Check both native and external-provider headers.
 
 Use mocked Proxmox API tests for guest boot; do not point the demo at a real Proxmox host.
+
+
+## Container identity and management indicators
+
+The table reads Machine, Status, Updates, Checked, Backup (when available), Actions.
+A separate Scope column is unnecessary: All nests Containers beneath its machine, while
+Machines stays OS-only and Containers combines machine identity with Docker metadata.
+Container connectors are blue; the machine tree stays purple in All and Machines.
+Containers view uses blue tree connectors without adding unrelated parent-node rows.
+
+Desktop management tags distinguish Fleetdeck, Fleetdeck monitor only, Dockhand, and a
+configured external manager. Mobile keeps the provider icon and accessible description.
+Docker management is the final item of the Containers-view More menu. In All, provider
+settings remain on the machine menu. The VM-wide Monitor only toggle stays on the machine
+menu; Docker management controls the separate native container-monitoring policy.
+
+The container branch status dot describes the last engine evidence, independently of image
+update findings. A confirmed stopped host immediately makes it red. Successful native scans
+or fresh Dockhand engine reports make it green; missing, stale or unreachable evidence stays
+grey. All three states use the same halo. Tooltips identify the last scan/report rather than
+implying a live probe. Link-only external management has an external-link status icon.
+
+Docker Engine version is optional metadata. Native scans use the Docker info call already
+made during an allowed check. Dockhand polling may also read GET /api/system?env=ID; older,
+restricted or malformed responses leave the version absent without failing container reports.
+This read does not request image checks, download layers or deploy containers. OS checks,
+provider permissions, native-job exclusion on Dockhand mappings and schedules are unchanged.
+
+Mobile container cards put a menu-only footer alongside counters rather than reserving
+another action row. Update buttons keep their own row. Missing backup times are blank;
+mobile omits the Backup caption when there is no time. Schedule coverage remains separate
+from proof of a successful backup, and fuller information stays in Machine information.

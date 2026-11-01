@@ -120,6 +120,8 @@ async def test_poll_reads_history_only_and_restart_retains_results_without_secre
     def respond(req):
         calls.append(req)
         assert req.method == "GET"
+        if req.url.path == "/api/system":
+            return httpx.Response(404)
         if req.url.path == "/api/containers":
             items = inventory()
             if replacement:
@@ -189,6 +191,8 @@ async def test_denied_redirected_and_wrong_environment_history_keeps_inventory_u
 
         def respond(req, calls=calls, response=response):
             calls.append(req)
+            if req.url.path == "/api/system":
+                return httpx.Response(404)
             if req.url.path == "/api/containers":
                 return httpx.Response(200, json=inventory())
             if req.url.path == "/api/containers/pending-updates":
@@ -212,6 +216,8 @@ async def test_explicit_button_results_survive_restart_and_newer_reports_win(tmp
         if req.method == "POST":
             assert req.url.path == "/api/containers/check-updates"
             return httpx.Response(200, json={"results": [{"containerId": "a", "hasUpdate": False}]})
+        if req.url.path == "/api/system":
+            return httpx.Response(404)
         if req.url.path == "/api/containers":
             return httpx.Response(200, json=inventory())
         if req.url.path == "/api/containers/pending-updates":

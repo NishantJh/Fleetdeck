@@ -102,7 +102,7 @@ class DemoExecutor:
     def _scan(self) -> str:
         if self.stacks is None:
             return "__DOCKER__=none\n"
-        out = ["__DOCKER__=yes", "__COMPOSE__=v2"]
+        out = ["__DOCKER__=yes", "__COMPOSE__=v2", "__DOCKER_VERSION__=28.5.1"]
         images = {}
         for name, (services, behind) in self.stacks.items():
             for svc in services:

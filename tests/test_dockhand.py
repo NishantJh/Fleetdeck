@@ -41,7 +41,7 @@ def containers():
     ]
 
 
-async def test_reader_only_gets_cached_routes_preserves_history_and_never_follows_redirects():
+async def test_reader_gets_reports_and_optional_metadata_preserves_history_and_never_follows_redirects():
     calls = []
     fail = False
 
@@ -55,6 +55,8 @@ async def test_reader_only_gets_cached_routes_preserves_history_and_never_follow
         assert request.url.params["env"] == "1"
         if fail:
             return httpx.Response(302, headers={"location": "https://other.example/steal"})
+        if request.url.path == "/api/system":
+            return httpx.Response(404)
         if request.url.path == "/api/containers":
             return httpx.Response(200, json=containers())
         assert request.url.path == "/api/containers/pending-updates"
@@ -73,16 +75,16 @@ async def test_reader_only_gets_cached_routes_preserves_history_and_never_follow
 
     reader = DockhandReader(config(), transport=httpx.MockTransport(respond))
     await reader.refresh()
-    assert len(calls) == 3
+    assert len(calls) == 4
     result = reader.status["t1"]
     assert result.stale is False
     assert result.containers[0].status == "unknown"  # standalone record with no cached outcome
     assert result.containers[1].stack == "media"
     assert result.containers[1].status == "update"
     await reader.refresh()
-    assert len(calls) == 3  # ordinary dashboard polling respects the interval
+    assert len(calls) == 4  # ordinary dashboard polling respects the interval
     await reader.refresh(force=True)
-    assert len(calls) == 6  # explicit inventory refresh fetches cached GET status immediately
+    assert len(calls) == 8  # explicit inventory refresh fetches cached GET status immediately
     assert all(req.method == "GET" for req in calls)
     result = reader.status["t1"]
     fail = True
@@ -92,7 +94,7 @@ async def test_reader_only_gets_cached_routes_preserves_history_and_never_follow
     assert failed.stale and failed.error
     assert failed.synced_at == result.synced_at
     assert failed.containers == result.containers
-    assert len(calls) == 7
+    assert len(calls) == 9
     assert "secret-test-token" not in failed.model_dump_json()
     assert "other.example" not in failed.model_dump_json()
     await reader.aclose()
@@ -246,6 +248,8 @@ async def test_explicit_check_captures_full_results_and_keeps_them_across_cached
 
     def respond(req):
         calls.append(req)
+        if req.url.path == "/api/system":
+            return httpx.Response(404)
         if req.url.path == "/api/containers":
             return httpx.Response(200, json=containers())
         if req.url.path == "/api/containers/pending-updates":
@@ -342,3 +346,45 @@ def test_manual_check_route_requires_login_csrf_opt_in_and_a_known_mapping(tmp_p
         start.assert_called_once_with("t1")
         cfg.dockhand.allow_checks = False
         assert client.post("/api/dockhand/check", json=body, auth=auth).status_code == 403
+
+
+@pytest.mark.parametrize(
+    "status, metadata, expected",
+    [
+        (200, {"docker": {"serverVersion": "28.5.1", "version": "27.0.0"}}, "28.5.1"),
+        (200, {"docker": {"version": "27.5.0"}}, "27.5.0"),
+        (200, {"docker": None}, None),
+        (200, {"docker": {"serverVersion": "<script>bad</script>"}}, None),
+        (200, {"docker": {"serverVersion": "1" * 65}}, None),
+        (403, {}, None),
+        (404, {}, None),
+        (302, {}, None),
+    ],
+)
+async def test_engine_metadata_is_optional_read_only_and_never_breaks_reports(status, metadata, expected):
+    calls = []
+
+    def respond(req):
+        calls.append(req)
+        assert req.method == "GET"
+        if req.url.path == "/api/containers":
+            return httpx.Response(200, json=containers())
+        if req.url.path == "/api/containers/pending-updates":
+            return httpx.Response(200, json={"pendingUpdates": []})
+        if req.url.path == "/api/system":
+            assert req.url.params["env"] == "1"
+            return httpx.Response(
+                status, json=metadata, headers={"location": "https://other.example"} if status == 302 else {}
+            )
+        return httpx.Response(404)
+
+    reader = DockhandReader(config(), transport=httpx.MockTransport(respond))
+    try:
+        await reader.refresh()
+        result = reader.status["t1"]
+        assert result.docker_version == expected
+        assert not result.error and not result.stale
+        assert result.containers
+        assert all(req.url.host == "dockhand.example" for req in calls)
+    finally:
+        await reader.aclose()

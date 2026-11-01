@@ -554,7 +554,6 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page .machine-table.has-backup { min-width: 1044px; }
 .dashboard-page .machine-table col.col-select { width: 42px; }
 .dashboard-page .machine-table col.col-machine { width: 230px; }
-.dashboard-page .machine-table col.col-scope { width: 90px; }
 .dashboard-page .machine-table col.col-status { width: 164px; }
 .dashboard-page .machine-table col.col-updates { width: 188px; }
 .dashboard-page .machine-table col.col-checked { width: 112px; }
@@ -1048,16 +1047,13 @@ a.brand { color: var(--text); text-decoration: none; }
 /* Final spacing pass: breathing room without returning to stretched metric slots. */
 .dashboard-page .os-metrics, .dashboard-page .scope-metrics .container-indicators, .mc-containers > .container-indicators { column-gap:14px; }
 .dashboard-page .machine-table col.col-actions, .dashboard-page .machine-table.has-manager-actions col.col-actions { width:144px; }
-.dashboard-page .machine-table col.col-scope { width:100px; }
 .dashboard-page .machine-table, .dashboard-page .machine-table.has-manager-actions { min-width:968px; }
 .dashboard-page .machine-table.has-backup, .dashboard-page .machine-table.has-manager-actions.has-backup { min-width:1066px; }
 .dashboard-page .machine-table .scope-actions .more-actions { grid-row:1; }
 .dashboard-page .machine-table .scope-actions > :not(.more-actions) { grid-column:1; grid-row:1; }
 .dashboard-page .machine-table col.col-updates { width:208px; }
-.dashboard-page .machine-table col.col-scope { width:112px; }
 .dashboard-page .machine-table col.col-updates { width:224px; }
 @media(min-width:1120px) and (max-width:1240px) {
-  .dashboard-page .machine-table col.col-scope { width:100px; }
   .dashboard-page .machine-table col.col-updates { width:208px; }
 }
 
@@ -1314,4 +1310,95 @@ a.brand { color: var(--text); text-decoration: none; }
   .dashboard-page .container-results-table td[data-label="Action"]::before { display: none; }
   .dashboard-page .group .container-results-table tr:not(.pkgs) > td[data-label="Action"]:empty { display: none; }
   .dashboard-page .container-results-table td[data-label="Action"] > button { justify-self: start; width: auto; min-width: 92px; min-height: 42px; padding: 7px 14px; font-size: 14px; }
+}
+
+/* Containers are a child of their machine, while the cluster trunk continues past them. */
+@media (min-width: 1120px) {
+  .dashboard-page .machine-table .machine-cell { --container-parent-x: 11px; --container-indent: 26px; }
+  .dashboard-page .machine-table tr.guest .machine-cell,
+  .dashboard-page .machine-table .container-machine-cell.nested-guest { --container-parent-x: 37px; }
+  .dashboard-page .machine-table .container-machine-cell.nested-guest { --container-indent: 52px; }
+  .dashboard-page .container-tree-stem { position: absolute; left: var(--container-parent-x); top: calc(50% + 8px); bottom: -2px; width: var(--tree-line); transform: translateX(-50%); background: var(--container-tone); pointer-events: none; }
+  .dashboard-page .machine-table .container-machine-cell .machine-main { margin-left: var(--container-indent); max-width: calc(100% - var(--container-indent)); }
+  .dashboard-page .machine-table .container-machine-cell::before { content: ""; position: absolute; left: calc(var(--container-parent-x) - 1px); top: -2px; bottom: calc(50% - 1px); width: var(--guest-branch); border-left: var(--tree-line) solid var(--container-tone); border-bottom: var(--tree-line) solid var(--container-tone); border-bottom-left-radius: var(--guest-curve); }
+  .dashboard-page .machine-table .container-machine-cell.tree-continues::after { content: ""; position: absolute; left: var(--tree-x); top: -2px; bottom: -2px; width: var(--tree-line); transform: translateX(-50%); background: var(--tree-color); }
+  .dashboard-page .container-label { color: var(--text-2); font-size: 13px; font-weight: 500; }
+}
+@media (max-width: 1119px) {
+  .dashboard-page .mc-card .mc-containers > .container-status-hit { align-self: start; }
+  .dashboard-page .mc-card .mc-container-version { grid-column: 1; grid-row: 2; align-self: start; line-height: 18px; }
+  .dashboard-page .mc-card .mc-containers:has(> .mc-container-version) > .container-indicators { grid-column: 1 / -1; grid-row: 3; }
+  .dashboard-page .mc-card .mc-containers:has(> .mc-container-version) > .scope-actions { grid-row: 4; }
+  .dashboard-page .mc-card .mc-containers > .container-indicators:not(:has(.container-metric-hit)) { display: none; }
+}
+
+/* Identity now carries scope and provider; give the removed column back to content. */
+.dashboard-page .machine-table,
+.dashboard-page .machine-table.has-manager-actions { min-width: 856px; }
+.dashboard-page .machine-table.has-backup,
+.dashboard-page .machine-table.has-manager-actions.has-backup { min-width: 954px; }
+.dashboard-page .container-label .scope-provider { margin-left: 0; }
+.dashboard-page .machine-table col.col-status { width: 190px; }
+
+/* Provider labels distinguish management from read-only monitoring. */
+.scope-provider { gap: 4px; color: var(--muted); font-size: 11px; font-weight: 400; }
+.scope-provider .provider-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dashboard-page .machine-table .container-label { flex-wrap: wrap; overflow: visible; row-gap: 3px; }
+.dashboard-page .machine-table col.col-status { width: 220px; }
+.dashboard-page .machine-table col.col-checked { width: 124px; }
+
+/* Mobile keeps the compact provider icons; descriptions remain accessible. */
+@media (max-width: 1119px) {
+  .dashboard-page .scope-provider .provider-label { display: none; }
+}
+
+/* Management labels use the same quiet rounded treatment as machine tags. */
+@media (min-width: 1120px) {
+  .dashboard-page .scope-provider {
+    padding: 3px 7px;
+    border-radius: 999px;
+    background: var(--chip);
+    line-height: 16px;
+    max-width: 100%;
+  }
+}
+
+/* Keep check ages compact and give backup age plus schedule icon more room. */
+.dashboard-page .machine-table col.col-checked { width: 112px; }
+.dashboard-page .machine-table col.col-backup { width: 110px; }
+
+/* When the container footer is just More, share its row with the counters. */
+@media (max-width: 1119px) {
+  .dashboard-page .mc-card:has(.mc-os-scope) .mc-containers:has(> .scope-actions:not(:has(> :not(.more-actions)))) > .container-indicators {
+    grid-column: 1 / -1;
+    padding-right: 44px;
+    box-sizing: border-box;
+    grid-row: 3;
+    min-height: 0;
+    margin: 0;
+    align-self: center;
+  }
+  .dashboard-page .mc-card:has(.mc-os-scope) .mc-containers > .scope-actions:not(:has(> :not(.more-actions))) {
+    grid-column: 2;
+    grid-row: 3;
+    width: auto;
+    margin-top: 0;
+    justify-self: end;
+    align-self: center;
+  }
+}
+
+/* In Containers view every visible tree connector belongs to containers. */
+@media (min-width: 1120px) {
+  .dashboard-page .machine-table.containers-only .machine-cell { --tree-color: var(--container-tone); }
+}
+
+/* Start a container-only guest tree at the body edge, below the header. */
+@media (min-width: 1120px) {
+  .dashboard-page .machine-table.containers-only tr.first-guest .machine-cell::after { top: 0; }
+}
+
+/* Unknown engine state keeps the same dot silhouette as confirmed states. */
+.dashboard-page .container-engine-state .dot:not(.on):not(.off) {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--muted) 20%, transparent);
 }

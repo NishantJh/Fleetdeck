@@ -42,6 +42,7 @@ class ContainerStatus(BaseModel):
 
 class DockhandStatus(BaseModel):
     manager_url: str
+    docker_version: str | None = Field(default=None, max_length=64)
     synced_at: datetime | None = None
     containers: list[ContainerStatus] = Field(default_factory=list)
     error: str | None = None
@@ -276,6 +277,7 @@ def demo_status(url: str) -> DockhandStatus:
     now = datetime.now(UTC)
     result = DockhandStatus(
         manager_url=url,
+        docker_version="28.5.1",
         synced_at=now,
         stale=False,
         simulated=True,
@@ -709,6 +711,7 @@ class DockhandReader:
                         if not containers:
                             raise ValueError("Empty inventory cannot establish environment health")
                         items = normalize(containers, pending)
+                        docker_version = await self._docker_version(mapping.environment_id)
                         summary = {
                             key: getattr(previous, key)
                             for key in (
@@ -742,6 +745,7 @@ class DockhandReader:
                         self.status[mapping.target_id] = DockhandStatus(
                             manager_url=self.cfg.url,
                             synced_at=datetime.now(UTC),
+                            docker_version=docker_version,
                             containers=self._merge(mapping.target_id, items),
                             stale=False,
                             last_check_at=previous.last_check_at,
@@ -782,6 +786,19 @@ class DockhandReader:
 
             await asyncio.gather(*(read(m) for m in self.cfg.environments))
             self.next_poll = time.monotonic() + self.cfg.poll_seconds
+
+    async def _docker_version(self, env: int) -> str | None:
+        # Optional read-only metadata: older/restricted APIs must still supply container reports.
+        try:
+            data = await self._get("system", env)
+            docker = data.get("docker") if isinstance(data, dict) else None
+            if isinstance(docker, dict):
+                value = docker.get("serverVersion") or docker.get("version")
+                if isinstance(value, str) and re.fullmatch(r"[0-9][A-Za-z0-9.+~_-]{0,63}", value):
+                    return value
+        except (httpx.HTTPError, ValueError, TypeError, KeyError):
+            pass
+        return None
 
     async def _get(self, path: str, env: int):
         # Report reads use fixed internal paths; never forward browser-supplied routes.

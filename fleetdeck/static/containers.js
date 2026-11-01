@@ -49,7 +49,7 @@ function containerStatus(v) {
   const policy = dockerSettings(v), s = containerSummary(v);
   let symbol = "help", label = "Not checked", tone = "muted";
   if (policy.mode === "disabled") label = "Disabled";
-  else if (!v.dockhand && !dockerEnabled(v)) { symbol = null; label = "Monitored externally"; }
+  else if (!v.dockhand && !dockerEnabled(v)) { symbol = "external"; label = "Monitored externally"; }
   else if (v.active_job?.action === "dockhand-update") return '<span class="status-inline muted"><span class="spin"></span>Updating containers…</span>';
   else if (s.checking) return '<span class="status-inline muted"><span class="spin"></span>Checking containers…</span>';
   else if (v.target.status === "stopped") { symbol = "power"; label = "Not running"; tone = "unavailable"; }
@@ -113,10 +113,47 @@ function containerRowAction(v) {
   return "";
 }
 
+function containerVersion(v) {
+  const version = v.dockhand ? v.dockhand.docker_version : v.stacks?.docker_version;
+  return version ? `<span class="machine-os docker-version" title="Docker Engine version from the last provider report">Docker ${esc(version)}</span>` : "";
+}
+
+function containerEngineLight(v) {
+  let tone = "", label = "Docker engine status unknown";
+  if (v.target.status === "stopped") {
+    tone = "off"; label = "Host stopped; Docker unavailable";
+  } else if (["running", "online"].includes(v.target.status)) {
+    if (v.dockhand) {
+      if (!v.dockhand.stale && !v.dockhand.error && v.dockhand.docker_version && Number.isFinite(Date.parse(v.dockhand.synced_at))) {
+        tone = "on"; label = "Docker reachable at last provider sync";
+      }
+    } else if (dockerEnabled(v) && Number.isFinite(Date.parse(v.stacks?.checked_at))) {
+      if (v.stacks.docker === "down") {
+        tone = "off"; label = "Docker did not answer the last scan";
+      } else if (v.stacks.docker === "yes" && !v.stacks.error) {
+        tone = "on"; label = "Docker reachable at last container scan";
+      }
+    }
+  }
+  return `<span class="state container-engine-state" role="img" aria-label="${label}" title="${label}"><span class="dot ${tone}"></span></span>`;
+}
+
+function containerMachineIdentity(v) {
+  return `<span class="machine-main">${containerEngineLight(v)}<span class="machine-identity container-label">Containers${containerProvider(v)}</span><span class="machine-meta">${containerVersion(v)}</span></span>`;
+}
+
+function containerProvider(v) {
+  const policy = dockerSettings(v), monitor = policy.mode === "monitor" || v.monitor_only;
+  let label = "Fleetdeck", symbol = "server", description = "Managed by Fleetdeck · Compose only";
+  if (v.dockhand) { label = "Dockhand"; symbol = "external"; description = "Managed by Dockhand"; }
+  else if (policy.mode === "external") { label = policy.manager_name || "External manager"; symbol = "external"; description = `Monitored externally by ${label}`; }
+  else if (policy.mode === "disabled") { label = "Disabled"; symbol = "power"; description = "Container checks and management disabled"; }
+  else if (monitor) { label = "Fleetdeck · monitor only"; symbol = "eye"; description = "Monitored by Fleetdeck · container updates disabled"; }
+  return `<span class="scope-provider" role="img" aria-label="${esc(description)}" title="${esc(description)}">${icon(symbol)}<span class="provider-label">${esc(label)}</span></span>`;
+}
+
 function containerScope(v) {
-  const policy = dockerSettings(v), external = !!v.dockhand || policy.mode === "external";
-  const manager = policy.mode === "disabled" ? "Container checks disabled" : external ? `Monitored externally by ${policy.manager_name || "manager"}` : "Fleetdeck native Docker · Compose only";
-  return `Containers<span class="scope-provider" role="img" aria-label="${esc(manager)}" title="${esc(manager)}">${icon(external ? "external" : "server")}</span>`;
+  return `Containers${containerProvider(v)}`;
 }
 
 function dockerCell(v) {
