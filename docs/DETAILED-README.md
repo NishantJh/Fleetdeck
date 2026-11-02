@@ -476,7 +476,9 @@ The setup page writes an ordinary `config.yaml`, and everything below can also b
 
 * **Proxmox:** an API token (Datacenter → Permissions → API Tokens) with `VM.Audit`/`Sys.Audit` to
   list guests, `Datastore.Audit`, `Datastore.AllocateSpace` and `VM.Backup` to see backups,
-  `VM.Snapshot` and `VM.Snapshot.Rollback` for snapshots, `Sys.Modify` on `/nodes` so the host check can refresh package lists, and
+  `VM.Snapshot` and `VM.Snapshot.Rollback` for snapshots, `VM.PowerMgmt` for the *Boot up* button (the button
+  only shows when the token holds it; on a setup from before, run `pveum role modify HomelabManager --privs VM.PowerMgmt --append 1`
+  on the Proxmox host or re-run the setup script), `Sys.Modify` on `/nodes` so the host check can refresh package lists, and
   guest-agent exec rights to update VMs (`VM.GuestAgent.Unrestricted` on PVE 9, `VM.Monitor` on
   PVE 8). VMs need the *QEMU Guest Agent* option on and `qemu-guest-agent` installed inside.
   Connect creates a `homelab@pve` user with a `HomelabManager` role holding these privileges.

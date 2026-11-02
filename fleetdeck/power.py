@@ -24,7 +24,10 @@ class ProxmoxGuestPower:
     async def _request(self, method: str, path: str):
         response = await self.client.request(method, path)
         if response.status_code in (401, 403):
-            raise RuntimeError("Proxmox denied access; check the token's VM.Audit and VM.PowerMgmt permissions")
+            raise RuntimeError(
+                "Proxmox denied access: the token needs VM.PowerMgmt. On the Proxmox host run: "
+                "pveum role modify HomelabManager --privs VM.PowerMgmt --append 1"
+            )
         response.raise_for_status()
         return response.json()["data"]
 

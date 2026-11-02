@@ -294,6 +294,14 @@ class ProxmoxProvider:
         held = {priv for privs in (perms or {}).values() for priv, ok in privs.items() if ok}
         return not set(BACKUP_PRIVS) <= held
 
+    async def _can_power(self) -> bool:
+        """Whether the token may start guests. Unknown (permissions unreadable) counts as yes: a 403 explains itself."""
+        try:
+            perms = await self._get("/access/permissions")
+        except httpx.HTTPError:
+            return True
+        return any(privs.get("VM.PowerMgmt") for privs in (perms or {}).values())
+
     def _update_command(self, vmid: int, name: str | None) -> str | None:
         """The guest's own update command from the config, by VMID or by name."""
         cmds = self.cfg.update_commands
@@ -320,6 +328,7 @@ class ProxmoxProvider:
         backup_runs: dict[str, BackupRun] = {}
         node_ips = await self._node_ips()
         nodes = await self._get("/nodes")
+        can_power = await self._can_power()
         backups = None
         if self.cfg.backup_max_age_hours:
             online = [n["node"] for n in nodes if n.get("status") == "online"]
@@ -392,7 +401,10 @@ class ProxmoxProvider:
                     note=note,
                     backup=self._backup_for(vmid, backups),
                     can_snapshot=vmid not in self.cfg.protect,
-                    can_start=ct.get("status") == "stopped" and not ct.get("template") and vmid not in self.cfg.protect,
+                    can_start=can_power
+                    and ct.get("status") == "stopped"
+                    and not ct.get("template")
+                    and vmid not in self.cfg.protect,
                     monitor_only=vmid in self.cfg.monitor_only,
                 )
                 if t.can_start:
@@ -428,7 +440,7 @@ class ProxmoxProvider:
                     note=note,
                     backup=self._backup_for(vmid, backups),
                     can_snapshot=vmid not in self.cfg.protect,
-                    can_start=vm.get("status") == "stopped" and vmid not in self.cfg.protect,
+                    can_start=can_power and vm.get("status") == "stopped" and vmid not in self.cfg.protect,
                     monitor_only=vmid in self.cfg.monitor_only,
                 )
                 if t.can_start:

@@ -182,6 +182,7 @@ async def test_discovery_advertises_start_only_for_stopped_unprotected_guests():
 
     data = {
         "/api2/json/cluster/status": [],
+        "/api2/json/access/permissions": {"/": {"VM.Audit": 1, "VM.PowerMgmt": 1}},
         "/api2/json/nodes": [{"node": "pve", "status": "online"}],
         "/api2/json/nodes/pve/lxc": [
             {"vmid": 301, "name": "stopped-ct", "status": "stopped"},
@@ -295,3 +296,34 @@ def test_completed_boot_refreshes_stopped_inventory_on_next_dashboard_poll(monke
         assert after["target"]["status"] == "running"
         assert not after["target"]["can_start"]
         assert after["active_job"] is None
+
+
+async def test_discovery_hides_boot_when_the_token_lacks_vm_powermgmt():
+    from fleetdeck.config import ProxmoxConfig
+    from fleetdeck.providers.proxmox import ProxmoxProvider
+
+    data = {
+        "/api2/json/cluster/status": [],
+        "/api2/json/access/permissions": {"/": {"VM.Audit": 1}},
+        "/api2/json/nodes": [{"node": "pve", "status": "online"}],
+        "/api2/json/nodes/pve/lxc": [{"vmid": 301, "name": "stopped-ct", "status": "stopped"}],
+        "/api2/json/nodes/pve/qemu": [{"vmid": 201, "name": "stopped-vm", "status": "stopped"}],
+    }
+    provider = ProxmoxProvider(
+        ProxmoxConfig(name="lab", api_url="https://pve.invalid", token_id="t", token_secret="x", backup_max_age_hours=0)
+    )
+    await provider.client.aclose()
+    async with httpx.AsyncClient(
+        base_url="https://pve.invalid/api2/json",
+        transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"data": data[request.url.path]})),
+    ) as client:
+        provider.client = client
+        targets = [t for t, _ in await provider.discover()]
+    assert targets and not any(t.can_start for t in targets) and not provider.power
+
+
+async def test_start_denial_names_the_pveum_command():
+    transport = httpx.MockTransport(lambda request: httpx.Response(403))
+    async with httpx.AsyncClient(base_url="https://pve.invalid", transport=transport) as client:
+        with pytest.raises(RuntimeError, match="pveum role modify HomelabManager --privs VM.PowerMgmt --append 1"):
+            await ProxmoxGuestPower(client, "pve", "qemu", 101).start()
