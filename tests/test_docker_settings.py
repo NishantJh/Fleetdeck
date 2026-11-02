@@ -235,7 +235,7 @@ async def test_fresh_positive_detection_overrides_old_negative_scan_for_schedule
 
 def test_docker_global_enable_flag_is_not_part_of_configuration():
     assert "docker_enabled" not in AppConfig.model_fields
-    assert ScheduleConfig().check_docker is False
+    assert ScheduleConfig().check_docker is True
 
 
 def test_default_external_manager_is_provider_neutral():

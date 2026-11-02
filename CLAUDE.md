@@ -35,6 +35,7 @@ Updates and jobs
   start with its prefix.
 - `fleetdeck/scheduler.py`: checks every machine on a timer and sends a notification when something new needs attention.
 - `fleetdeck/stacks.py`: native Docker Compose scan and update over the machine's executor; compares container and tag image IDs.
+- `fleetdeck/registry.py`: asks image registries for a tag's current digest (HEAD, anonymous token, no pull) and compares it with the machine's RepoDigests; runs in the dashboard, never on targets. Anything it can't settle is "unknown" and falls back to a pull.
 - `fleetdeck/dockhand.py`: read-only Dockhand client and cache (saved reports, optional fresh checks, scheduled-check history).
 - `fleetdeck/dockhand_updates.py`: confirmed container updates through Dockhand; revalidates everything server side.
 - `fleetdeck/power.py`: explicit Proxmox guest start (Boot up). Needs `VM.PowerMgmt`; never forces, resumes or retries.

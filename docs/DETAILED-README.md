@@ -51,8 +51,10 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
 * **Scheduled checks:** set `schedule.check_every` (e.g. `6h`) and the dashboard checks everything on
   its own, then notifies you through ntfy, Gotify, Discord, Telegram or a JSON webhook when something
   new is pending (a new update, a new pending reboot, or a check that started failing). It never
-  upgrades on its own. Add `check_docker: true` under `schedule` to look for newer Docker images too;
-  that pulls the images on every machine with Docker each round, so it is off by default. *Test notification* in the toolbar sends a test message.
+  upgrades on its own. It also looks for newer Docker images (`schedule.check_docker`, on by default; `false` for OS checks only). The dashboard asks each image's
+  registry for the tag's current digest and compares it with what the machine has: no pull, nothing runs on the machine.
+  Images pinned by digest, built on the machine or from a private registry are *unknown*; for private registries and network
+  errors the machine pulls instead, as before. Images are only pulled for real when you click Update. *Test notification* in the toolbar sends a test message.
 * **Image vulnerability scans (on by default; `security.scan_images: false` turns them off):** the dashboard scans the Docker
   images of every stack with [Trivy](https://trivy.dev) after every Docker check (the buttons, or the scheduled one when `schedule.check_docker` is on), or
   when you press *Scan images* on the Containers tab. Trivy runs inside the dashboard's container and reads each image

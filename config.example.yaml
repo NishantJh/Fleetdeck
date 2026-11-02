@@ -77,11 +77,14 @@ community_scripts_update: true
 # automatically unless you turn on auto_security_updates below; you get a notification when something new is pending.
 schedule:
   check_every: 6h
-  # Include container checks in scheduled rounds (off by default), using each machine's provider.
-  # Fleetdeck native: downloads Compose images on Managed or Monitor only hosts.
+  # Include container checks in scheduled rounds (on by default), using each machine's provider.
+  # Fleetdeck native: the dashboard asks each image's registry for the tag's current digest (a small HEAD
+  # request, no download) and compares it with what the machine has. Only images it can't settle that way
+  # (a private registry, no network) are pulled on the machine. Images pinned by digest or built on the
+  # machine show as "unknown". Updates only happen when you click Update.
   # Dockhand: requires dockhand.allow_checks: true and compares registry metadata; no image-layer downloads.
   # Docker deployments/restarts are never scheduled by this flag.
-  # check_docker: true
+  # check_docker: false   # OS checks only
   # After each check, install the security updates it found, with no click: hosts first, then their
   # containers, LXCs and VMs. Off by default. Never reboots.
   # Security-only means apt packages from a -security repository (Debian, Ubuntu, Proxmox); other

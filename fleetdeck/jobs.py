@@ -15,6 +15,7 @@ from .backup_runs import DASHBOARD
 from .docker_management import external_settings
 from .inventory import Inventory
 from .models import CheckResult, DockerSettings, Job, JobAction, Stack, StacksResult, SuccessfulCheck, Target
+from .registry import RegistryClient, Verdict
 from .snapshots import Snapshots, prune, snapshot_name, unsupported
 from .stacks import SCAN_SCRIPT, _own_id, parse_pull_failures, parse_scan, pull_script, update_script
 from .store import Store, mark_interrupted
@@ -130,6 +131,8 @@ class JobManager:
         self.docker_settings: dict[str, DockerSettings] = {}
         # Called with the machine id after a Docker check finished (the dashboard hooks image scans in here).
         self.after_stacks_check: Callable[[str], None] | None = None
+        # Asks registries about image digests so a Docker check needs no pull. None: always pull (old behaviour).
+        self.registry: RegistryClient | None = None
         self._target_locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task] = set()
         # Hosts that are rebooting, or waiting for their guests' jobs so they can reboot.
@@ -686,24 +689,46 @@ class JobManager:
             self._set_stacks(job.target_id, found.model_copy(update={"error": "Docker Compose is not installed"}))
             raise RuntimeError("Docker Compose is not installed on this machine")
         running = [s for s in found.stacks if s.running]
-        job.log.append(f"== Found {len(found.stacks)} stack(s); fetching newer images (nothing is restarted)")
+        verdicts = await self._registry_verdicts(running)
+        # Pull only where the registry could not settle it (its login or network may differ from ours).
+        pull = (
+            [s for s in running if any(verdicts[x.image].can_pull_instead for x in s.running)] if verdicts else running
+        )
+        failures: dict[str, str] = {}
+        result = found
+        if pull:
+            how = "the registry could not answer for" if verdicts else "fetching newer images for"
+            job.log.append(f"== Found {len(found.stacks)} stack(s); {how} {len(pull)} (nothing is restarted)")
 
-        def shown(stream: str, line: str) -> None:
-            if line := clean_line(line):
-                if not line.startswith("__PULLFAIL__"):
-                    on_line(stream, line)
+            def shown(stream: str, line: str) -> None:
+                if line := clean_line(line):
+                    if not line.startswith("__PULLFAIL__"):
+                        on_line(stream, line)
 
-        res = await executor.run(pull_script(running), shown, timeout=PULL_TIMEOUT)
-        if res.rc != 0:
-            raise RuntimeError(f"pulling images exited with code {res.rc}: {(res.stderr or res.stdout).strip()[-300:]}")
-        failures = parse_pull_failures(res.stdout)
-        result = parse_scan(await executor.run(SCAN_SCRIPT), _own_id())
+            res = await executor.run(pull_script(pull), shown, timeout=PULL_TIMEOUT)
+            if res.rc != 0:
+                raise RuntimeError(
+                    f"pulling images exited with code {res.rc}: {(res.stderr or res.stdout).strip()[-300:]}"
+                )
+            failures = parse_pull_failures(res.stdout)
+            result = parse_scan(await executor.run(SCAN_SCRIPT), _own_id())
+        else:
+            job.log.append(f"== Found {len(found.stacks)} stack(s); compared with the registries (nothing pulled)")
         for s in result.stacks:
+            for x in s.services:
+                v = verdicts.get(x.image)
+                if v is None:
+                    continue
+                x.registry, x.registry_note = v.status, v.note
+                if v.status == "update" and x.status in ("running", "restarting"):
+                    x.outdated = True
             s.error = failures.get(s.name)
             if s.error:
                 job.log.append(f"! {s.name}: could not fetch images: {s.error}")
             elif s.update_available:
                 job.log.append(f"== {s.name}: update available ({', '.join(x.name for x in s.services if x.outdated)})")
+            elif any(x.registry == "unknown" and x.status in ("running", "restarting") for x in s.services):
+                job.log.append(f"== {s.name}: no newer image known ({_unknown_note(s)})")
             else:
                 job.log.append(f"== {s.name}: up to date")
         self._set_stacks(job.target_id, result)
@@ -712,6 +737,17 @@ class JobManager:
                 self.after_stacks_check(job.target_id)
             except Exception:  # noqa: BLE001 - nothing after the check may fail it
                 log.exception("after-check hook failed")
+
+    async def _registry_verdicts(self, stacks: list[Stack]) -> dict[str, Verdict]:
+        """Image reference -> what its registry says, for the running services. Empty without a registry client."""
+        if self.registry is None:
+            return {}
+        seen: dict[str, list[str]] = {}
+        for s in stacks:
+            for x in s.running:
+                seen.setdefault(x.image, x.repo_digests)
+        results = await asyncio.gather(*(self.registry.check(img, d) for img, d in seen.items()))
+        return dict(zip(seen, results, strict=True))
 
     async def _stack_update(self, job: Job, executor, on_line) -> None:
         def cleaned(stream: str, line: str) -> None:
@@ -1013,6 +1049,10 @@ def _ensure_runnable(target: Target, executor, action: JobAction) -> None:
         raise ValueError(f"{target.name}: {target.note or 'can only be checked'}")
     if action == "reboot" and target.no_reboot:
         raise ValueError(f"{target.name}: {target.no_reboot}")
+
+
+def _unknown_note(stack: Stack) -> str:
+    return "; ".join(sorted({f"{x.image}: {x.registry_note}" for x in stack.services if x.registry == "unknown"}))[:300]
 
 
 def _ensure_stack_updatable(target: Target | None, result: StacksResult | None, name: str | None) -> Stack:
