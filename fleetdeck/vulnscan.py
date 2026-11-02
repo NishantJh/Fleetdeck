@@ -39,6 +39,7 @@ CACHE_TTL = timedelta(hours=24)
 # Results made with a database older than this are shown as stale.
 STALE_AFTER = timedelta(days=7)
 SEEN_KEY = "vuln_critical_seen"
+BASELINE_KEY = "vuln_baseline_done"
 
 
 class ScanError(Exception):
@@ -69,7 +70,7 @@ class ImageScan(BaseModel):
 class StackVulns(BaseModel):
     """What the dashboard shows for one stack."""
 
-    status: Literal["scanned", "not_scanned", "error"] = "not_scanned"
+    status: Literal["scanned", "not_scanned", "error", "unavailable"] = "not_scanned"
     # Severity counts over the stack's scanned images (all severities).
     counts: dict[str, int] = Field(default_factory=dict)
     top: list[Finding] = Field(default_factory=list)
@@ -184,8 +185,9 @@ class VulnScans:
         self.store = store
         self.stacks_of = stacks_of
         self.notifier = notifier
-        self.running = False
+        self._pending = 0
         self._lock = asyncio.Lock()
+        self.unavailable = ""  # why Trivy can't run here, while it can't
         self._mem: dict[str, ImageScan] = {}  # when there is no store
         self._errors: dict[str, str] = {}
 
@@ -212,16 +214,21 @@ class VulnScans:
         cached = self._load(ref)
         return cached is not None and datetime.now(UTC) - cached.scanned_at < CACHE_TTL
 
+    @property
+    def running(self) -> bool:
+        return self._pending > 0
+
     async def scan_run(self, target_ids: list[str]) -> None:
-        """Scan the images of these machines' stacks that have no fresh result. The database is updated once."""
-        if self._lock.locked():
-            return
-        async with self._lock:
-            self.running = True
-            try:
+        """Scan the images of these machines' stacks that have no fresh result. The database is updated once.
+        Runs one at a time. Never raises: a failing scan is logged and shown as unavailable."""
+        self._pending += 1
+        try:
+            async with self._lock:
                 await self._run(target_ids)
-            finally:
-                self.running = False
+        except Exception:  # noqa: BLE001 - scanning must never break what called it
+            log.exception("scanning Docker images failed")
+        finally:
+            self._pending -= 1
 
     async def _run(self, target_ids: list[str]) -> None:
         todo: dict[str, str] = {}
@@ -239,11 +246,12 @@ class VulnScans:
         try:
             await self.scanner.update_db()
         except ToolMissing as e:
-            for digest in todo:
-                self._errors[digest] = str(e)
+            log.warning("image scans are unavailable: %s", e)
+            self.unavailable = str(e)
             return
         except ScanError as e:
             log.warning("could not update the vulnerability database: %s", e)  # scans use the old one, if any
+        self.unavailable = ""
         fresh: list[ImageScan] = []
         for digest, ref in todo.items():
             try:
@@ -259,8 +267,9 @@ class VulnScans:
 
     async def _notify(self, scans: list[ImageScan]) -> None:
         """One message for the Criticals not told about before (same vulnerability in the same package of the
-        same image repository counts once, whatever the digest)."""
-        if self.notifier is None or self.store is None:
+        same image repository counts once, whatever the digest). The first run that scans anything only records
+        what it finds: scanning is on by default, so an existing install must not get a flood of old news."""
+        if self.store is None or not scans:
             return
         try:
             seen = set(json.loads(self.store.get_value(SEEN_KEY) or "[]"))
@@ -273,7 +282,11 @@ class VulnScans:
                 key = f"{repo}|{c}"
                 if key not in seen:
                     new.append(key)
-        if not new:
+        if self.store.get_value(BASELINE_KEY) is None:
+            self.store.set_value(SEEN_KEY, json.dumps(sorted(seen | set(new))))
+            self.store.set_value(BASELINE_KEY, "1")
+            return
+        if not new or self.notifier is None:
             return
         lines = [f"{k.split('|')[0]}: {k.split('|')[1]} in {k.split('|')[2]}" for k in new[:10]]
         if len(new) > 10:
@@ -310,8 +323,12 @@ class VulnScans:
             if scan.db_updated_at:
                 db_at = min(db_at or scan.db_updated_at, scan.db_updated_at)
         if not out.scanned:
-            out.status = "error" if errors else "not_scanned"
-            out.message = errors[0] if errors else "Not scanned yet"
+            if self.unavailable:
+                out.status, out.message = "unavailable", f"Scan unavailable: {self.unavailable}"
+            elif errors:
+                out.status, out.message = "error", f"Scan unavailable: {errors[0]}"
+            else:
+                out.message = "Not scanned yet"
             return out
         floor = RANK.get(self.scanner.min_severity.upper(), RANK["HIGH"])
         top.sort(key=lambda f: (-RANK[f.severity], f.id, f.pkg))

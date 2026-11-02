@@ -196,22 +196,47 @@ async def test_missing_trivy_is_reported_not_raised():
 
     v = VulnScans(Missing(), None, {"m": _stacks([REF])}.get)
     await v.scan_run(["m"])
-    assert "not installed" in v.target_vulns("m")["web"].message
+    out = v.target_vulns("m")["web"]
+    assert out.status == "unavailable" and "not installed" in out.message
+
+
+async def test_a_crashing_scanner_never_raises():
+    class Crash(FakeScanner):
+        async def update_db(self):
+            raise RuntimeError("bug")
+
+    v = VulnScans(Crash(), None, {"m": _stacks([REF])}.get)
+    await v.scan_run(["m"])
+    assert not v.running
 
 
 async def test_notifies_only_about_new_criticals(tmp_path):
     store, notes, sc = Store(tmp_path / "s.db"), Notes(), FakeScanner()
     v = VulnScans(sc, store, {"m": _stacks([REF])}.get, notes)
     await v.scan_run(["m"])
-    assert len(notes.sent) == 1 and "1 new Critical vulnerability" in notes.sent[0][0] and "CVE-1" in notes.sent[0][1]
-    # A new digest of the same repository with the same Critical is not new; a different Critical is.
+    assert notes.sent == []  # the first scan is a silent baseline: its Criticals are recorded, not announced
+    # A new digest of the same repository with the same Critical is not new either.
     v.stacks_of = {"m": _stacks([f"ghcr.io/acme/web@sha256:{'b' * 64}"])}.get
     await v.scan_run(["m"])
-    assert len(notes.sent) == 1
+    assert notes.sent == []
     sc.report = REPORT.replace("CVE-1", "CVE-9")
     v.stacks_of = {"m": _stacks([f"ghcr.io/acme/web@sha256:{'c' * 64}"])}.get
     await v.scan_run(["m"])
-    assert len(notes.sent) == 2 and "CVE-9" in notes.sent[1][1]
+    assert len(notes.sent) == 1 and "1 new Critical vulnerability" in notes.sent[0][0] and "CVE-9" in notes.sent[0][1]
+    # Told once: scanning it again (a restart, another machine) stays quiet.
+    v2 = VulnScans(sc, store, {"m": _stacks([f"ghcr.io/acme/web@sha256:{'d' * 64}"])}.get, notes)
+    await v2.scan_run(["m"])
+    assert len(notes.sent) == 1
+
+
+async def test_baseline_waits_for_a_run_that_scans_something(tmp_path):
+    store, notes = Store(tmp_path / "s.db"), Notes()
+    v = VulnScans(FakeScanner(fail=ScanError("down")), store, {"m": _stacks([REF])}.get, notes)
+    await v.scan_run(["m"])  # nothing scanned: not the baseline yet
+    assert store.get_value(vulnscan.BASELINE_KEY) is None
+    v.scanner.fail = None
+    await v.scan_run(["m"])
+    assert store.get_value(vulnscan.BASELINE_KEY) == "1" and notes.sent == []
 
 
 def test_store_keeps_scans_by_digest(tmp_path):

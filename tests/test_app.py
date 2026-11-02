@@ -288,10 +288,10 @@ def test_update_command_cannot_be_changed_from_outside_the_console_networks():
         assert r.status_code == 403 and "allow_from" in r.json()["detail"]
 
 
-def test_image_scan_endpoint_off_by_default_and_in_demo_mode():
+def test_image_scan_endpoint_off_when_disabled_and_in_demo_mode():
     import time
 
-    with TestClient(create_app(AppConfig(demo=True))) as client:
+    with TestClient(create_app(AppConfig(demo=True, security={"scan_images": False}))) as client:
         pi = next(t for t in client.get("/api/targets").json()["targets"] if t["target"]["name"] == "docker-vm")
         assert client.post(f"/api/targets/{pi['target']['id']}/scan").status_code == 400  # off
 
@@ -304,8 +304,7 @@ def test_image_scan_endpoint_off_by_default_and_in_demo_mode():
         assert client.post(f"/api/targets/{tid}/scan").status_code == 400  # no Docker check yet
         client.post("/api/actions", json={"action": "stacks", "target_ids": [tid]})
         _wait_for_jobs(client)
-        assert client.post(f"/api/targets/{tid}/scan").status_code == 202
-        deadline = time.time() + 20
+        deadline = time.time() + 20  # a Docker check starts the scan by itself
         while time.time() < deadline:
             data = client.get("/api/targets").json()
             view = next(t for t in data["targets"] if t["target"]["id"] == tid)
@@ -313,3 +312,4 @@ def test_image_scan_endpoint_off_by_default_and_in_demo_mode():
                 break
             time.sleep(0.2)
         assert {v["status"] for v in view["vulns"].values()} == {"scanned"}
+        assert client.post(f"/api/targets/{tid}/scan").status_code == 202

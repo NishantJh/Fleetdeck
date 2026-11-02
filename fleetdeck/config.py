@@ -289,7 +289,8 @@ class SecurityConfig(BaseModel):
     """Vulnerability scanning of Docker images with Trivy. Runs in the dashboard's container, never on a machine."""
 
     # Scan the images of every machine's Docker stacks after a scheduled Docker check, and on demand.
-    scan_images: bool = False
+    # On by default; false turns it off.
+    scan_images: bool = True
     # Badge and details list findings at or above this severity (counts always cover all of them).
     min_severity: Literal["UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL"] = "HIGH"
     # Leave out vulnerabilities that have no fix yet.

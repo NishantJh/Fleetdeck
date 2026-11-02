@@ -152,6 +152,15 @@ def create_app(
 
         scanner = DemoScanner(scanner.cache_dir, sec.ignore_unfixed, sec.min_severity)
     vulns = VulnScans(scanner, store, lambda tid: jobs.stacks.get(tid), notifier) if sec.scan_images else None
+    background: set[asyncio.Task] = set()  # notifications and scans running, kept so they aren't garbage collected
+
+    def scan_after_check(target_id: str) -> None:
+        if vulns is not None:
+            task = asyncio.create_task(vulns.scan_run([target_id]))
+            background.add(task)
+            task.add_done_callback(background.discard)
+
+    jobs.after_stacks_check = scan_after_check
     scheduler = Scheduler(
         cfg.schedule.check_every,
         inventory,
@@ -230,7 +239,6 @@ def create_app(
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=cfg.allowed_hosts)
 
     hostname = socket.gethostname().split(".")[0].lower()
-    background: set[asyncio.Task] = set()  # notifications being sent, kept so they aren't garbage collected
 
     @app.get("/api/targets")
     async def list_targets(refresh: bool = False):

@@ -558,7 +558,7 @@ function vulnBadge(v, s) {
   const id = esc(v.target.id), name = esc(s.name);
   let cls = "ok", text = "no findings";
   if (x.status === "not_scanned") return `<span class="muted" title="${esc(x.message)}">not scanned</span>`;
-  if (x.status === "error") { cls = "bad"; text = "scan failed"; }
+  if (x.status === "error" || x.status === "unavailable") return `<span class="muted" title="${esc(x.message)}">scan unavailable</span>`;
   else if (x.worst) { cls = x.worst === "CRITICAL" || x.worst === "HIGH" ? "bad" : "warn"; text = `${x.counts[x.worst]} ${x.worst.toLowerCase()}`; }
   const stale = x.stale ? ` <span class="chip warn" title="The vulnerability database is more than 7 days old">stale</span>` : "";
   return `<button class="small vuln-badge ${cls}" data-act="vulns" data-id="${id}" data-name="${name}" data-focus-key="vulns:${id}/${name}" title="${esc(x.message || "Show the findings")}">${text}</button>${stale}`;
