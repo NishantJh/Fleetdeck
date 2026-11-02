@@ -134,7 +134,7 @@ function matchesKpi(v, filter) {
   return true;
 }
 const selectable = (v) => canUpgrade(v.target) && !v.check?.error && actionablePackages(v.check).length > 0 && !v.hidden && !v.blocked && !v.active_job && !v.monitor_only;
-const MONITOR_TIP = "Monitor only: checked and reported; updates are installed elsewhere. Reboots, backups and snapshots remain available.";
+const MONITOR_TIP = "Monitor only: checked and reported; Fleetdeck installs no updates. Reboots, backups and snapshots remain available.";
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
 const BUSY = { start: "Booting up", upgrade: "updating", check: "Checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "Checking Docker", "stack-update": "updating Docker", "dockhand-update": "updating containers" };
 
@@ -557,7 +557,7 @@ function openMachineInformation(id, trigger) {
   const repositories = v.check?.notes || [];
   const updates = [];
   if (v.monitor_only) {
-    updates.push("Monitor only: updates are installed outside Fleetdeck. Checks, reboots and backups remain available.");
+    updates.push("Monitor only: checked and reported; Fleetdeck installs no updates. Reboots and backups remain available.");
     updates.push(v.target.monitor_only ? "Update policy is managed in configuration on the Settings page." : "Use Allow updates in the machine menu to remove this dashboard restriction.");
   }
   if (!v.check) updates.push("No update check has completed for this machine.");
@@ -590,8 +590,9 @@ function dockerModeFields() {
   $("#docker-mode-help").textContent = external
     ? "Link only: Fleetdeck does not read container status, check images or deploy containers. Use the configured manager for these actions. OS updates remain independent."
     : dockhand ? "Fleetdeck reads saved Dockhand reports and can request fresh digest checks when allowed. Container updates run in Dockhand and require confirmation when enabled. Choosing this provider does not start a check."
-    : mode === "disabled" ? "Fleetdeck will not check or deploy containers on this machine. OS updates remain independent."
-    : `Fleetdeck checks download Compose images after confirmation.${mode === "monitor" ? " Stack deployments are disabled." : " Stack deployments require a separate confirmation."} Choosing this mode does not start a check.`;
+    : mode === "disabled" ? "Off: Fleetdeck will not check or update containers on this machine. OS updates remain independent."
+    : mode === "monitor" ? "Monitor only: checked and reported; Fleetdeck installs no container updates. Checks download Compose images after confirmation."
+    : "Fleetdeck checks download Compose images after confirmation. Stack updates require a separate confirmation. Choosing this does not start a check.";
   $("#docker-external-fields").hidden = !external;
   $("#docker-manager-url").disabled = !external;
   $("#docker-manager-name").disabled = !external;

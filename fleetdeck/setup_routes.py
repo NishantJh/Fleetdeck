@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field, ValidationError, field_validator
 from . import onboarding as ob
 from . import tunnels
 from .config import AppConfig, check_username
-from .docker_management import DockerManagementRequest, update_dockhand_mapping
+from .docker_management import DockerManagementRequest, external_settings, update_dockhand_mapping
 from .models import DockerSettings
 from .security import hash_password
 
@@ -331,12 +331,13 @@ def add_setup_routes(
             except (ValueError, ValidationError):
                 raise HTTPException(400, "The saved configuration is invalid; review it in Settings") from None
             digest = hashlib.sha256(paths.config.read_text().encode() if paths.config.exists() else b"").hexdigest()
+            stored = app.state.jobs.docker_settings.get(target_id, DockerSettings())
             dh = saved.dockhand
             mapping = next((m for m in dh.environments if m.target_id == target_id), None) if dh else None
             return {
                 "revision": digest,
                 "writable": paths.writable(),
-                "mode": "dockhand" if mapping else app.state.jobs.docker_settings.get(target_id, DockerSettings()).mode,
+                "mode": "dockhand" if mapping else stored.manager or stored.mode,
                 "url": dh.url if dh else "",
                 "token_configured": bool(dh and dh.token),
                 "poll_seconds": dh.poll_seconds if dh else 300,
@@ -371,12 +372,10 @@ def add_setup_routes(
             except (ValueError, ValidationError) as e:
                 raise _error(e) from None
             try:
-                mode = "external" if req.mode == "dockhand" else req.mode
-                policy = DockerSettings(
-                    mode=mode,
-                    manager_name="Dockhand" if req.mode == "dockhand" else req.manager_name,
-                    manager_url=validated.dockhand.url if req.mode == "dockhand" else req.manager_url,
-                )
+                if req.mode == "dockhand":
+                    policy = external_settings("dockhand", validated.dockhand.url)
+                else:
+                    policy = DockerSettings(mode=req.mode, manager_name=req.manager_name, manager_url=req.manager_url)
             except ValidationError as e:
                 raise _error(e) from None
             try:

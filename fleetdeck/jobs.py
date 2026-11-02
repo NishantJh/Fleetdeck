@@ -11,6 +11,7 @@ from pathlib import Path
 
 from . import detached
 from .backup_runs import DASHBOARD
+from .docker_management import external_settings
 from .inventory import Inventory
 from .models import CheckResult, DockerSettings, Job, JobAction, Stack, StacksResult, SuccessfulCheck, Target
 from .snapshots import Snapshots, prune, snapshot_name, unsupported
@@ -172,9 +173,7 @@ class JobManager:
 
     def get_docker_settings(self, target_id: str) -> DockerSettings:
         if target_id in self.dockhand_targets:
-            return DockerSettings(
-                mode="external", manager_name="Dockhand", manager_url=self.dockhand_targets[target_id]
-            )
+            return external_settings("dockhand", self.dockhand_targets[target_id])
         return self.docker_settings.get(target_id, DockerSettings())
 
     def set_docker_settings(self, target_id: str, settings: DockerSettings) -> None:

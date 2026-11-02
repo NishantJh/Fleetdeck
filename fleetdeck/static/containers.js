@@ -48,7 +48,7 @@ function containerSummary(v) {
 function containerStatus(v) {
   const policy = dockerSettings(v), s = containerSummary(v);
   let symbol = "help", label = "Not checked", tone = "muted";
-  if (policy.mode === "disabled") label = "Disabled";
+  if (policy.mode === "disabled") label = "Off";
   else if (!v.dockhand && !dockerEnabled(v)) { symbol = "external"; label = "Monitored externally"; }
   else if (v.active_job?.action === "dockhand-update") return '<span class="status-inline muted"><span class="spin"></span>Updating containers…</span>';
   else if (s.checking) return '<span class="status-inline muted"><span class="spin"></span>Checking containers…</span>';
@@ -67,7 +67,7 @@ function containerStatus(v) {
 
 function containerCheckTime(v, withLabel = false) {
   const policy = dockerSettings(v), s = containerSummary(v);
-  if (policy.mode === "disabled") return '<span class="muted">Disabled</span>';
+  if (policy.mode === "disabled") return '<span class="muted">Off</span>';
   if (!v.dockhand && !dockerEnabled(v)) return "";
   const lastKnown = s.stale ? '<span class="cell-detail">Last known</span>' : "";
   const relevant = s.rows.filter(r => !["local", "excluded"].includes(r.status));
@@ -147,8 +147,8 @@ function containerProvider(v) {
   let label = "Fleetdeck", symbol = "server", description = "Managed by Fleetdeck · Compose only";
   if (v.dockhand) { label = "Dockhand"; symbol = "external"; description = "Managed by Dockhand"; }
   else if (policy.mode === "external") { label = policy.manager_name || "External manager"; symbol = "external"; description = `Monitored externally by ${label}`; }
-  else if (policy.mode === "disabled") { label = "Disabled"; symbol = "power"; description = "Container checks and management disabled"; }
-  else if (monitor) { label = "Fleetdeck · monitor only"; symbol = "eye"; description = "Monitored by Fleetdeck · container updates disabled"; }
+  else if (policy.mode === "disabled") { label = "Off"; symbol = "power"; description = "Container checks and management disabled"; }
+  else if (monitor) { label = "Fleetdeck · Monitor only"; symbol = "eye"; description = "Monitor only: checked and reported; Fleetdeck installs no container updates"; }
   return `<span class="scope-provider" role="img" aria-label="${esc(description)}" title="${esc(description)}">${icon(symbol)}<span class="provider-label">${esc(label)}</span></span>`;
 }
 
@@ -206,7 +206,7 @@ function containerCheckGuidance(v, s) {
   if (!native) outcome += " Dockhand’s own schedule is unchanged.";
   outcome += allowed ? " Manual fresh checks are enabled." : " Manual fresh checks are disabled.";
   const poll = state.settings.dockhand_poll_seconds;
-  const settings = `<section class="container-check-settings" aria-label="Current container check settings"><strong>Current options</strong><dl><div><dt>Container provider</dt><dd>${native ? `Fleetdeck native Docker${policy.mode === "monitor" || v.monitor_only ? " · monitor only" : ""}` : "Dockhand"}</dd></div>${!native ? `<div><dt>Install container updates</dt><dd>${v.dockhand_updates_allowed ? "Enabled · confirmation required" : "Disabled"}</dd></div>` : ""}<div><dt>Manual container checks</dt><dd>${allowed ? "Enabled" : "Disabled"}</dd></div><div><dt>Fleetdeck scheduled container checks</dt><dd>${scheduled ? "On" : "Off"}</dd></div><div><dt>Fleetdeck check interval</dt><dd>${hasSchedule ? `Every ${esc(every(interval))}` : "Scheduling off"}</dd></div>${!native ? `<div><dt>Read saved Dockhand reports</dt><dd>${Number.isFinite(poll) ? `Every ${esc(every(poll))}` : "Not reported"}</dd></div>` : ""}</dl><p class="container-check-outcome">${esc(outcome)}</p><div class="container-option-actions"><button class="small" data-docker-settings="${esc(v.target.id)}">Docker management</button><a class="button small" href="/settings">Schedule settings</a></div></section>`;
+  const settings = `<section class="container-check-settings" aria-label="Current container check settings"><strong>Current options</strong><dl><div><dt>Container provider</dt><dd>${native ? `Fleetdeck native Docker${policy.mode === "monitor" || v.monitor_only ? " · Monitor only" : ""}` : "Dockhand"}</dd></div>${!native ? `<div><dt>Install container updates</dt><dd>${v.dockhand_updates_allowed ? "Enabled · confirmation required" : "Disabled"}</dd></div>` : ""}<div><dt>Manual container checks</dt><dd>${allowed ? "Enabled" : "Disabled"}</dd></div><div><dt>Fleetdeck scheduled container checks</dt><dd>${scheduled ? "On" : "Off"}</dd></div><div><dt>Fleetdeck check interval</dt><dd>${hasSchedule ? `Every ${esc(every(interval))}` : "Scheduling off"}</dd></div>${!native ? `<div><dt>Read saved Dockhand reports</dt><dd>${Number.isFinite(poll) ? `Every ${esc(every(poll))}` : "Not reported"}</dd></div>` : ""}</dl><p class="container-check-outcome">${esc(outcome)}</p><div class="container-option-actions"><button class="small" data-docker-settings="${esc(v.target.id)}">Docker management</button><a class="button small" href="/settings">Schedule settings</a></div></section>`;
   const operation = native
     ? "Native checks confirm image downloads before they start. Update stack recreates affected running services after confirmation; stopped services stay stopped. Compose services only; standalone containers and newer-version-tag advisories are not provided by this checker."
     : "Dockhand compares registry digests without downloading image layers. Container updates run in Dockhand. When Install container updates is enabled for this machine, Fleetdeck can request them after confirmation. Otherwise, open Dockhand to install them.";
@@ -232,7 +232,7 @@ function containerPanel(v) {
   const shown = items.filter(row => filter === "all" || containerFacts(row)[({ updates: "update", current: "current", review: "review", coverage: "coverage", failures: "failure" })[filter]]);
   const button = native ? `<button class="small" data-act="stacks" data-id="${id}" ${!canUpgrade(v.target) || v.active_job ? "disabled" : ""} title="Download newer Compose images to compare; confirmation is required">${icon("refresh")}Fetch image updates</button>`
     : `<button class="small" data-dockhand-check="${id}" ${!state.settings.dockhand_checks_allowed || s.checking ? "disabled" : ""} title="${state.settings.dockhand_checks_allowed ? "Request a fresh registry digest check; no image layers or restarts" : "Enable dockhand.allow_checks in Settings to allow fresh checks"}">${icon("refresh")}${s.checking ? "Checking…" : "Check in Dockhand"}</button>`;
-  const mode = native ? `Fleetdeck native · ${dockerSettings(v).mode === "monitor" || v.monitor_only ? "monitor only" : "Compose"}` : "Dockhand";
+  const mode = native ? `Fleetdeck native · ${dockerSettings(v).mode === "monitor" || v.monitor_only ? "Monitor only" : "Compose"}` : "Dockhand";
 
   const tabs = [["all", "All", s.rows.length], ...(s.updates ? [["updates", "Image updates", s.updates]] : []), ...(s.current ? [["current", "Up to date", s.current]] : []), ...(s.reviews ? [["review", "Review", s.reviews]] : []), ...(s.coverage ? [["coverage", "Coverage", s.coverage]] : []), ...(s.failures ? [["failures", "Failures", s.failures]] : [])];
   const filters = `<div class="container-filters" role="group" aria-label="Filter container results">${tabs.map(([value, text, count]) => `<button class="small ghost" data-container-view-filter="${value}" data-id="${id}" data-focus-key="container-filter:${id}:${value}" aria-pressed="${filter === value}">${text}${count === null ? "" : ` <span>${count}</span>`}</button>`).join("")}</div>`;
@@ -260,5 +260,5 @@ function containerPanel(v) {
 function stackPanel(v) {
   if (v.dockhand || dockerEnabled(v)) return containerPanel(v);
   const policy = dockerSettings(v), id = esc(v.target.id);
-  return `<section class="group docker-host" id="docker-${id}"><div class="group-head"><span class="container-panel-title">Container updates · ${esc(v.target.name)}</span><div class="container-panel-actions"><span class="host-mode muted">${esc(policy.mode === "disabled" ? "Disabled" : `Managed by ${policy.manager_name}`)}</span><button class="small" data-docker-settings="${id}">Settings</button></div>${detailsCloseButton(v.target.id, "containers")}</div><p class="container-empty muted">${policy.mode === "disabled" ? "Docker checks and deployments are disabled. OS updates remain independent." : "Container checks and deployments are handled by the configured external manager."}</p>${policy.mode === "external" ? `<p class="container-empty">${managerLink(v, `Open ${policy.manager_name}`)}</p>` : ""}</section>`;
+  return `<section class="group docker-host" id="docker-${id}"><div class="group-head"><span class="container-panel-title">Container updates · ${esc(v.target.name)}</span><div class="container-panel-actions"><span class="host-mode muted">${esc(policy.mode === "disabled" ? "Off" : `Managed by ${policy.manager_name}`)}</span><button class="small" data-docker-settings="${id}">Settings</button></div>${detailsCloseButton(v.target.id, "containers")}</div><p class="container-empty muted">${policy.mode === "disabled" ? "Docker checks and deployments are disabled. OS updates remain independent." : "Container checks and deployments are handled by the configured external manager."}</p>${policy.mode === "external" ? `<p class="container-empty">${managerLink(v, `Open ${policy.manager_name}`)}</p>` : ""}</section>`;
 }

@@ -1,13 +1,38 @@
-"""Structured Docker provider settings; never connects to an external manager."""
+"""One per-machine answer to "who manages this machine's containers": Fleetdeck, monitor only, an external
+manager (Dockhand today), a link to another tool, or off. Never connects to an external manager.
+
+The choice is a DockerSettings row in SQLite. The connection to an external manager (URL, token, environment
+per machine) stays in config.yaml because it holds a secret and is read at start-up; saving writes both."""
 
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import dataclass
 from typing import Literal
 
 from pydantic import BaseModel, Field
 
 from .config import AppConfig, DockhandConfig
+from .models import DockerSettings
+
+
+@dataclass(frozen=True)
+class ExternalManager:
+    """A container manager Fleetdeck can talk to. Adding one means a registry entry, a config block with
+    its connection (URL, token) and a reader; the per-machine choice is always DockerSettings."""
+
+    label: str
+    config_key: str
+
+
+EXTERNAL_MANAGERS = {"dockhand": ExternalManager(label="Dockhand", config_key="dockhand")}
+
+
+def external_settings(manager: str, url: str | None) -> DockerSettings:
+    """The per-machine setting that says "this external manager runs this machine's containers"."""
+    return DockerSettings(
+        mode="external", manager=manager, manager_name=EXTERNAL_MANAGERS[manager].label, manager_url=url
+    )
 
 
 class DockerManagementRequest(BaseModel):

@@ -112,13 +112,13 @@
     <form id="docker-settings-form">
       <h3 id="docker-settings-title">Docker management</h3>
       <div class="docker-settings-content">
-      <label class="dlg-field">Management mode
+      <label class="dlg-field">Who manages containers on this machine
         <select id="docker-mode">
-          <option value="managed">Managed by Fleetdeck</option>
-          <option value="monitor">Monitor only (no stack deployments)</option>
-          <option value="dockhand">Managed by Dockhand</option>
-          <option value="external">Other external manager (link only)</option>
-          <option value="disabled">Disabled</option>
+          <option value="managed">Fleetdeck (checks and updates)</option>
+          <option value="monitor">Monitor only</option>
+          <option value="dockhand">Dockhand</option>
+          <option value="external">Link to another manager</option>
+          <option value="disabled">Off</option>
         </select>
       </label>
       <p id="docker-mode-help" class="muted">Fleetdeck checks download Compose images. Dockhand checks registry metadata. Choosing a provider does not start a check or install updates.</p>

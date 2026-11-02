@@ -291,3 +291,32 @@ def test_install_permission_is_default_off_and_applies_only_to_selected_mapping(
         assert details(client, "machine-b")["allow_updates"] is False
         mappings = yaml.safe_load(path.read_text())["dockhand"]["environments"]
         assert next(m for m in mappings if m["target_id"] == "machine-a")["allow_updates"] is True
+
+
+def test_choosing_dockhand_is_one_setting_with_the_manager_recorded(management):
+    app, _ = management()
+    with TestClient(app) as client:
+        assert client.put("/api/setup/docker-management", json=body(client)).status_code == 200
+        stored = app.state.jobs.docker_settings["machine-a"]
+        assert (stored.mode, stored.manager, stored.manager_name) == ("external", "dockhand", "Dockhand")
+        assert details(client)["mode"] == "dockhand"
+        # Switching away removes the mapping and the manager from the same saved setting.
+        off = body(client, mode="disabled", url="", token=None, environment_id=None)
+        assert client.put("/api/setup/docker-management", json=off).status_code == 200
+        stored = app.state.jobs.docker_settings["machine-a"]
+        assert (stored.mode, stored.manager) == ("disabled", None)
+        assert details(client)["mode"] == "disabled"
+
+
+def test_link_only_setting_has_no_manager(management):
+    app, _ = management()
+    with TestClient(app) as client:
+        link = {
+            "target_id": "machine-a",
+            "mode": "external",
+            "manager_name": "Arcane",
+            "manager_url": "https://a.invalid",
+        }
+        assert client.put("/api/docker-settings", json=link).status_code == 200
+        settings = app.state.jobs.get_docker_settings("machine-a")
+        assert settings.mode == "external" and settings.manager is None and settings.manager_name == "Arcane"

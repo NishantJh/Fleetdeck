@@ -101,6 +101,9 @@ class DockerSettings(BaseModel):
     mode: Literal["managed", "monitor", "external", "disabled"] = "managed"
     manager_name: str = Field("External manager", min_length=1, max_length=80)
     manager_url: str | None = Field(None, max_length=2048)
+    # Which known external manager runs the containers (see docker_management.EXTERNAL_MANAGERS);
+    # None with mode "external" means a plain link to some other tool.
+    manager: str | None = Field(None, pattern=r"^[a-z][a-z0-9_-]{0,31}$")
 
     @field_validator("manager_name")
     @classmethod

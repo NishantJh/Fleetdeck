@@ -27,12 +27,12 @@ PVE = {
 }
 PVE["/api2/json/nodes/pve/qemu"].append({"vmid": 203, "name": "broken", "status": "running"})
 
+
 def _pve_data(data, path):
     """Canned PVE responses; the token holds VM.PowerMgmt unless a test says otherwise."""
     if path.endswith("/access/permissions"):
         return data.get(path, {"/": {"VM.PowerMgmt": 1}})
     return data[path]
-
 
 
 async def test_proxmox_discovery():
