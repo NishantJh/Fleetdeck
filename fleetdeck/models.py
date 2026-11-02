@@ -105,6 +105,10 @@ class StackService(BaseModel):
     # A newer image for this tag is already on the machine (pulled by a check), but the container
     # was made from an older one.
     outdated: bool = False
+    # What the comparison used, shown in the details so a mismatch can be diagnosed: the ID of the image
+    # the container was made from, and the ID the tag points at on the machine now ("" if unknown).
+    image_id: str = ""
+    tag_id: str = ""
 
 
 class Stack(BaseModel):

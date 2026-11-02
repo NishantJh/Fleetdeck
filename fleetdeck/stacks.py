@@ -55,7 +55,12 @@ F="$F${US}$(lab $L.project.working_dir)${US}$(lab $L.project.config_files)"
 F="$F${US}{{.Config.Image}}${US}{{.Image}}${US}{{.State.Status}}${US}{{.Id}}"
 docker inspect --format "$F" $ids 2>/dev/null
 for img in $(docker inspect --format '{{.Config.Image}}' $ids 2>/dev/null | sort -u); do
-  id=$(docker image inspect --format '{{.Id}}' "$img" 2>/dev/null) && echo "__I__${US}${img}${US}${id}"
+  id=$(docker image inspect --format '{{.Id}}' "$img" 2>/dev/null) || continue
+  # Every sha256 in the tag's JSON: with the containerd image store the tag is a multi-platform index
+  # while containers report the ID of their platform's manifest, which is listed in there.
+  known=$(docker image inspect "$img" 2>/dev/null | grep -oE 'sha256:[0-9a-f]{64}' | sort -u | tr '
+' ',')
+  echo "__I__${US}${img}${US}${id}${US}${known%,}"
 done
 exit 0
 """
@@ -81,6 +86,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
     """The stacks a scan found. ``own_id``: the dashboard's own container, whose stack is marked."""
     docker, compose = "yes", "none"
     local: dict[str, str] = {}  # image reference -> ID of what that tag points at now
+    known: dict[str, set[str]] = {}  # image reference -> every digest that belongs to that tag's image
     rows: list[list[str]] = []
     for line in res.stdout.splitlines():
         if line.startswith("__DOCKER__="):
@@ -89,8 +95,9 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
             compose = line.split("=", 1)[1]
         elif line.startswith("__I__" + US):
             parts = line.split(US)
-            if len(parts) == 3:
+            if len(parts) in (3, 4):
                 local[parts[1]] = parts[2]
+                known[parts[1]] = {x for x in (parts[3] if len(parts) == 4 else "").split(",") if x}
         elif line.startswith("__C__" + US):
             parts = line.split(US)
             if len(parts) == 9 and _NAME.match(parts[1]):
@@ -101,9 +108,12 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
         if stack is None:
             paths = [f for f in files.split(",") if _PATH.match(f)]
             stack = stacks[project] = Stack(name=project, working_dir=wd if _PATH.match(wd) else "", config_files=paths)
-        now = local.get(image)
+        now = local.get(image, "")
+        # Same ID (classic store), or the container's ID is one of the tag's own manifests (containerd
+        # store). Unknown tag: don't guess. A wrong "up to date" is better than a permanent false alarm.
+        outdated = bool(now) and now != image_id and image_id not in known.get(image, ())
         stack.services.append(
-            StackService(name=service, image=image, status=status, outdated=bool(now) and now != image_id)
+            StackService(name=service, image=image, status=status, outdated=outdated, image_id=image_id, tag_id=now)
         )
         if own_id and cid == own_id:
             stack.is_dashboard = True

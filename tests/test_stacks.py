@@ -27,10 +27,13 @@ OWN = "a" * 64
 # A stand-in for the docker command: answers the questions the scripts ask and logs the Compose calls.
 DOCKER = r"""#!/bin/sh
 d=$(dirname "$0")
+MANIFEST=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 case "$1 $2" in
   "info "*|"compose version") exit 0 ;;
   "ps -a") echo abc; exit 0 ;;
-  "image inspect") echo sha256:new; exit 0 ;;
+  "image inspect")
+    case "$*" in *--format*) echo sha256:new ;; *) echo "[{\"Manifests\":[{\"ID\":\"sha256:$MANIFEST\"}]}]" ;; esac
+    exit 0 ;;
   "image prune") echo "prune $*" >> "$d/calls"; exit 0 ;;
 esac
 if [ "$1" = inspect ]; then
@@ -65,7 +68,7 @@ def _row(project="web", service="app", wd="/tmp", files="/tmp/compose.yml", imag
 
 def _scan(*rows, docker="yes", compose="v2", images=(("web:1", "sha256:new"),)):
     out = [f"__DOCKER__={docker}", f"__COMPOSE__={compose}", *rows]
-    out += [US.join(["__I__", img, i]) for img, i in images]
+    out += [US.join(["__I__", img, i, *known]) for img, i, *known in images]
     return ExecResult(rc=0, stdout="\n".join(out) + "\n")
 
 
@@ -84,6 +87,29 @@ def test_parse_scan_groups_services_and_flags_old_images():
     assert web.update_available and web.state == "running"
     assert web.config_files == ["/tmp/compose.yml"] and web.working_dir == "/tmp"
     assert other.state == "stopped" and not other.update_available
+
+
+def test_classic_store_compares_ids_only():
+    res = parse_scan(_scan(_row(image_id="sha256:new"), _row(service="b", image_id="sha256:old")))
+    assert [(s.name, s.outdated) for s in res.stacks[0].services] == [("app", False), ("b", True)]
+    app = res.stacks[0].services[1]
+    assert (app.image_id, app.tag_id) == ("sha256:old", "sha256:new")
+
+
+def test_containerd_store_platform_manifest_counts_as_current():
+    # The tag is the multi-platform index (Id 36c2...); the container reports the platform manifest (504a...),
+    # which the tag's JSON lists.
+    index, manifest, other = "sha256:" + "36" * 32, "sha256:" + "50" * 32, "sha256:" + "ab" * 32
+    known = f"{manifest},{other}"
+    images = (("web:1", index, known),)
+    assert not parse_scan(_scan(_row(image_id=manifest), images=images)).stacks[0].update_available
+    # Pulled a really different image: the container's ID is not among the tag's digests.
+    old = "sha256:" + "77" * 32
+    assert parse_scan(_scan(_row(image_id=old), images=images)).stacks[0].update_available
+
+
+def test_unknown_tag_is_not_flagged():
+    assert not parse_scan(_scan(_row(image_id="sha256:x"), images=())).stacks[0].update_available
 
 
 def test_stopped_services_do_not_count_as_update_available():
@@ -190,6 +216,7 @@ async def test_scan_script_output_parses(tmp_path):
     res = parse_scan(await ex.run(SCAN_SCRIPT))
     assert res.docker == "yes" and res.compose == "v2"
     assert [(s.name, s.services[0].name, s.update_available) for s in res.stacks] == [("web", "app", True)]
+    assert ("sha256:" + "c" * 64) in (await ex.run(SCAN_SCRIPT)).stdout  # the tag's manifests are collected
 
 
 async def test_check_pulls_then_reports_and_update_recreates(tmp_path):

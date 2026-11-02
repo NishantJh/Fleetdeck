@@ -106,11 +106,13 @@ class DemoExecutor:
         for name, (services, behind) in self.stacks.items():
             for svc in services:
                 image = f"{svc}:latest" if svc != "arcane" else "ghcr.io/getarcaneapp/arcane:latest"
-                images[image] = "sha256:new"
+                # Like the containerd image store: the tag is a multi-platform index, the container reports
+                # its platform's manifest, which the tag lists.
+                images[image] = ("sha256:" + "1d" * 32, "sha256:" + "3a" * 32)
                 row = ["__C__", name, svc, f"/opt/{name}", f"/opt/{name}/compose.yaml", image]
-                row += ["sha256:old" if behind else "sha256:new", "running", uuid.uuid4().hex * 2]
+                row += ["sha256:" + ("0d" if behind else "3a") * 32, "running", uuid.uuid4().hex * 2]
                 out.append(US.join(row))
-        out += [US.join(["__I__", image, image_id]) for image, image_id in images.items()]
+        out += [US.join(["__I__", image, image_id, manifest]) for image, (image_id, manifest) in images.items()]
         return "\n".join(out) + "\n"
 
     async def _docker(self, script: str, on_line) -> ExecResult:
