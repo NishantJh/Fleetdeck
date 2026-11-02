@@ -136,7 +136,7 @@ function matchesKpi(v, filter) {
 const selectable = (v) => canUpgrade(v.target) && !v.check?.error && actionablePackages(v.check).length > 0 && !v.hidden && !v.blocked && !v.active_job && !v.monitor_only;
 const MONITOR_TIP = "Monitor only: checked and reported; updates are installed elsewhere. Reboots, backups and snapshots remain available.";
 const canReboot = (t) => canUpgrade(t) && !t.no_reboot;
-const BUSY = { start: "Booting up", upgrade: "updating", check: "checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "checking Docker", "stack-update": "updating Docker", "dockhand-update": "updating containers" };
+const BUSY = { start: "Booting up", upgrade: "updating", check: "Checking", reboot: "rebooting", rollback: "rolling back", backup: "backing up", stacks: "Checking Docker", "stack-update": "updating Docker", "dockhand-update": "updating containers" };
 
 function detailsCloseButton(id, scope) {
   const label = `Close ${scope === "os" ? "OS update" : "container"} details`;
