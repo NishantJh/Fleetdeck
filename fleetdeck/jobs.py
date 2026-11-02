@@ -12,7 +12,7 @@ from pathlib import Path
 from . import detached
 from .backup_runs import DASHBOARD
 from .inventory import Inventory
-from .models import CheckResult, Job, JobAction, Stack, StacksResult, SuccessfulCheck, Target
+from .models import CheckResult, DockerSettings, Job, JobAction, Stack, StacksResult, SuccessfulCheck, Target
 from .snapshots import Snapshots, prune, snapshot_name, unsupported
 from .stacks import SCAN_SCRIPT, _own_id, parse_pull_failures, parse_scan, pull_script, update_script
 from .store import Store, mark_interrupted
@@ -21,6 +21,7 @@ from .updates import (
     CHECK_SCRIPT,
     COMMUNITY_SCRIPT_DETECT,
     COMMUNITY_UPDATE_SCRIPT,
+    DOCKER_DETECT_SCRIPT,
     REBOOT_NOW_SCRIPT,
     SECURITY_UPGRADE_SCRIPT,
     UPGRADE_SCRIPT,
@@ -29,6 +30,7 @@ from .updates import (
     parse_boot_id,
     parse_check,
     parse_community_script,
+    parse_docker_installed,
     parse_reboot,
 )
 
@@ -43,7 +45,7 @@ REBOOT_POLL = 5.0
 # the re-check after a reboot is retried this many times before it is reported as failed.
 RECHECK_TRIES = 6
 # What a guest can be doing that stops its host from being updated or rebooted.
-GUEST_ACTIONS_BLOCKING_HOST = ("upgrade", "stack-update", "reboot", "rollback")
+GUEST_ACTIONS_BLOCKING_HOST = ("start", "upgrade", "stack-update", "dockhand-update", "reboot", "rollback")
 # What a monitor-only machine never runs: installing OS, app or Docker updates.
 UPDATES = ("upgrade", "stack-update")
 
@@ -105,6 +107,7 @@ class JobManager:
         backup_folder: Path | None = None,
         age_recipient: str | None = None,
         backup_password: str | None = None,
+        dockhand_targets: dict[str, str] | None = None,
     ):
         self.inventory = inventory
         # Where backups that are saved on the dashboard go (see backup_runs.DASHBOARD).
@@ -115,12 +118,14 @@ class JobManager:
         self.backup_password = backup_password
         self.snapshot_keep = snapshot_keep
         self.community_scripts_update = community_scripts_update
+        self.dockhand_targets = dockhand_targets or {}
         self.sem = asyncio.Semaphore(max_parallel)
         self.store = store
         self.jobs: OrderedDict[str, Job] = OrderedDict()
         self.checks: dict[str, CheckResult] = {}
         # Machine id -> what its last Docker check found (see stacks.py).
         self.stacks: dict[str, StacksResult] = {}
+        self.docker_settings: dict[str, DockerSettings] = {}
         self._target_locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task] = set()
         # Hosts that are rebooting, or waiting for their guests' jobs so they can reboot.
@@ -138,6 +143,7 @@ class JobManager:
         if store is not None:
             self.checks = store.load_checks()
             self.stacks = store.load_stacks()
+            self.docker_settings = store.load_docker_settings()
             self.hidden = store.load_hidden()
             self.monitor_only_ids = store.load_monitor_only()
             self.backup_places = store.load_backup_places()
@@ -158,9 +164,49 @@ class JobManager:
             check.package_manager = check.package_manager or prev.package_manager
             check.runs_dashboard = prev.runs_dashboard
             check.community_script = prev.community_script
+            if check.docker_installed is None:
+                check.docker_installed = prev.docker_installed
         self.checks[target_id] = check
         if self.store is not None:
             self._persist(self.store.save_check, target_id, check)
+
+    def get_docker_settings(self, target_id: str) -> DockerSettings:
+        if target_id in self.dockhand_targets:
+            return DockerSettings(
+                mode="external", manager_name="Dockhand", manager_url=self.dockhand_targets[target_id]
+            )
+        return self.docker_settings.get(target_id, DockerSettings())
+
+    def set_docker_settings(self, target_id: str, settings: DockerSettings) -> None:
+        self.inventory.get(target_id)  # reject stale / unknown IDs
+        if target_id in self.dockhand_targets:
+            raise ValueError("This machine is mapped to Dockhand in configuration; change its mapping in Settings")
+        if any(
+            j.target_id == target_id and j.action in ("stacks", "stack-update") and j.status in ("queued", "running")
+            for j in self.jobs.values()
+        ):
+            raise ValueError("Wait for this machine's Docker jobs to finish before changing its settings")
+        self.stage_docker_settings(target_id, settings)
+
+    def stage_docker_settings(self, target_id: str, settings: DockerSettings) -> None:
+        """Persist a policy alongside a staged provider-config change. Live Dockhand mappings
+        continue to override it until Apply restarts the app; native jobs cannot bypass them."""
+        self.inventory.get(target_id)
+        if self.active_job(target_id):
+            raise ValueError("Wait for this machine's jobs to finish before changing its settings")
+        # Unlike check history, a policy must be saved successfully before the UI reports success.
+        if self.store is not None:
+            self.store.save_docker_settings(target_id, settings)
+        self.docker_settings[target_id] = settings
+
+    def _ensure_docker_action(self, target_id: str, action: JobAction) -> None:
+        if action not in ("stacks", "stack-update"):
+            return
+        settings = self.get_docker_settings(target_id)
+        if settings.mode in ("external", "disabled"):
+            raise ValueError(f"Docker management is {settings.mode} on this machine")
+        if action == "stack-update" and settings.mode == "monitor":
+            raise ValueError("Docker is monitor-only on this machine; stack updates are disabled")
 
     def _set_stacks(self, target_id: str, result: StacksResult) -> None:
         self.stacks[target_id] = result
@@ -258,6 +304,22 @@ class JobManager:
                 return job
         return None
 
+    def _ensure_can_start(self, target: Target) -> None:
+        if (
+            target.platform != "proxmox"
+            or target.kind not in ("vm", "lxc")
+            or target.status != "stopped"
+            or not target.can_start
+            or target.id not in self.inventory.power
+        ):
+            raise ValueError(f"{target.name}: only eligible stopped Proxmox VMs and LXCs can be started")
+        host = self._host_id(target)
+        parent_job = self.active_job(host) if host else None
+        if parent_job and parent_job.action in ("upgrade", "reboot", "rollback"):
+            raise ValueError(f"{target.name}: its host is busy; wait before booting the guest")
+        if why := self.update_blocked(target):
+            raise ValueError(f"{target.name}: {why}")
+
     def submit(
         self,
         target_id: str,
@@ -270,8 +332,13 @@ class JobManager:
         prune: bool = False,
         security_only: bool = False,
     ) -> Job:
+        if action == "dockhand-update":
+            raise ValueError("Use the confirmed Dockhand update endpoint")
         target, executor = self.inventory.get(target_id)
-        if action == "rollback":
+        self._ensure_docker_action(target_id, action)
+        if action == "start":
+            self._ensure_can_start(target)
+        elif action == "rollback":
             _ensure_can_roll_back(target, self.inventory.snapshots.get(target_id))
             if not snapshot:
                 raise ValueError(f"{target.name}: no snapshot to roll back to")
@@ -318,6 +385,46 @@ class JobManager:
         self._start(job)
         return job
 
+    def submit_dockhand_update(self, target_id: str, operation) -> Job:
+        """External deployment uses normal job history/locks but is NEVER replayed on restart."""
+        target, _ = self.inventory.get(target_id)
+        if self.active_job(target_id):
+            raise ValueError("Wait for this machine's current job to finish")
+        job = Job(
+            id=uuid.uuid4().hex[:12],
+            target_id=target_id,
+            target_name=target.name,
+            action="dockhand-update",
+            created_at=_now(),
+        )
+        self.jobs[job.id] = job
+        self._save_job(job)
+        self._evict()
+
+        async def run():
+            async with self._target_locks.setdefault(target_id, asyncio.Lock()), self.sem:
+                job.status, job.started_at = "running", _now()
+                self._save_job(job)
+                try:
+                    await operation(lambda stream, line: job.log.append(line))
+                    job.status = "succeeded"
+                except Exception:
+                    # Provider errors may contain secrets. Only fixed text goes into logs/history.
+                    job.status, job.error = (
+                        "failed",
+                        "Dockhand update not fully confirmed; inspect Dockhand before retrying",
+                    )
+                    job.log.append(f"!! {job.error}")
+                finally:
+                    if job.status in ("succeeded", "failed"):
+                        job.finished_at = _now()
+                        self._save_job(job)
+
+        task = asyncio.create_task(run(), name=job.id)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return job
+
     def _evict(self) -> None:
         """Forget the oldest finished jobs once there are too many; active ones are always kept."""
         excess = len(self.jobs) - MAX_JOBS
@@ -347,6 +454,7 @@ class JobManager:
             try:
                 if resume:
                     job.log.append("== Dashboard restarted; picking this job up again")
+                    self._ensure_docker_action(job.target_id, job.action)
                     async with slot.released():
                         target, executor = await self._find_again(job)
                     await self._continue(job, target, executor, on_line, slot)
@@ -358,16 +466,26 @@ class JobManager:
                     target, executor = self.inventory.get(job.target_id)
                 except KeyError:
                     raise RuntimeError("target no longer exists") from None
-                if job.action == "rollback":
+                if job.action == "start":
+                    self._ensure_can_start(target)
+                elif job.action == "rollback":
                     _ensure_can_roll_back(target, self.inventory.snapshots.get(job.target_id))
                 elif job.action == "backup":
                     _ensure_can_back_up(target, self.inventory.backup_runs.get(job.target_id))
                 else:
                     _ensure_runnable(target, executor, job.action)
+                    self._ensure_docker_action(job.target_id, job.action)
                     self._ensure_updates_allowed(target, job.action)
                 if job.action in ("upgrade", "reboot"):
                     await self._wait_unblocked(job, target, slot)
-                if job.action == "backup":
+                if job.action == "start":
+                    job.log.append(f"== Starting {target.name} through Proxmox")
+                    try:
+                        await self.inventory.power[target.id].start()
+                        job.log.append("== Proxmox confirms the guest is running; guest services may still be starting")
+                    finally:
+                        self.inventory.invalidate()
+                elif job.action == "backup":
                     job.log.append(
                         f"== Backing up {target.name}"
                         + (
@@ -392,7 +510,11 @@ class JobManager:
                     )
                     job.log.append("== Backup finished")
                 elif job.action == "check":
-                    check = await _check(executor, on_line)
+                    check = await _check(
+                        executor,
+                        on_line,
+                        discover_docker=job.target_id not in self.dockhand_targets,
+                    )
                     self._set_check(job.target_id, check)
                     if check.error:
                         raise RuntimeError(check.error)
@@ -410,7 +532,13 @@ class JobManager:
                     else:
                         job.log.append("== Rolled back; re-checking")
                         try:
-                            self._set_check(job.target_id, await _check(executor))
+                            self._set_check(
+                                job.target_id,
+                                await _check(
+                                    executor,
+                                    discover_docker=job.target_id not in self.dockhand_targets,
+                                ),
+                            )
                         except Exception as e:  # noqa: BLE001 - the rollback itself worked
                             job.log.append(f"! re-check failed: {e}")
                 elif job.action == "stacks":
@@ -623,7 +751,7 @@ class JobManager:
         job.log.append("== Re-checking for remaining updates")
         # The upgrade itself worked; a failed re-check is reported but doesn't fail the job.
         try:
-            check = await _check(executor)
+            check = await _check(executor, discover_docker=job.target_id not in self.dockhand_targets)
         except Exception as e:  # noqa: BLE001
             check = CheckResult(checked_at=_now(), error=str(e) or type(e).__name__)
         self._set_check(job.target_id, check)
@@ -656,7 +784,11 @@ class JobManager:
         Its own Docker stacks are updating, or (for a host) a guest on it is updating, updating Docker,
         rebooting or rolling back. A guest is never held back by its host updating.
         """
-        busy = [j for j in self.jobs.values() if j.target_id == target.id and j.action == "stack-update"]
+        busy = [
+            j
+            for j in self.jobs.values()
+            if j.target_id == target.id and j.action in ("stack-update", "dockhand-update")
+        ]
         if target.kind == "host":
             busy += [j for j in self._guest_jobs(target) if j.action in GUEST_ACTIONS_BLOCKING_HOST]
         busy = [j for j in busy if j.status in ("queued", "running")]
@@ -724,7 +856,7 @@ class JobManager:
             if attempt:
                 await asyncio.sleep(REBOOT_POLL)
             try:
-                check = await _check(executor)
+                check = await _check(executor, discover_docker=job.target_id not in self.dockhand_targets)
             except Exception as e:  # noqa: BLE001
                 check = CheckResult(checked_at=_now(), error=str(e) or type(e).__name__)
             if not check.error:
@@ -858,6 +990,7 @@ class JobManager:
             CheckResult(
                 os=prev.os if prev else None,
                 package_manager=prev.package_manager if prev else None,
+                docker_installed=prev.docker_installed if prev else None,
                 runs_dashboard=prev.runs_dashboard if prev else False,
                 community_script=prev.community_script if prev else None,
                 checked_at=_now(),
@@ -913,8 +1046,18 @@ async def _attached(executor, on_line, script: str = UPGRADE_SCRIPT, what: str =
     return res.stdout
 
 
-async def _check(executor, on_line=None) -> CheckResult:
+async def _check(executor, on_line=None, *, discover_docker: bool = False) -> CheckResult:
     # Some targets (the Proxmox host) know a better way to check than the generic script.
     if hasattr(executor, "check"):
-        return await executor.check(on_line)
-    return parse_check(await executor.run(CHECK_SCRIPT, on_line))
+        check = await executor.check(on_line)
+    else:
+        check = parse_check(await executor.run(CHECK_SCRIPT, on_line))
+    if discover_docker and not check.error:
+        try:
+            res = await executor.run(DOCKER_DETECT_SCRIPT, timeout=30)
+            if res.rc == 0:
+                check.docker_installed = parse_docker_installed(res.stdout)
+        except Exception:
+            # Optional capability discovery must not fail a successful OS check.
+            log.debug("Could not discover Docker capability", exc_info=True)
+    return check

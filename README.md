@@ -19,6 +19,17 @@ get notified when something needs attention.
 * Checks on a schedule and sends notifications through ntfy, Gotify, Discord, Telegram or a JSON webhook.
 * Shows when each machine was last backed up, and can back up the settings of a host.
 
+## Container providers and dashboard
+
+The dashboard has All, Machines and Containers views, with independent OS/container status,
+check times and actions. Native Docker Compose checks and stack updates remain available;
+optional Dockhand integration adds saved reports, fresh checks and confirmed container updates.
+Choose the provider per machine, including monitor-only, another external manager or disabled.
+Stopped Proxmox VMs and LXCs also have a confirmed Boot up action where permitted.
+
+See [Container dashboard and Dockhand integration](docs/CONTEXTUAL-DASHBOARD.md) for configuration,
+check schedules, update permissions, result meanings and demo instructions.
+
 ## Quick start
 
 1. Run [`docker-compose.yml`](docker-compose.yml) with `docker compose up -d`, or deploy it as a stack in your container manager.

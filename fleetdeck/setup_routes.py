@@ -10,13 +10,17 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from . import onboarding as ob
 from . import tunnels
 from .config import AppConfig, check_username
+from .docker_management import DockerManagementRequest, update_dockhand_mapping
+from .models import DockerSettings
 from .security import hash_password
 
 log = logging.getLogger(__name__)
@@ -87,6 +91,16 @@ def add_setup_routes(
     first_run: bool,
     busy: Callable[[], list[str]] = list,
 ) -> None:
+    @app.exception_handler(RequestValidationError)
+    async def safe_provider_validation(request: Request, exc: RequestValidationError):
+        if request.url.path == "/api/setup/docker-management":
+            # FastAPI normally includes rejected input in 422 responses; never echo a submitted token.
+            return JSONResponse(
+                status_code=422,
+                content={"detail": [{"loc": list(e["loc"]), "msg": e["msg"], "type": e["type"]} for e in exc.errors()]},
+            )
+        return await request_validation_exception_handler(request, exc)
+
     lock = asyncio.Lock()  # one config write at a time
     state = {"changed": False, "admin_created": False}
     tunnel_manager = tunnels.manager(paths.keys / "tunnels")
@@ -303,6 +317,78 @@ def add_setup_routes(
         fp = await asyncio.to_thread(ob.incus_cert_fingerprint, paths) if found[0] == "incus" else ""
         source = ob.uninstall_source(*found, fp)
         return {"script": ob.wrap(source), "source": source, "download": _offer_download(source)}
+
+    @app.get("/api/setup/docker-management")
+    async def get_docker_management(target_id: str):
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        if target_id not in app.state.inventory.targets:
+            raise HTTPException(404, "unknown target")
+        async with lock:
+            try:
+                raw = ob.read_raw(paths)
+                saved = ob.validate_raw(raw, str(paths.config))
+            except (ValueError, ValidationError):
+                raise HTTPException(400, "The saved configuration is invalid; review it in Settings") from None
+            digest = hashlib.sha256(paths.config.read_text().encode() if paths.config.exists() else b"").hexdigest()
+            dh = saved.dockhand
+            mapping = next((m for m in dh.environments if m.target_id == target_id), None) if dh else None
+            return {
+                "revision": digest,
+                "writable": paths.writable(),
+                "mode": "dockhand" if mapping else app.state.jobs.docker_settings.get(target_id, DockerSettings()).mode,
+                "url": dh.url if dh else "",
+                "token_configured": bool(dh and dh.token),
+                "poll_seconds": dh.poll_seconds if dh else 300,
+                "allow_checks": bool(dh and dh.allow_checks),
+                "allow_updates": bool(mapping and mapping.allow_updates),
+                "environment_id": mapping.environment_id if mapping else None,
+                "shared_hosts": len(dh.environments) if dh else 0,
+                "can_restart": restart is not None,
+                "restart_pending": state["changed"],
+            }
+
+    @app.put("/api/setup/docker-management")
+    async def put_docker_management(req: DockerManagementRequest):
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        editable()
+        refuse_while_busy(busy)
+        if req.target_id not in app.state.inventory.targets:
+            raise HTTPException(404, "unknown target")
+        async with lock:
+            old_text = paths.config.read_text() if paths.config.exists() else ""
+            digest = hashlib.sha256(old_text.encode()).hexdigest()
+            if req.revision != digest:
+                raise HTTPException(409, "Configuration changed; reopen Docker management before saving")
+            try:
+                raw = ob.read_raw(paths)
+                saved = ob.validate_raw(raw, str(paths.config))
+                data = update_dockhand_mapping(raw, saved, req)
+                validated = ob.validate_raw(data, str(paths.config))
+                if validated.auth is None and not validated.allow_no_auth:
+                    raise ValueError("Keep the auth section in Settings before saving provider changes")
+            except (ValueError, ValidationError) as e:
+                raise _error(e) from None
+            try:
+                mode = "external" if req.mode == "dockhand" else req.mode
+                policy = DockerSettings(
+                    mode=mode,
+                    manager_name="Dockhand" if req.mode == "dockhand" else req.manager_name,
+                    manager_url=validated.dockhand.url if req.mode == "dockhand" else req.manager_url,
+                )
+            except ValidationError as e:
+                raise _error(e) from None
+            try:
+                await asyncio.to_thread(ob.write_raw, paths, data)
+                refuse_while_busy(busy)
+                app.state.jobs.stage_docker_settings(req.target_id, policy)
+            except Exception:
+                # Preserve the previous file if either the policy or the config could not be saved.
+                await asyncio.to_thread(ob._write_private, paths.config, old_text)
+                raise
+        changed()
+        return {"saved": True, "restart_pending": True, "can_restart": restart is not None}
 
     @app.get("/api/setup/config")
     async def get_config():

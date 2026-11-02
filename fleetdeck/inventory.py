@@ -9,6 +9,7 @@ from .backup_runs import BackupRun
 from .config import AppConfig
 from .executors import Executor
 from .models import Target
+from .power import GuestPower
 from .providers import Provider
 from .providers.demo import DemoProvider
 from .providers.incus import IncusProvider
@@ -48,18 +49,20 @@ class Inventory:
         self.snapshots: dict[str, Snapshots] = {}
         # What the "Back up" button runs, for the hosts that have one.
         self.backup_runs: dict[str, BackupRun] = {}
+        self.power: dict[str, GuestPower] = {}
         self._refreshed = 0.0
         self._lock = asyncio.Lock()
 
     async def refresh(self, force: bool = False) -> None:
         async with self._lock:
             age = time.monotonic() - self._refreshed
-            if age < (self.min_interval if force else self.ttl):
+            if self._refreshed and age < (self.min_interval if force else self.ttl):
                 return
             results = await asyncio.gather(*(p.discover() for p in self.providers), return_exceptions=True)
             targets: dict[str, tuple[Target, Executor | None]] = {}
             snapshots: dict[str, Snapshots] = {}
             backup_runs: dict[str, BackupRun] = {}
+            power: dict[str, GuestPower] = {}
             errors: dict[str, str] = {}
             for provider, res in zip(self.providers, results, strict=True):
                 if isinstance(res, BaseException):
@@ -74,8 +77,13 @@ class Inventory:
                     targets[target.id] = (target, executor)
                 snapshots.update(getattr(provider, "snapshots", {}))
                 backup_runs.update(getattr(provider, "backup_runs", {}))
+                power.update(getattr(provider, "power", {}))
             self.targets, self.snapshots, self.backup_runs, self.errors = targets, snapshots, backup_runs, errors
+            self.power = power
             self._refreshed = time.monotonic()
+
+    def invalidate(self) -> None:
+        self._refreshed = 0.0
 
     def get(self, target_id: str) -> tuple[Target, Executor | None]:
         return self.targets[target_id]

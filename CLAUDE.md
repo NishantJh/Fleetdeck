@@ -9,7 +9,8 @@ FastAPI, a static HTML/JS front end, SQLite for state.
 Entry points
 - `fleetdeck/__main__.py`: starts uvicorn on `PORT` (default 8080; `HOST` defaults to 0.0.0.0). `TLS_CERT`/`TLS_KEY` serve HTTPS directly. Data folder from `FLEETDECK_DATA`.
 - `fleetdeck/app.py`: FastAPI app factory, routes for the dashboard, lifespan (scheduler, providers, store).
-- `fleetdeck/setup_routes.py`: HTTP API for the setup page (`/setup`).
+- `fleetdeck/setup_routes.py`: HTTP API for setup and structured per-machine Docker provider configuration.
+- `fleetdeck/docker_management.py`: secret-aware Dockhand connection/mapping edits; no network requests.
 
 Machines and how they are reached
 - `fleetdeck/providers/__init__.py`: the provider protocol. A provider finds targets and returns an executor for each.

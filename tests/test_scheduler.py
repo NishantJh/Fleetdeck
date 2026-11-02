@@ -253,6 +253,10 @@ class SecExecutor(FakeExecutor):
         if script == CHECK_SCRIPT:
             body = "openssl/stable-security 2.0 amd64 [upgradable from: 1.0]" if self.pending else ""
             return ExecResult(rc=0, stdout=f"__PM__=apt\n__OS__=Debian\n__BEGIN__\n{body}\n__END__\n__REBOOT__=no\n")
+        from fleetdeck.updates import DOCKER_DETECT_SCRIPT
+
+        if script == DOCKER_DETECT_SCRIPT:
+            return ExecResult(rc=0, stdout="__DOCKER_INSTALLED__=no\n")
         self.calls.append(f"{self.name}:{'security' if script == SECURITY_UPGRADE_SCRIPT else 'full'}")
         await asyncio.sleep(0)
         self.pending = False

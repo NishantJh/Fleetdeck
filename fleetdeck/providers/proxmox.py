@@ -13,6 +13,7 @@ from ..config import ProxmoxConfig, SSHConfig
 from ..executors import DEFAULT_TIMEOUT, LineCallback, PctExecutor, PveAgentExecutor, SSHExecutor
 from ..host_backups import HostBackups
 from ..models import BackupInfo, CheckResult, ExecResult, Package, Target
+from ..power import ProxmoxGuestPower
 from ..snapshots import PveSnapshots
 from ..tls import PinnedTransport
 from ..updates import REBOOT_SCRIPT, parse_apt, parse_reboot
@@ -161,6 +162,7 @@ class ProxmoxProvider:
         self._backups: BackupIndex | None = None
         self._backups_at = 0.0
         self.snapshots: dict[str, PveSnapshots] = {}
+        self.power: dict[str, ProxmoxGuestPower] = {}
         self.backup_runs: dict[str, BackupRun] = {}
         self.host_backups = HostBackups()
         self.client = httpx.AsyncClient(
@@ -314,6 +316,7 @@ class ProxmoxProvider:
     async def discover(self) -> Discovered:
         found: Discovered = []
         snapshots: dict[str, PveSnapshots] = {}
+        power: dict[str, ProxmoxGuestPower] = {}
         backup_runs: dict[str, BackupRun] = {}
         node_ips = await self._node_ips()
         nodes = await self._get("/nodes")
@@ -389,8 +392,11 @@ class ProxmoxProvider:
                     note=note,
                     backup=self._backup_for(vmid, backups),
                     can_snapshot=vmid not in self.cfg.protect,
+                    can_start=ct.get("status") == "stopped" and not ct.get("template") and vmid not in self.cfg.protect,
                     monitor_only=vmid in self.cfg.monitor_only,
                 )
+                if t.can_start:
+                    power[t.id] = ProxmoxGuestPower(self.client, nname, "lxc", vmid)
                 if t.can_snapshot:
                     snapshots[t.id] = PveSnapshots(self.client, nname, "lxc", vmid)
                 found.append((t, PctExecutor(ssh, vmid) if ssh else None))  # type: ignore[arg-type]
@@ -422,13 +428,17 @@ class ProxmoxProvider:
                     note=note,
                     backup=self._backup_for(vmid, backups),
                     can_snapshot=vmid not in self.cfg.protect,
+                    can_start=vm.get("status") == "stopped" and vmid not in self.cfg.protect,
                     monitor_only=vmid in self.cfg.monitor_only,
                 )
+                if t.can_start:
+                    power[t.id] = ProxmoxGuestPower(self.client, nname, "qemu", vmid)
                 if t.can_snapshot:
                     snapshots[t.id] = PveSnapshots(self.client, nname, "qemu", vmid)
                 found.append((t, PveAgentExecutor(self.client, nname, vmid)))
             if protected_here:
                 host.no_reboot = f"runs protected guest {', '.join(protected_here)}; reboot it from the Proxmox UI"
+        self.power = power
         self.snapshots = snapshots
         self.backup_runs = backup_runs
         return found
