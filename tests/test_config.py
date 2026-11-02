@@ -159,3 +159,13 @@ def test_update_commands_take_vmids_and_must_be_one_line():
             HostConfig(name="nas", host="nas", update_command=bad)
     with pytest.raises(ValidationError):
         IncusConfig(name="i", socket="/s", update_commands={"web": "a\rb"})
+
+
+def test_security_scanning_is_off_by_default():
+    from fleetdeck.config import SecurityConfig
+
+    s = AppConfig().security
+    assert (s.scan_images, s.min_severity, s.ignore_unfixed) == (False, "HIGH", True)
+    assert SecurityConfig(min_severity="medium").min_severity == "MEDIUM"
+    with pytest.raises(ValueError):
+        SecurityConfig(min_severity="severe")

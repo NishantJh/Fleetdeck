@@ -49,6 +49,15 @@ community_scripts_update: true
 # .tar.gz.age; `age -d file.tar.gz.age | tar xz` asks for it. Archives written on the machine itself can't
 # use a password: set backup_age_recipient too for those, or save them on the dashboard.
 # backup_password: ${BACKUP_PASSWORD}
+# Scan the Docker images on your machines for known vulnerabilities with Trivy. Off by default.
+# Trivy runs inside the dashboard's container and reads the images from their registries by digest: nothing
+# runs on, or is written to, your machines. Needs schedule.check_docker for scheduled scans; the Scan images
+# button on the Containers tab works without it. Images built on the machine have no registry digest and are
+# shown as "not scanned". Downloads Trivy's vulnerability database (about 100 MB) into /data/trivy.
+# security:
+#   scan_images: true
+#   min_severity: HIGH      # UNKNOWN, LOW, MEDIUM, HIGH or CRITICAL: what the badge and details list
+#   ignore_unfixed: true    # leave out vulnerabilities that have no fix yet
 # Check every machine on a timer (e.g. 30m, 6h, 1d; at least 5m). Nothing is upgraded
 # automatically unless you turn on auto_security_updates below; you get a notification when something new is pending.
 schedule:

@@ -8,8 +8,15 @@ ARG BASE_REGISTRY=mirror.gcr.io/library
 FROM ${BASE_REGISTRY}/golang:1.26-alpine AS wireproxy
 RUN CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" github.com/windtf/wireproxy/cmd/wireproxy@v1.1.3
 
+# Trivy: scans Docker images for vulnerabilities when security.scan_images is on (fleetdeck/vulnscan.py). It runs
+# here in the dashboard's container, never on a machine. Pinned by version and by the multi-arch index digest
+# (0.76.1, published 2026-10-21; not one of the versions hit by the March 2026 supply-chain compromise,
+# GHSA-69fq-xp46-6x23: 0.69.4 to 0.69.6). Dependabot proposes newer versions after a 7-day cooldown.
+FROM aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c AS trivy
+
 FROM ${BASE_REGISTRY}/python:3.12-slim
 COPY --from=wireproxy /go/bin/wireproxy /usr/local/bin/wireproxy
+COPY --from=trivy /usr/local/bin/trivy /usr/local/bin/trivy
 # age: encrypts host config backups saved on the dashboard (backup_age_recipient).
 RUN apt-get update && apt-get install -y --no-install-recommends age \
  && rm -rf /var/lib/apt/lists/*

@@ -53,6 +53,16 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   new is pending (a new update, a new pending reboot, or a check that started failing). It never
   upgrades on its own. Add `check_docker: true` under `schedule` to look for newer Docker images too;
   that pulls the images on every machine with Docker each round, so it is off by default. *Test notification* in the toolbar sends a test message.
+* **Image vulnerability scans (off by default):** set `security.scan_images: true` and the dashboard scans the Docker
+  images of every stack with [Trivy](https://trivy.dev) after each scheduled Docker check (`schedule.check_docker`), or
+  when you press *Scan images* on the Containers tab. Trivy runs inside the dashboard's container and reads each image
+  from its registry by digest: nothing runs on, or is written to, your machines, and nothing is sent anywhere but the
+  registries and Trivy's database download (into `/data/trivy`). Results are kept by digest and reused for 24 hours; the
+  database is refreshed once per run, and results made with a database older than 7 days are marked *stale*. Images
+  built on the machine have no digest and show *not scanned*. The Containers tab shows a badge per stack (the worst
+  severity at or above `security.min_severity`, default `HIGH`) with a details dialog. A notification is sent only when a
+  new Critical appears. `security.ignore_unfixed` (default `true`) leaves out vulnerabilities with no fix yet.
+  API: `POST /api/targets/{id}/scan` starts a scan of a machine's stacks.
 * **Backups:** each Proxmox guest shows when it was last backed up (vzdump or Proxmox Backup
   Server), turns orange once that's older than `backup_max_age_hours` (48 by default), and is flagged
   *none*, *no job* (not in any scheduled backup job) or *verify failed*. This needs `Datastore.Audit`,

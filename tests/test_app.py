@@ -286,3 +286,30 @@ def test_update_command_cannot_be_changed_from_outside_the_console_networks():
         pi = next(t for t in client.get("/api/targets").json()["targets"] if t["target"]["name"] == "pi4")
         r = client.put("/api/update-command", json={"target_id": pi["target"]["id"], "command": "x", "password": ""})
         assert r.status_code == 403 and "allow_from" in r.json()["detail"]
+
+
+def test_image_scan_endpoint_off_by_default_and_in_demo_mode():
+    import time
+
+    with TestClient(create_app(AppConfig(demo=True))) as client:
+        pi = next(t for t in client.get("/api/targets").json()["targets"] if t["target"]["name"] == "docker-vm")
+        assert client.post(f"/api/targets/{pi['target']['id']}/scan").status_code == 400  # off
+
+    cfg = AppConfig(demo=True, security={"scan_images": True, "min_severity": "critical"})
+    with TestClient(create_app(cfg)) as client:
+        data = client.get("/api/targets").json()
+        assert data["settings"]["scan_images"] and data["settings"]["min_severity"] == "CRITICAL"
+        tid = next(t for t in data["targets"] if t["target"]["name"] == "docker-vm")["target"]["id"]
+        assert client.post("/api/targets/nope/scan").status_code == 404
+        assert client.post(f"/api/targets/{tid}/scan").status_code == 400  # no Docker check yet
+        client.post("/api/actions", json={"action": "stacks", "target_ids": [tid]})
+        _wait_for_jobs(client)
+        assert client.post(f"/api/targets/{tid}/scan").status_code == 202
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            data = client.get("/api/targets").json()
+            view = next(t for t in data["targets"] if t["target"]["id"] == tid)
+            if not data["scanning"] and view["vulns"]:
+                break
+            time.sleep(0.2)
+        assert {v["status"] for v in view["vulns"].values()} == {"scanned"}

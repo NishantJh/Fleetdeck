@@ -235,6 +235,7 @@ function stackDetails(s) {
 function stackPanel(v, inTab = false) {
   const id = esc(v.target.id), r = v.stacks, busy = !!v.active_job;
   const prune = !!remember.get("pruneImages");
+  const scan = !!state.settings.scan_images;
   let body;
   if (!r) body = `<p class="muted">Not checked yet.</p>`;
   else if (r.error) body = `<p class="${r.docker === "none" ? "muted" : "bad"}">${esc(r.error)}</p>`;
@@ -253,13 +254,14 @@ function stackPanel(v, inTab = false) {
       const btn = `<button class="small ${behind.length && can ? "primary" : ""}" data-stack="${esc(s.name)}" data-id="${id}" ${can ? "" : "disabled"} title="${esc(v.monitor_only ? MONITOR_TIP : v.blocked || "")}">Update</button>`;
       const key = `${v.target.id}/${s.name}`, open = state.stackOpen.has(key);
       const more = `<button class="small" data-act="stack-details" data-id="${id}" data-name="${esc(s.name)}" data-focus-key="stack-details:${key}" aria-expanded="${open}" aria-controls="stack-${esc(key)}" aria-label="${open ? "Hide" : "Show"} services of ${esc(s.name)}">${open ? "Hide" : "Details"}</button>`;
-      const detail = open ? `<tr class="pkgs" id="stack-${esc(key)}"><td></td><td colspan="3">${stackDetails(s)}</td></tr>` : "";
-      return `<tr><td class="name">${esc(s.name)}${self}${up}</td><td class="muted" data-label="Services">${s.services.map((x) => esc(x.name)).join(", ")}</td><td data-label="Image status">${status}</td><td class="actions">${more} ${btn}</td></tr>${detail}`;
+      const detail = open ? `<tr class="pkgs" id="stack-${esc(key)}"><td></td><td colspan="${scan ? 4 : 3}">${stackDetails(s)}</td></tr>` : "";
+      return `<tr><td class="name">${esc(s.name)}${self}${up}</td><td class="muted" data-label="Services">${s.services.map((x) => esc(x.name)).join(", ")}</td><td data-label="Image status">${status}</td>${scan ? `<td data-label="Vulnerabilities">${vulnBadge(v, s)}</td>` : ""}<td class="actions">${more} ${btn}</td></tr>${detail}`;
     }).join("");
-    body = `<div class="group-scroll"><table><thead><tr><th>Stack</th><th>Services</th><th>Image status</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    body = `<div class="group-scroll"><table><thead><tr><th>Stack</th><th>Services</th><th>Image status</th>${scan ? "<th>Vulnerabilities</th>" : ""}<th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
   return `<div class="docker-panel" id="docker-${inTab ? "tab-" : ""}${id}"><div class="docker-head"><b>Docker Compose stacks</b>
       <span class="muted">${r ? `checked ${ago(r.checked_at)}` : ""}</span>
+      ${scan && r?.stacks?.length ? `<button class="small" data-act="scan" data-id="${id}" ${state.scanning ? "disabled" : ""} title="Scans these images for known vulnerabilities with Trivy, here on the dashboard. Nothing runs on the machine.">${state.scanning ? "Scanning…" : "Scan images"}</button>` : ""}
       <button class="small" data-act="stacks" data-id="${id}" ${busy ? "disabled" : ""} title="Downloads newer images for every running stack. Nothing is restarted, but a later docker compose up on this machine will use them.">Check for new images</button>
       <label class="muted" title="Runs docker image prune: removes all unused, untagged images on this machine, not only this stack's"><input type="checkbox" data-prune ${prune ? "checked" : ""}> remove old images after an update (all unused ones on this machine)</label></div>
     ${body}</div>`;
@@ -549,12 +551,51 @@ function openMachineInformation(id, trigger) {
   panel.focus();
 }
 
+function vulnBadge(v, s) {
+  if (!state.settings.scan_images) return "";
+  const x = v.vulns?.[s.name];
+  if (!x) return `<span class="muted">not scanned</span>`;
+  const id = esc(v.target.id), name = esc(s.name);
+  let cls = "ok", text = "no findings";
+  if (x.status === "not_scanned") return `<span class="muted" title="${esc(x.message)}">not scanned</span>`;
+  if (x.status === "error") { cls = "bad"; text = "scan failed"; }
+  else if (x.worst) { cls = x.worst === "CRITICAL" || x.worst === "HIGH" ? "bad" : "warn"; text = `${x.counts[x.worst]} ${x.worst.toLowerCase()}`; }
+  const stale = x.stale ? ` <span class="chip warn" title="The vulnerability database is more than 7 days old">stale</span>` : "";
+  return `<button class="small vuln-badge ${cls}" data-act="vulns" data-id="${id}" data-name="${name}" data-focus-key="vulns:${id}/${name}" title="${esc(x.message || "Show the findings")}">${text}</button>${stale}`;
+}
+
+function showVulns(id, name) {
+  const v = state.targets.find((t) => t.target.id === id), x = v?.vulns?.[name];
+  if (!x) return;
+  const counts = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"].map((s) => `<li>${s.toLowerCase()}: <b>${x.counts?.[s] || 0}</b></li>`).join("");
+  const rows = (x.top || []).map((f) => `<tr><td>${esc(f.id)}</td><td>${esc(f.pkg)}</td><td>${esc(f.installed)}</td><td>${esc(f.fixed || "no fix yet")}</td><td class="${f.severity === "CRITICAL" || f.severity === "HIGH" ? "bad" : "warn"}">${esc(f.severity.toLowerCase())}</td></tr>`).join("");
+  $("#vuln-body").innerHTML = `<p class="muted">${x.scanned} of ${x.images} image(s) scanned ${ago(x.scanned_at)}${x.stale ? " · the vulnerability database is more than 7 days old" : ""}. Scanned by the dashboard from the registry; nothing ran on the machine.</p>${x.message ? `<p class="warn">${esc(x.message)}</p>` : ""}
+    <ul class="vuln-counts">${counts}</ul>
+    ${rows ? `<div class="group-scroll"><table><thead><tr><th>ID</th><th>Package</th><th>Installed</th><th>Fixed in</th><th>Severity</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">Nothing at or above ${esc(state.settings.min_severity || "HIGH")}.</p>`}`;
+  $("#vuln-title").textContent = `Vulnerabilities in ${name}`;
+  $("#vuln-dialog").showModal();
+}
+
+async function scanImages(id) {
+  try {
+    await api(`/api/targets/${encodeURIComponent(id)}/scan`, { method: "POST" });
+  } catch (e) {
+    state.errors = { dashboard: e.message };
+    return render();
+  }
+  state.scanning = true;
+  render();
+  // The scan runs on the dashboard in the background: look until it is done.
+  const poll = setInterval(async () => { await load(); if (!state.scanning) clearInterval(poll); }, 3000);
+}
+
 async function load(refresh = false) {
   try {
     const data = await api(`/api/targets${refresh ? "?refresh=true" : ""}`);
     state.targets = data.targets;
     state.errors = data.errors;
     state.settings = data.settings || {};
+    state.scanning = !!data.scanning;
     state.backupPlaces = data.backup_places || {};
     state.backupFolder = data.backup_folder || null;
     state.jobs = await api("/api/jobs");
@@ -843,6 +884,10 @@ document.addEventListener("click", (e) => {
     const key = `${el.dataset.id}/${el.dataset.name}`;
     if (!state.stackOpen.delete(key)) state.stackOpen.add(key);
     render();
+  } else if (el.dataset.act === "vulns") {
+    showVulns(el.dataset.id, el.dataset.name);
+  } else if (el.dataset.act === "scan") {
+    scanImages(el.dataset.id);
   } else if (el.dataset.act === "stacks") {
     act("stacks", [el.dataset.id]);
   } else if (el.dataset.monitor) {

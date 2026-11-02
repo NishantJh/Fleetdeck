@@ -35,6 +35,7 @@ from .setup_routes import add_setup_routes
 from .store import Store
 from .tunnels import TunnelManager
 from .tunnels import manager as tunnel_manager
+from .vulnscan import Scanner, StackVulns, VulnScans
 
 log = logging.getLogger("fleetdeck")
 STATIC = Path(__file__).parent / "static"
@@ -55,6 +56,8 @@ class TargetView(BaseModel):
     monitor_only: bool = False
     # The machine's own command that Update runs instead of the OS upgrade (from the config or set here).
     update_command: str | None = None
+    # Vulnerability scan of each stack's images, by stack name (empty unless security.scan_images is on).
+    vulns: dict[str, StackVulns] = Field(default_factory=dict)
 
 
 class ActionRequest(BaseModel):
@@ -142,6 +145,13 @@ def create_app(
         cfg.backup_password,
     )
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
+    sec = cfg.security
+    scanner = Scanner(paths.config.parent / "trivy", sec.ignore_unfixed, sec.min_severity)
+    if cfg.demo and not cfg.has_real_targets:
+        from .providers.demo import DemoScanner
+
+        scanner = DemoScanner(scanner.cache_dir, sec.ignore_unfixed, sec.min_severity)
+    vulns = VulnScans(scanner, store, lambda tid: jobs.stacks.get(tid), notifier) if sec.scan_images else None
     scheduler = Scheduler(
         cfg.schedule.check_every,
         inventory,
@@ -150,6 +160,7 @@ def create_app(
         store,
         cfg.schedule.check_docker,
         cfg.schedule.auto_security_updates,
+        vulns,
     )
 
     @asynccontextmanager
@@ -235,6 +246,7 @@ def create_app(
                 runs_dashboard=_runs_dashboard(t, check, hostname),
                 monitor_only=jobs.monitor_only(t),
                 update_command=jobs.update_command(t),
+                vulns=vulns.target_vulns(t.id) if vulns else {},
             )
             for t, _ in inventory.targets.values()
         ]
@@ -243,7 +255,10 @@ def create_app(
             "errors": inventory.errors,
             "backup_places": jobs.backup_places,
             "backup_folder": str(backup_folder) if backup_folder else None,
+            "scanning": bool(vulns and vulns.running),
             "settings": {
+                "scan_images": vulns is not None,
+                "min_severity": sec.min_severity,
                 "snapshot_before_upgrade": cfg.snapshot_before_upgrade,
                 "community_scripts_update": cfg.community_scripts_update,
             },
@@ -276,6 +291,24 @@ def create_app(
             except ValueError as e:
                 rejected[tid] = str(e)
         return {"jobs": submitted, "rejected": rejected}
+
+    @app.post("/api/targets/{target_id}/scan", status_code=202)
+    async def scan_images(target_id: str):
+        """Scan the images of this machine's Docker stacks with Trivy (here, not on the machine), in the background.
+        Uses the stacks the last Docker check found; poll /api/targets for ``scanning`` and each stack's ``vulns``."""
+        if vulns is None:
+            raise HTTPException(400, "image scanning is off: set security.scan_images: true")
+        await inventory.refresh()
+        if target_id not in inventory.targets:
+            raise HTTPException(404, "unknown target")
+        if not jobs.stacks.get(target_id):
+            raise HTTPException(400, "run a Docker check on this machine first")
+        if vulns.running:
+            raise HTTPException(409, "a scan is already running")
+        task = asyncio.create_task(vulns.scan_run([target_id]))
+        background.add(task)
+        task.add_done_callback(background.discard)
+        return {"started": True}
 
     @app.put("/api/backup-places")
     async def set_backup_place(req: BackupPlaceRequest):

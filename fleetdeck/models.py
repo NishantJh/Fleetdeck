@@ -109,6 +109,8 @@ class StackService(BaseModel):
     # the container was made from, and the ID the tag points at on the machine now ("" if unknown).
     image_id: str = ""
     tag_id: str = ""
+    # The tag's registry digests (repo@sha256:...). Empty for an image built on the machine.
+    repo_digests: list[str] = Field(default_factory=list)
 
 
 class Stack(BaseModel):
