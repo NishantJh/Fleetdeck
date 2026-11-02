@@ -17,6 +17,7 @@ from ..updates import (
     COMMUNITY_SCRIPT_DETECT,
     COMMUNITY_UPDATE_SCRIPT,
     CUSTOM_MARK,
+    DOCKER_DETECT_SCRIPT,
     REBOOT_NOW_SCRIPT,
 )
 from ..vulnscan import Finding, ImageScan, Scanner
@@ -103,7 +104,7 @@ class DemoExecutor:
     def _scan(self) -> str:
         if self.stacks is None:
             return "__DOCKER__=none\n"
-        out = ["__DOCKER__=yes", "__COMPOSE__=v2"]
+        out = ["__DOCKER__=yes", "__COMPOSE__=v2", "__DOCKER_VERSION__=28.5.1"]
         images = {}
         for name, (services, behind) in self.stacks.items():
             for svc in services:
@@ -165,6 +166,8 @@ class DemoExecutor:
     async def run(self, script, on_line=None, timeout=3600) -> ExecResult:
         await asyncio.sleep(random.uniform(0.3, 1.2))
         head = f"__PM__={self.pm}\n__OS__={self.os_name}\n"
+        if script == DOCKER_DETECT_SCRIPT:
+            return ExecResult(rc=0, stdout=f"__DOCKER_INSTALLED__={'yes' if self.stacks is not None else 'no'}\n")
         if self.app:
             head += f"__CSAPP__={self.app}\n"
         if script == BOOT_ID_SCRIPT:

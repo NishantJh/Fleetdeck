@@ -22,9 +22,11 @@ from .backup_runs import check_destination
 from .config import MAX_UPDATE_COMMAND, AppConfig, check_update_command, config_path, load_config
 from .console import Console, client_ip, network_problem
 from .console_routes import add_console_routes
+from .dockhand import DockhandReader, DockhandStatus, demo_status
+from .dockhand_updates import DockhandUpdateRequest, excluded, install, validate_selection
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
-from .models import CheckResult, Job, JobAction, StacksResult, Target
+from .models import CheckResult, DockerSettings, Job, JobAction, StacksResult, Target
 from .notify import Notifier
 from .onboarding import Paths
 from .providers.proxmox import PROTECTED_NOTE
@@ -52,8 +54,11 @@ class TargetView(BaseModel):
     stacks: StacksResult | None = None
     # Looks like the machine this dashboard runs on: shown with a "dashboard" tag.
     runs_dashboard: bool = False
-    # Checked and reported, never updated from here (set in the config: target.monitor_only, or on the dashboard).
+    docker_settings: DockerSettings = Field(default_factory=DockerSettings)
+    # Configured monitor-only, including restrictions retained from legacy dashboard overrides.
     monitor_only: bool = False
+    dockhand: DockhandStatus | None = None
+    dockhand_updates_allowed: bool = False
     # The machine's own command that Update runs instead of the OS upgrade (from the config or set here).
     update_command: str | None = None
     # Vulnerability scan of each stack's images, by stack name (empty unless security.scan_images is on).
@@ -91,6 +96,14 @@ class UpdateCommandRequest(BaseModel):
 class HideRequest(BaseModel):
     target_ids: list[str] = Field(max_length=1000)
     hidden: bool = True
+
+
+class DockerSettingsRequest(DockerSettings):
+    target_id: str
+
+
+class DockhandCheckRequest(BaseModel):
+    target_id: str = Field(min_length=1, max_length=512)
 
 
 class MonitorOnlyRequest(BaseModel):
@@ -143,6 +156,14 @@ def create_app(
         backup_folder,
         cfg.backup_age_recipient,
         cfg.backup_password,
+        dockhand_targets={m.target_id: cfg.dockhand.url for m in cfg.dockhand.environments} if cfg.dockhand else {},
+    )
+    # Demo mode must never contact a configured external manager.
+    dockhand = DockhandReader(cfg.dockhand, store=store) if cfg.dockhand and not cfg.demo and not locked else None
+    demo_dockhand = (
+        {m.target_id: demo_status(cfg.dockhand.url) for m in cfg.dockhand.environments}
+        if cfg.demo and cfg.dockhand
+        else {}
     )
     notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
     sec = cfg.security
@@ -169,7 +190,8 @@ def create_app(
         store,
         cfg.schedule.check_docker,
         cfg.schedule.auto_security_updates,
-        vulns,
+        dockhand=dockhand,
+        vulns=vulns,
     )
 
     @asynccontextmanager
@@ -213,6 +235,8 @@ def create_app(
             watchdog.cancel()
         await scheduler.stop()  # first, so it can't queue checks during shutdown
         await jobs.shutdown()
+        if dockhand is not None:
+            await dockhand.aclose()
         if notifier is not None:
             await notifier.aclose()
         for provider in inventory.providers:
@@ -226,6 +250,8 @@ def create_app(
     app.state.jobs = jobs
     app.state.inventory = inventory
     app.state.scheduler = scheduler
+    app.state.dockhand = dockhand
+    app.state.demo_dockhand = demo_dockhand
     app.state.setup_token = setup_token
 
     # The login page's cookie; HTTP Basic (scripts, curl -u) keeps working alongside it.
@@ -243,16 +269,33 @@ def create_app(
     @app.get("/api/targets")
     async def list_targets(refresh: bool = False):
         await inventory.refresh(force=refresh)
+        if dockhand is not None:
+            await dockhand.refresh(force=refresh)
+        errors = dict(inventory.errors)
+        if cfg.dockhand:
+            missing = [m for m in cfg.dockhand.environments if m.target_id not in inventory.targets]
+            if missing:
+                errors["Dockhand mapping"] = (
+                    "No matching Fleetdeck machine for "
+                    + ", ".join(f"environment {m.environment_id}: {m.target_id}" for m in missing)
+                    + ". Use the exact target.id from /api/targets in dockhand.environments; "
+                    "display names do not match."
+                )
         views = [
             TargetView(
-                target=t,
+                target=t.model_copy(update={"can_start": False}) if t.can_start and t.id not in inventory.power else t,
                 check=(check := jobs.checks.get(t.id)),
                 active_job=_light(jobs.active_job(t.id)),
                 hidden=t.id in jobs.hidden,
                 blocked=jobs.update_blocked(t),
                 stacks=jobs.stacks.get(t.id),
                 runs_dashboard=_runs_dashboard(t, check, hostname),
+                docker_settings=jobs.get_docker_settings(t.id),
+                dockhand_updates_allowed=bool(
+                    cfg.dockhand and any(m.target_id == t.id and m.allow_updates for m in cfg.dockhand.environments)
+                ),
                 monitor_only=jobs.monitor_only(t),
+                dockhand=dockhand.status.get(t.id) if dockhand is not None else demo_dockhand.get(t.id),
                 update_command=jobs.update_command(t),
                 vulns=vulns.target_vulns(t.id) if vulns else {},
             )
@@ -260,7 +303,7 @@ def create_app(
         ]
         return {
             "targets": views,
-            "errors": inventory.errors,
+            "errors": errors,
             "backup_places": jobs.backup_places,
             "backup_folder": str(backup_folder) if backup_folder else None,
             "scanning": bool(vulns and vulns.running),
@@ -269,8 +312,165 @@ def create_app(
                 "min_severity": sec.min_severity,
                 "snapshot_before_upgrade": cfg.snapshot_before_upgrade,
                 "community_scripts_update": cfg.community_scripts_update,
+                "containers_visible": True,
+                "dockhand_checks_allowed": bool(cfg.dockhand and cfg.dockhand.allow_checks),
+                "dockhand_poll_seconds": cfg.dockhand.poll_seconds if cfg.dockhand else None,
+                "dockhand_results_persistent": store is not None,
+                "scheduled_container_checks": cfg.schedule.check_docker,
             },
         }
+
+    @app.post("/api/dockhand/check", status_code=202)
+    async def check_dockhand(req: DockhandCheckRequest):
+        if not cfg.dockhand or not cfg.dockhand.allow_checks:
+            raise HTTPException(403, "Enable dockhand.allow_checks in Settings for explicit Dockhand checks")
+        await inventory.refresh()
+        if req.target_id not in inventory.targets or req.target_id not in jobs.dockhand_targets:
+            raise HTTPException(404, "No Dockhand mapping for this machine")
+        if any(
+            j.target_id == req.target_id and j.action == "dockhand-update" and j.status in {"queued", "running"}
+            for j in jobs.jobs.values()
+        ):
+            raise HTTPException(409, "Wait for the container update to finish")
+        if cfg.demo:
+            previous = demo_dockhand[req.target_id]
+            now = datetime.now(UTC)
+            demo_dockhand[req.target_id] = previous.model_copy(
+                update={
+                    "last_check_at": now,
+                    "synced_at": now,
+                    "containers": [
+                        c.model_copy(
+                            update={
+                                "status": "current" if c.status in {"unknown", "updated"} else c.status,
+                                "checked_at": now,
+                                "source": "fleetdeck_button",
+                            }
+                        )
+                        for c in previous.containers
+                    ],
+                }
+            )
+            return {"started": True, "simulated": True}
+        if dockhand is None:
+            raise HTTPException(409, "Dockhand status integration unavailable")
+        try:
+            dockhand.request_check(req.target_id)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from None
+        except KeyError:
+            raise HTTPException(404, "No Dockhand mapping for this machine") from None
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        return {"started": True}
+
+    def update_guard(target_id: str, own_job=None):
+        mapping = (
+            next((m for m in cfg.dockhand.environments if m.target_id == target_id), None) if cfg.dockhand else None
+        )
+        if not mapping or not mapping.allow_updates or target_id not in jobs.dockhand_targets:
+            raise HTTPException(403, "Enable Install container updates for this Dockhand machine first")
+        try:
+            target, _ = inventory.get(target_id)
+        except KeyError:
+            raise HTTPException(404, "Unknown target") from None
+        if (
+            not target.updatable
+            or target.check_only
+            or target.status not in {"running", "online"}
+            or jobs.monitor_only(target)
+        ):
+            raise HTTPException(409, "Machine is unavailable, check-only or monitor-only")
+        host_id = jobs._host_id(target)
+        related = {target_id, host_id}
+        if target.kind == "host":
+            related.update(j.target_id for j in jobs._guest_jobs(target))
+        if any(
+            j.id != own_job and j.target_id in related and j.status in {"queued", "running"} for j in jobs.jobs.values()
+        ):
+            raise HTTPException(409, "Wait for machine/host jobs to finish before updating containers")
+        if host_id in jobs._rebooting or target_id in jobs._rebooting:
+            raise HTTPException(409, "Machine or its host is rebooting")
+        if dockhand and target_id in dockhand.tasks:
+            raise HTTPException(409, "A Dockhand check is running")
+        return target
+
+    @app.get("/api/dockhand/update-options")
+    async def dockhand_update_options(target_id: str):
+        await inventory.refresh()
+        update_guard(target_id)
+        if dockhand:
+            await dockhand.refresh(force=True)
+        status = dockhand.status.get(target_id) if dockhand else demo_dockhand.get(target_id)
+        if status is None or status.stale or status.error or status.checking or status.check_error:
+            raise HTTPException(409, "Dockhand reports unavailable; refresh/check before updating")
+        return {
+            "containers": [{**c.model_dump(mode="json"), "excluded_reason": excluded(c)} for c in status.containers]
+        }
+
+    @app.post("/api/dockhand/update", status_code=202)
+    async def update_dockhand(req: DockhandUpdateRequest):
+        await inventory.refresh()
+        update_guard(req.target_id)
+        status = dockhand.status.get(req.target_id) if dockhand else demo_dockhand.get(req.target_id)
+        try:
+            validate_selection(status, req.containers)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+
+        async def operation(on_line):
+            await inventory.refresh(force=True)
+
+            def guard():
+                return update_guard(req.target_id, job.id)
+
+            guard()
+            if cfg.demo:
+                selected = validate_selection(demo_dockhand[req.target_id], req.containers)
+                ids = {r.container_id for r in selected}
+                current = demo_dockhand[req.target_id]
+                demo_dockhand[req.target_id] = current.model_copy(
+                    update={
+                        "containers": [
+                            c.model_copy(
+                                update={
+                                    "status": "current",
+                                    "image_update": False,
+                                    "checked_at": None,
+                                    "updated_at": datetime.now(UTC),
+                                    "source": "fleetdeck_update",
+                                    "check_issue": None,
+                                }
+                            )
+                            if c.container_id in ids
+                            else c
+                            for c in current.containers
+                        ]
+                    }
+                )
+                on_line("stdout", "== Simulated Dockhand update; no manager was contacted")
+            elif dockhand:
+                await install(dockhand, req.target_id, req.containers, guard, on_line)
+            else:
+                raise ValueError("Dockhand unavailable")
+
+        try:
+            job = jobs.submit_dockhand_update(req.target_id, operation)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        return {"job": _light(job), "simulated": cfg.demo}
+
+    @app.put("/api/docker-settings")
+    async def set_docker_settings(req: DockerSettingsRequest):
+        await inventory.refresh()
+        try:
+            settings = DockerSettings.model_validate(req.model_dump(exclude={"target_id"}))
+            jobs.set_docker_settings(req.target_id, settings)
+        except KeyError:
+            raise HTTPException(404, "unknown target") from None
+        except ValueError as e:
+            raise HTTPException(409, str(e)) from None
+        return {"docker_settings": settings}
 
     @app.post("/api/actions")
     async def run_action(req: ActionRequest):
@@ -426,6 +626,7 @@ def create_app(
     async def schedule():
         return {
             "check_every": scheduler.interval,
+            "check_docker": scheduler.check_docker,
             "next_run": scheduler.next_run,
             "last_run": scheduler.last_run,
             "last_notified": scheduler.last_notified,
@@ -468,7 +669,10 @@ def create_app(
             raise HTTPException(400, str(e)) from None
 
     def busy() -> list[str]:
-        return sorted({j.target_name for j in jobs.jobs.values() if j.status in ("queued", "running")})
+        names = {j.target_name for j in jobs.jobs.values() if j.status in ("queued", "running")}
+        if dockhand is not None and any(not task.done() for task in dockhand.tasks.values()):
+            names.add("Dockhand container checks")
+        return sorted(names)
 
     restart = _when_idle(restart, busy) if restart is not None else None
     if cfg.console.enabled:

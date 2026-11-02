@@ -28,6 +28,13 @@ PVE = {
 PVE["/api2/json/nodes/pve/qemu"].append({"vmid": 203, "name": "broken", "status": "running"})
 
 
+def _pve_data(data, path):
+    """Canned PVE responses; the token holds VM.PowerMgmt unless a test says otherwise."""
+    if path.endswith("/access/permissions"):
+        return data.get(path, {"/": {"VM.PowerMgmt": 1}})
+    return data[path]
+
+
 async def test_proxmox_discovery():
     cfg = ProxmoxConfig(
         name="lab", api_url="https://pve:8006", token_id="root@pam!t", token_secret="x",
@@ -65,7 +72,7 @@ async def test_proxmox_node_without_ssh_is_check_only():
     data["/api2/json/cluster/status"] = []
     data["/api2/json/nodes/pve/qemu"] = []
     p.client = httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": data[req.url.path]})),
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": _pve_data(data, req.url.path)})),
         base_url=p.client.base_url,
     )
     ((host, _),) = await p.discover()
@@ -178,7 +185,7 @@ async def test_proxmox_cluster_uses_each_nodes_address():
     cfg.ssh.host = "pve3"  # the node named by ssh.host keeps it
     p = ProxmoxProvider(cfg)
     p.client = httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": data[req.url.path]})),
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": _pve_data(data, req.url.path)})),
         base_url=p.client.base_url,
     )
     found = {t.name: ex for t, ex in await p.discover()}
@@ -287,6 +294,12 @@ async def test_pve_role_can_list_backups():
     assert set(BACKUP_PRIVS) <= set(PVE_PRIVS.split())
 
 
+async def test_pve_role_can_boot_guests():
+    from fleetdeck.onboarding import PVE_PRIVS, pve_script
+
+    assert "VM.PowerMgmt" in PVE_PRIVS.split() and "VM.PowerMgmt" in pve_script("tok")
+
+
 async def test_proxmox_backup_tracking_can_be_turned_off():
     calls: list[str] = []
     handler, _ = _pve_with_backups(storages=[], contents={}, not_backed_up=[], calls=calls)
@@ -338,7 +351,7 @@ async def test_proxmox_backups_on_two_nodes():
 
     def handler(req):
         calls.append(req.url.path)
-        return httpx.Response(200, json={"data": data[req.url.path]})
+        return httpx.Response(200, json={"data": _pve_data(data, req.url.path)})
 
     p = ProxmoxProvider(ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x"))
     p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
@@ -366,7 +379,7 @@ async def test_shared_storage_inactive_on_one_node_is_read_from_another():
     }
 
     def handler(req):
-        return httpx.Response(200, json={"data": data[req.url.path]})
+        return httpx.Response(200, json={"data": _pve_data(data, req.url.path)})
 
     p = ProxmoxProvider(ProxmoxConfig(name="lab", api_url="https://pve:8006", token_id="t", token_secret="x"))
     p.client = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=p.client.base_url)
@@ -404,7 +417,7 @@ async def test_unknown_ssh_host_key_is_shown_on_the_dashboard():
     data["/api2/json/nodes/pve/lxc"] = [{"vmid": 101, "name": "ct", "status": "running"}]
     data["/api2/json/nodes/pve/qemu"] = []
     p.client = httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": data[req.url.path]})),
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": _pve_data(data, req.url.path)})),
         base_url=p.client.base_url,
     )
     found = {t.name: (t, ex) for t, ex in await p.discover()}
@@ -541,7 +554,7 @@ async def test_nodes_and_incus_host_run_their_own_backup_check(monkeypatch):
         "/api2/json/nodes/pve/qemu": [],
     }
     pve.client = httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": data[req.url.path]})),
+        transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"data": _pve_data(data, req.url.path)})),
         base_url=pve.client.base_url,
     )
     nodes = {t.name: t.backup for t, _ in await pve.discover()}

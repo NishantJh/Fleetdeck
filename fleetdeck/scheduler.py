@@ -9,6 +9,7 @@ import logging
 import time
 from datetime import UTC, datetime, timedelta
 
+from .dockhand import DockhandReader
 from .inventory import Inventory
 from .jobs import JobManager
 from .models import Job
@@ -38,11 +39,13 @@ class Scheduler:
         store: Store | None = None,
         check_docker: bool = False,
         auto_security: bool = False,
+        dockhand: DockhandReader | None = None,
         vulns: VulnScans | None = None,
     ):
         self.vulns = vulns
         self.store = store
         self.check_docker = check_docker
+        self.dockhand = dockhand
         self.auto_security = auto_security
         self.interval = interval
         self.inventory = inventory
@@ -121,6 +124,7 @@ class Scheduler:
         self._save()
         await self.inventory.refresh(force=True)
         submitted = []
+        external_targets = []
         for target, executor in list(self.inventory.targets.values()):
             if not target.updatable or executor is None or target.id in self.jobs.hidden:
                 continue
@@ -128,14 +132,23 @@ class Scheduler:
                 submitted.append(self.jobs.submit(target.id, "check"))
             except (KeyError, ValueError):
                 continue
-            # Opt-in: the Docker check pulls images. Skipped where the last look found no Docker.
+            if self.check_docker and not target.check_only and target.id in self.jobs.dockhand_targets:
+                external_targets.append(target.id)
+            # Opt-in: the native Docker check pulls images. Skipped where the last look found no Docker.
             if (
                 self.check_docker
                 and not target.check_only
-                and getattr(self.jobs.stacks.get(target.id), "docker", "") != "none"
+                and self.jobs.get_docker_settings(target.id).mode in ("managed", "monitor")
+                and getattr(self.jobs.checks.get(target.id), "docker_installed", None) is not False
+                and (
+                    getattr(self.jobs.checks.get(target.id), "docker_installed", None) is True
+                    or getattr(self.jobs.stacks.get(target.id), "docker", "") != "none"
+                )
             ):
                 with contextlib.suppress(KeyError, ValueError):
                     submitted.append(self.jobs.submit(target.id, "stacks"))
+        if self.check_docker and self.dockhand is not None and self.dockhand.cfg.allow_checks:
+            await self._check_external(external_targets)
         await self._wait(submitted, RUN_TIMEOUT)
         # A hung check (an SSH session that never returns) must not hold back the whole report.
         stuck = sorted({j.target_id for j in submitted if j.status in ("queued", "running")})
@@ -147,6 +160,32 @@ class Scheduler:
                 log.exception("scanning Docker images failed")
         notes, skipped = await self._install_security_updates(done) if self.auto_security else ([], [])
         await self._report(done, stuck, notes, skipped)
+
+    async def _check_external(self, target_ids: list[str]) -> None:
+        """The existing scheduled-Docker flag controls provider checks, never deployments."""
+        reader = self.dockhand
+        if reader is None:
+            return
+        started = []
+        try:
+            async with asyncio.timeout(RUN_TIMEOUT):
+                for target_id in target_ids:
+                    if target_id in reader.tasks:
+                        continue  # An explicit check is already doing the work.
+                    if len(reader.tasks) >= 4:
+                        await asyncio.wait(tuple(reader.tasks.values()), return_when=asyncio.FIRST_COMPLETED)
+                    try:
+                        reader.request_check(target_id, scheduled=True)
+                    except (PermissionError, KeyError, ValueError):
+                        log.info(
+                            "scheduled external container check skipped for %s (policy or recent check)", target_id
+                        )
+                        continue
+                    started.append(reader.tasks[target_id])
+                if started:
+                    await asyncio.gather(*(asyncio.shield(task) for task in started), return_exceptions=True)
+        except TimeoutError:
+            log.warning("scheduled external container checks exceeded the round time limit")
 
     async def _wait(self, jobs: list[Job], timeout: float) -> None:
         deadline = time.monotonic() + timeout

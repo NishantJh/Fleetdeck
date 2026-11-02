@@ -1,0 +1,11 @@
+# Simulated machines only. Never use this file against live infrastructure.
+demo: true
+schedule:
+  check_every: null
+dockhand:
+  allow_checks: true
+  url: https://dockhand.example
+  token: demo-placeholder-never-sent
+  environments:
+    - target_id: demo:proxmox:docker-vm
+      environment_id: 1

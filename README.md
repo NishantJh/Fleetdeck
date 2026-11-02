@@ -19,6 +19,12 @@ get notified when something needs attention.
 * Checks on a schedule and sends notifications through ntfy, Gotify, Discord, Telegram or a JSON webhook.
 * Shows when each machine was last backed up, and can back up the settings of a host.
 
+## Containers
+
+Each machine can have its containers managed by Fleetdeck (Compose image checks and confirmed stack updates), monitored
+only, handled by Dockhand, linked to another manager, or left off. See
+[Containers and Dockhand](docs/DETAILED-README.md#containers-and-dockhand).
+
 ## Quick start
 
 1. Run [`docker-compose.yml`](docker-compose.yml) with `docker compose up -d`, or deploy it as a stack in your container manager.

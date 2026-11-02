@@ -9,7 +9,10 @@ FastAPI, a static HTML/JS front end, SQLite for state.
 Entry points
 - `fleetdeck/__main__.py`: starts uvicorn on `PORT` (default 8080; `HOST` defaults to 0.0.0.0). `TLS_CERT`/`TLS_KEY` serve HTTPS directly. Data folder from `FLEETDECK_DATA`.
 - `fleetdeck/app.py`: FastAPI app factory, routes for the dashboard, lifespan (scheduler, providers, store).
-- `fleetdeck/setup_routes.py`: HTTP API for the setup page (`/setup`).
+- `fleetdeck/setup_routes.py`: HTTP API for setup and structured per-machine Docker provider configuration.
+- `fleetdeck/docker_management.py`: the per-machine "who manages containers" setting (Fleetdeck, monitor only, Dockhand,
+  link, off): the external-manager registry and the secret-aware edits to the `dockhand:` block of `config.yaml`. The choice
+  itself is a `DockerSettings` row in SQLite. Makes no network requests.
 
 Machines and how they are reached
 - `fleetdeck/providers/__init__.py`: the provider protocol. A provider finds targets and returns an executor for each.
@@ -31,6 +34,10 @@ Updates and jobs
 - `fleetdeck/snapshots.py`: Proxmox and Incus guest snapshots before an upgrade. Only prunes snapshots whose names
   start with its prefix.
 - `fleetdeck/scheduler.py`: checks every machine on a timer and sends a notification when something new needs attention.
+- `fleetdeck/stacks.py`: native Docker Compose scan and update over the machine's executor; compares container and tag image IDs.
+- `fleetdeck/dockhand.py`: read-only Dockhand client and cache (saved reports, optional fresh checks, scheduled-check history).
+- `fleetdeck/dockhand_updates.py`: confirmed container updates through Dockhand; revalidates everything server side.
+- `fleetdeck/power.py`: explicit Proxmox guest start (Boot up). Needs `VM.PowerMgmt`; never forces, resumes or retries.
 - `fleetdeck/vulnscan.py`: opt-in (`security.scan_images`) Trivy scans of Docker images, run in the dashboard's container by registry digest, never on targets. Results cached by digest in the store.
 - `fleetdeck/report.py`: plain-text report of what is failing, for help requests.
 
@@ -62,7 +69,8 @@ Front end (served from `fleetdeck/static/`, packaged via `pyproject.toml`)
 - `console.js`: the Run command dialog. `terminal.html`/`.js`/`.css`: the terminal window, served at `/terminal` with its
   own CSP (xterm.js sets style elements). `xterm.js`, `xterm.css`, `xterm-addon-fit.js` are vendored from npm
   (@xterm/xterm 6.0.0, @xterm/addon-fit 0.11.0, MIT, licence in `xterm-LICENSE.txt`); no CDN.
-- `theme.js`: light/dark theme.
+- `containers.js`: the container rows, status badges and detail panel (native Compose and Dockhand). `theme.js`: light/dark theme.
+  `lucide-LICENSE.txt` covers the inline icons.
 
 Other
 - `tests/`: one `test_<module>.py` per module. Pytest with `asyncio_mode = "auto"`.

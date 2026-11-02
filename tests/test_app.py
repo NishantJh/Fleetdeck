@@ -211,7 +211,11 @@ def test_static_files_are_revalidated_so_a_stale_app_js_is_not_kept():
     assert res.status_code == 200 and res.headers["cache-control"] == "no-cache"
 
 
-def test_monitor_only_from_the_dashboard_blocks_updates_but_not_reboots():
+def test_monitor_only_from_the_dashboard_blocks_updates_but_not_reboots(monkeypatch):
+    import fleetdeck.jobs
+
+    # This test verifies policy, not the real reboot backoff; avoid a random demo timeout.
+    monkeypatch.setattr(fleetdeck.jobs, "REBOOT_POLL", 0)
     with TestClient(create_app(AppConfig(demo=True))) as client:
         targets = {t["target"]["name"]: t for t in client.get("/api/targets").json()["targets"]}
         pi = targets["pi4"]["target"]["id"]

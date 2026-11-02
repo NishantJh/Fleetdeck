@@ -356,6 +356,81 @@ OS can still be managed).
 The image is public, so `docker pull` needs no login. To pin a version instead of `latest`, use a release tag such as
 `ghcr.io/nishantjh/fleetdeck:1.2.3` (see [Install](#install)).
 
+## Containers and Dockhand
+
+The dashboard has **All**, **Machines** and **Containers** views. A machine has an OS row and, where it runs Docker, a
+container row, each with its own status, counters, check time and actions. Opening details never starts a check or
+installs anything. On phones the same information appears as separate card sections.
+
+### Who manages containers
+
+Open **Docker management** in a machine's More menu. It is one setting per machine:
+
+| Choice | Checks | Updates |
+| --- | --- | --- |
+| Fleetdeck | Compose image checks (pulls images, restarts nothing) | Confirmed stack updates |
+| Monitor only | Same Compose checks | None |
+| Dockhand | Saved Dockhand reports; fresh registry checks if allowed | Through Dockhand, if enabled for this machine |
+| Link to another manager | None | Opens the manager you name |
+| Off | None | None |
+
+*Monitor only* means the same thing here and in the machine menu: checked and reported, Fleetdeck installs nothing.
+The machine-level setting also blocks OS updates; the Docker one covers containers only. Choosing a manager never starts
+a check or an update. Dockhand machines, link-only machines and Off machines refuse native Docker jobs on the server too.
+
+The choice is stored in Fleetdeck's database. Only the connection to Dockhand lives in `config.yaml` (it holds the
+token). The code keeps a small registry of external managers, so another manager can be added without changing the
+per-machine setting.
+
+### Dockhand connection
+
+```yaml
+dockhand:
+  url: https://dockhand.example
+  token: ${FLEETDECK_DOCKHAND_TOKEN}
+  poll_seconds: 300
+  allow_checks: false          # let Fleetdeck ask Dockhand for a fresh registry check
+  environments:
+    - target_id: your-exact-fleetdeck-target-id   # from /api/targets
+      environment_id: 1
+      allow_updates: false     # allow confirmed container updates on this machine
+```
+
+URL, token, polling and `allow_checks` are shared by all mapped machines; the environment ID and `allow_updates` belong
+to each machine. The Docker management dialog fills this in for you. Save, then Apply (or restart). A blank token keeps
+the saved one; changing the URL needs a new token. Tokens are never returned by the API. TLS is verified, redirects are
+not followed, and process proxy settings are ignored. Use a token with only the permissions you enable.
+
+### Checks and schedules
+
+*Check all* asks whether to check OS only or OS and containers when Docker hosts are eligible. Native checks pull
+Compose images; Dockhand checks read registry metadata only. Scheduled rounds check containers only when
+`schedule.check_docker: true` (and, for Dockhand, `allow_checks: true`). Fleetdeck never edits Dockhand's own schedule.
+
+Native checks cover Compose stacks, not standalone containers or newer version tags. Each service row shows its image
+state and the two image IDs compared (the container's and the tag's), which helps explain multi-platform images.
+Dockhand rows also show review findings (new tags, pinned digests, held updates), local images and exclusions; coverage
+exceptions never turn the host status red.
+
+### Installing through Dockhand
+
+Off by default (`allow_updates`, or *Install container updates* in the dialog). The Update confirmation re-reads fresh
+reports and lists what will be updated and what is excluded (anything not a confirmed image update from the last 24 hours,
+and the dashboard's own stack). Uncertain requests are never retried; check Dockhand first. After a confirmed update,
+Fleetdeck verifies the replacement container and shows it as up to date with an *Updated* time.
+
+### Booting stopped Proxmox guests
+
+Stopped VMs and LXCs get a confirmed **Boot up** button. It needs `VM.PowerMgmt`, which setups made with this version
+include. For an older `HomelabManager` role, run `pveum role modify HomelabManager --privs VM.PowerMgmt --append 1` on
+the Proxmox host (or re-run the setup script). The button only shows when the token holds the privilege; a refusal from
+Proxmox names the same command. No force or skiplock option is ever sent.
+
+### Trying it
+
+`FLEETDECK_DEMO=1 python -m fleetdeck` shows fake machines. `FLEETDECK_CONFIG=config.docker-demo.yaml python -m fleetdeck`
+adds a simulated Dockhand mapping that never contacts any server. Use separate demo state, never real credentials.
+
 ## Settings
 
 Two files shape the container, and each setting goes in one of them:
@@ -487,7 +562,9 @@ The setup page writes an ordinary `config.yaml`, and everything below can also b
 
 * **Proxmox:** an API token (Datacenter → Permissions → API Tokens) with `VM.Audit`/`Sys.Audit` to
   list guests, `Datastore.Audit`, `Datastore.AllocateSpace` and `VM.Backup` to see backups,
-  `VM.Snapshot` and `VM.Snapshot.Rollback` for snapshots, `Sys.Modify` on `/nodes` so the host check can refresh package lists, and
+  `VM.Snapshot` and `VM.Snapshot.Rollback` for snapshots, `VM.PowerMgmt` for the *Boot up* button (the button
+  only shows when the token holds it; on a setup from before, run `pveum role modify HomelabManager --privs VM.PowerMgmt --append 1`
+  on the Proxmox host or re-run the setup script), `Sys.Modify` on `/nodes` so the host check can refresh package lists, and
   guest-agent exec rights to update VMs (`VM.GuestAgent.Unrestricted` on PVE 9, `VM.Monitor` on
   PVE 8). VMs need the *QEMU Guest Agent* option on and `qemu-guest-agent` installed inside.
   Connect creates a `homelab@pve` user with a `HomelabManager` role holding these privileges.

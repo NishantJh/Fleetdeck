@@ -37,22 +37,41 @@
     }
     const bar = document.querySelector("header .toolbar");
     if (!bar) return;
+    const mobileMenu = bar.querySelector(".dashboard-menu-session");
+    const narrow = matchMedia("(max-width: 520px)");
+    const place = (button, render) => {
+      const update = () => {
+        const inMenu = !!mobileMenu && narrow.matches;
+        button.classList.toggle("dashboard-menu-item", inMenu);
+        button.classList.toggle("ghost", inMenu);
+        (inMenu ? mobileMenu : bar).append(button);
+        render(inMenu);
+      };
+      if (narrow.addEventListener) narrow.addEventListener("change", update);
+      else narrow.addListener?.(update);
+      update();
+    };
     const btn = document.createElement("button");
     btn.className = "icon";
     btn.type = "button";
-    const sync = () => { btn.innerHTML = dark() ? SUN : MOON; btn.title = btn.ariaLabel = dark() ? "Switch to light theme" : "Switch to dark theme"; };
+    const sync = () => {
+      btn.innerHTML = dark() ? SUN : MOON;
+      btn.title = btn.ariaLabel = dark() ? "Switch to light theme" : "Switch to dark theme";
+      if (btn.classList.contains("dashboard-menu-item")) {
+        const label = document.createElement("span"); label.textContent = btn.title; btn.append(label);
+      }
+    };
     btn.onclick = () => {
       root.dataset.theme = dark() ? "light" : "dark";
       try { localStorage.setItem(KEY, root.dataset.theme); } catch { /* private mode: just don't remember it */ }
       sync();
     };
-    sync();
-    bar.append(btn);
-    if (location.pathname !== "/login") addSignOut(bar);
+    place(btn, sync);
+    if (location.pathname !== "/login") addSignOut(bar, place);
   });
 
   // Only when the dashboard has a login (and this browser is in it).
-  async function addSignOut(bar) {
+  async function addSignOut(bar, place) {
     let session;
     try { session = await (await fetch("/api/session")).json(); } catch { return; }
     if (!session?.login) return;
@@ -64,6 +83,11 @@
     out.onclick = async () => {
       try { await fetch("/api/logout", { method: "POST" }); } finally { location.href = "/login"; }
     };
-    bar.append(out);
+    place(out, inMenu => {
+      out.innerHTML = SIGN_OUT;
+      if (inMenu) {
+        const label = document.createElement("span"); label.textContent = `Sign out (${session.username})`; out.append(label);
+      }
+    });
   }
 })();
