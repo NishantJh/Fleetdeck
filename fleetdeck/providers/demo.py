@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import random
 import uuid
+import zlib
 from datetime import UTC, datetime, timedelta
 
 from ..host_backups import NOT_SET_UP
@@ -19,6 +20,7 @@ from ..updates import (
     DOCKER_DETECT_SCRIPT,
     REBOOT_NOW_SCRIPT,
 )
+from ..vulnscan import Finding, ImageScan, Scanner
 from . import Discovered
 
 _APT = [
@@ -114,6 +116,11 @@ class DemoExecutor:
                 row += ["sha256:" + ("0d" if behind else "3a") * 32, "running", uuid.uuid4().hex * 2]
                 out.append(US.join(row))
         out += [US.join(["__I__", image, image_id, manifest]) for image, (image_id, manifest) in images.items()]
+        # Registry digests, except for the one image pretended to be built on the machine.
+        for image in images:
+            repo = image.split(":")[0]
+            digest = f"{repo}@sha256:" + format(zlib.crc32(repo.encode()), "08x") * 8
+            out.append(US.join(["__R__", image, "" if repo == "pihole" else digest]))
         return "\n".join(out) + "\n"
 
     async def _docker(self, script: str, on_line) -> ExecResult:
@@ -311,3 +318,35 @@ class DemoProvider:
             found.append((t, ex))
         self._found = found
         return found
+
+
+class DemoScanner(Scanner):
+    """Canned results instead of Trivy, for demo mode."""
+
+    async def update_db(self) -> None:
+        await asyncio.sleep(0.3)
+
+    def db_updated_at(self) -> datetime | None:
+        return datetime.now(UTC) - timedelta(days=1)
+
+    async def scan(self, ref: str) -> ImageScan:
+        await asyncio.sleep(0.4)
+        repo = ref.partition("@")[0]
+        pkgs = [
+            Finding(id="CVE-2025-0001", pkg="openssl", installed="3.0.11", fixed="3.0.15", severity="CRITICAL"),
+            Finding(id="CVE-2025-0002", pkg="zlib", installed="1.2.13", fixed="1.3.1", severity="HIGH"),
+            Finding(id="CVE-2025-0003", pkg="libxml2", installed="2.9.14", fixed="2.9.15", severity="MEDIUM"),
+        ]
+        n = zlib.crc32(repo.encode()) % 3  # some images are clean, some are not
+        found = pkgs[n:] if n < 2 else []
+        counts = {s: sum(f.severity == s for f in found) for s in ("UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL")}
+        top = [f for f in found if f.severity in ("HIGH", "CRITICAL")]
+        crit = [f"{f.id}|{f.pkg}" for f in found if f.severity == "CRITICAL"]
+        return ImageScan(
+            ref=ref,
+            counts=counts,
+            top=top,
+            criticals=crit,
+            scanned_at=datetime.now(UTC),
+            db_updated_at=self.db_updated_at(),
+        )

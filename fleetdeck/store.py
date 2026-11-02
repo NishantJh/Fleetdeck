@@ -54,6 +54,7 @@ class Store:
             " data TEXT NOT NULL)"
         )
         self.db.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS vulns (digest TEXT PRIMARY KEY, data TEXT NOT NULL)")
 
     def close(self) -> None:
         self.db.close()
@@ -139,6 +140,17 @@ class Store:
         else:
             sql = "DELETE FROM monitor_only WHERE target_id = ?"
         self.db.executemany(sql, [(t,) for t in target_ids])
+
+    def load_vuln(self, digest: str) -> str | None:
+        """The stored scan (JSON text) of an image, by its registry digest."""
+        row = self.db.execute("SELECT data FROM vulns WHERE digest = ?", (digest,)).fetchone()
+        return row[0] if row else None
+
+    def save_vuln(self, digest: str, data: str) -> None:
+        self.db.execute(
+            "INSERT INTO vulns (digest, data) VALUES (?, ?) ON CONFLICT(digest) DO UPDATE SET data = excluded.data",
+            (digest, data),
+        )
 
     def get_value(self, key: str) -> str | None:
         row = self.db.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()

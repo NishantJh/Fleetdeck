@@ -15,6 +15,7 @@ from .jobs import JobManager
 from .models import Job
 from .notify import Notifier
 from .store import Store
+from .vulnscan import VulnScans
 
 log = logging.getLogger(__name__)
 # Give the dashboard a moment after start-up before the first automatic check.
@@ -39,7 +40,9 @@ class Scheduler:
         check_docker: bool = False,
         auto_security: bool = False,
         dockhand: DockhandReader | None = None,
+        vulns: VulnScans | None = None,
     ):
+        self.vulns = vulns
         self.store = store
         self.check_docker = check_docker
         self.dockhand = dockhand
@@ -150,6 +153,11 @@ class Scheduler:
         # A hung check (an SSH session that never returns) must not hold back the whole report.
         stuck = sorted({j.target_id for j in submitted if j.status in ("queued", "running")})
         done = sorted({j.target_id for j in submitted} - set(stuck))
+        if self.vulns is not None and self.check_docker:
+            try:
+                await self.vulns.scan_run(done)
+            except Exception:  # noqa: BLE001 - a failing scan must not hold back the report
+                log.exception("scanning Docker images failed")
         notes, skipped = await self._install_security_updates(done) if self.auto_security else ([], [])
         await self._report(done, stuck, notes, skipped)
 

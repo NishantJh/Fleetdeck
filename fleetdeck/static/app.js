@@ -653,6 +653,44 @@ async function openDockerSettings(id) {
   }
 }
 
+function vulnBadge(v, s) {
+  if (!state.settings.scan_images) return "";
+  const x = v.vulns?.[s.name];
+  if (!x) return `<span class="muted">not scanned</span>`;
+  const id = esc(v.target.id), name = esc(s.name);
+  let cls = "ok", text = "no findings";
+  if (x.status === "not_scanned") return `<span class="muted" title="${esc(x.message)}">not scanned</span>`;
+  if (x.status === "error" || x.status === "unavailable") return `<span class="muted" title="${esc(x.message)}">scan unavailable</span>`;
+  else if (x.worst) { cls = x.worst === "CRITICAL" || x.worst === "HIGH" ? "bad" : "warn"; text = `${x.counts[x.worst]} ${x.worst.toLowerCase()}`; }
+  const stale = x.stale ? ` <span class="chip warn" title="The vulnerability database is more than 7 days old">stale</span>` : "";
+  return `<button class="small vuln-badge ${cls}" data-act="vulns" data-id="${id}" data-name="${name}" data-focus-key="vulns:${id}/${name}" title="${esc(x.message || "Show the findings")}">${text}</button>${stale}`;
+}
+
+function showVulns(id, name) {
+  const v = state.targets.find((t) => t.target.id === id), x = v?.vulns?.[name];
+  if (!x) return;
+  const counts = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"].map((s) => `<li>${s.toLowerCase()}: <b>${x.counts?.[s] || 0}</b></li>`).join("");
+  const rows = (x.top || []).map((f) => `<tr><td>${esc(f.id)}</td><td>${esc(f.pkg)}</td><td>${esc(f.installed)}</td><td>${esc(f.fixed || "no fix yet")}</td><td class="${f.severity === "CRITICAL" || f.severity === "HIGH" ? "bad" : "warn"}">${esc(f.severity.toLowerCase())}</td></tr>`).join("");
+  $("#vuln-body").innerHTML = `<p class="muted">${x.scanned} of ${x.images} image(s) scanned ${ago(x.scanned_at)}${x.stale ? " · the vulnerability database is more than 7 days old" : ""}. Scanned by the dashboard from the registry; nothing ran on the machine.</p>${x.message ? `<p class="warn">${esc(x.message)}</p>` : ""}
+    <ul class="vuln-counts">${counts}</ul>
+    ${rows ? `<div class="group-scroll"><table><thead><tr><th>ID</th><th>Package</th><th>Installed</th><th>Fixed in</th><th>Severity</th></tr></thead><tbody>${rows}</tbody></table></div>` : `<p class="muted">Nothing at or above ${esc(state.settings.min_severity || "HIGH")}.</p>`}`;
+  $("#vuln-title").textContent = `Vulnerabilities in ${name}`;
+  $("#vuln-dialog").showModal();
+}
+
+async function scanImages(id) {
+  try {
+    await api(`/api/targets/${encodeURIComponent(id)}/scan`, { method: "POST" });
+  } catch (e) {
+    state.errors = { dashboard: e.message };
+    return render();
+  }
+  state.scanning = true;
+  render();
+  // The scan runs on the dashboard in the background: look until it is done.
+  const poll = setInterval(async () => { await load(); if (!state.scanning) clearInterval(poll); }, 3000);
+}
+
 async function load(refresh = false) {
   let loaded = false;
   try {
@@ -660,6 +698,7 @@ async function load(refresh = false) {
     state.targets = data.targets;
     state.errors = data.errors;
     state.settings = data.settings || {};
+    state.scanning = !!data.scanning;
     state.backupPlaces = data.backup_places || {};
     state.backupFolder = data.backup_folder || null;
     state.jobs = await api("/api/jobs");
@@ -1055,6 +1094,10 @@ document.addEventListener("click", (e) => {
     setView("containers", el.dataset.id);
   } else if (el.dataset.act === "dockhand") {
     confirmAction("dockhand", [el.dataset.id]);
+  } else if (el.dataset.act === "vulns") {
+    showVulns(el.dataset.id, el.dataset.name);
+  } else if (el.dataset.act === "scan") {
+    scanImages(el.dataset.id);
   } else if (el.dataset.act === "stacks") {
     confirmAction("stacks", [el.dataset.id]);
   } else if (el.dataset.hide) {

@@ -389,3 +389,11 @@ def test_scan_reports_engine_version_without_requiring_it(version, expected):
     assert result.docker_version == expected
     assert not result.error
     assert not result.stacks
+
+
+def test_parse_scan_reads_registry_digests():
+    digest, other = "web@sha256:" + "a" * 64, "other@sha256:" + "b" * 64
+    res = _scan(_row())
+    res.stdout += US.join(["__R__", "web:1", f"{digest},{other}"]) + "\n"
+    assert parse_scan(res).stacks[0].services[0].repo_digests == [digest, other]
+    assert parse_scan(_scan(_row())).stacks[0].services[0].repo_digests == []

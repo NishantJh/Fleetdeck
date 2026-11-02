@@ -5,6 +5,7 @@ import logging
 import time
 import uuid
 from collections import OrderedDict
+from collections.abc import Callable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
@@ -127,6 +128,8 @@ class JobManager:
         # Machine id -> what its last Docker check found (see stacks.py).
         self.stacks: dict[str, StacksResult] = {}
         self.docker_settings: dict[str, DockerSettings] = {}
+        # Called with the machine id after a Docker check finished (the dashboard hooks image scans in here).
+        self.after_stacks_check: Callable[[str], None] | None = None
         self._target_locks: dict[str, asyncio.Lock] = {}
         self._tasks: set[asyncio.Task] = set()
         # Hosts that are rebooting, or waiting for their guests' jobs so they can reboot.
@@ -704,6 +707,11 @@ class JobManager:
             else:
                 job.log.append(f"== {s.name}: up to date")
         self._set_stacks(job.target_id, result)
+        if self.after_stacks_check is not None:
+            try:
+                self.after_stacks_check(job.target_id)
+            except Exception:  # noqa: BLE001 - nothing after the check may fail it
+                log.exception("after-check hook failed")
 
     async def _stack_update(self, job: Job, executor, on_line) -> None:
         def cleaned(stream: str, line: str) -> None:

@@ -473,6 +473,7 @@ button.login-submit.busy .login-spinner { display: inline-block; }
 .container-results-table col.cr-image { width: 25%; }
 .container-results-table col.cr-status { width: 25%; }
 .container-results-table col.cr-checked { width: 10%; }
+.container-results-table col.cr-vulns { width: 12%; }
 /* The generic 1% first column is for machine selection, not container names. */
 .container-results-table th:first-child, .container-results-table td:first-child { width: auto; }
 .container-results-table .container-name { font-weight: 500; }
@@ -531,6 +532,10 @@ a.brand { color: var(--text); text-decoration: none; }
 .docker-host { scroll-margin-top: 80px; }
 .docker-host .cell-detail { max-width: 440px; }
 .docker-host td { overflow-wrap: anywhere; }
+.vuln-badge { font-weight: 600; }
+.vuln-badge.ok { color: var(--ok); } .vuln-badge.warn { color: var(--warn); } .vuln-badge.bad { color: var(--bad); }
+.vuln-counts { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+#vuln-dialog { max-width: min(760px, 94vw); }
 .context-actions { position: fixed; z-index: 20; min-width: 220px; max-width: calc(100vw - 16px); padding: 6px; background: var(--panel); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow); }
 .context-actions > button { display: flex; width: 100%; }
 .menu-caption { padding: 8px 10px; border-bottom: 1px solid var(--border); margin-bottom: 4px; color: var(--text-2); font-size: 13px; line-height: 20px; font-weight: 600; }
