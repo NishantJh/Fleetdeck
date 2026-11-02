@@ -373,7 +373,7 @@ function render() {
   html("#check-containers", `${icon("container")}<span>Check container updates</span>`);
   $("#check-containers").hidden = !active().some(hasDocker);
   $("#check-containers").disabled = requestingDockhandChecks || (!nativeContainerHosts().length && !active().some(v => v.dockhand && state.settings.dockhand_checks_allowed));
-  $("#check-containers").title = "Check containers using each machine's provider. Fleetdeck native checks pull images after confirmation; Dockhand checks registry metadata.";
+  $("#check-containers").title = "Check containers using each machine's provider. Fleetdeck native checks compare registry digests (no pull; pulls only where a registry can't answer); Dockhand checks registry metadata.";
   $("#refresh span").textContent = "Refresh inventory";
   $("#check-all").title = state.settings.dockhand_checks_allowed || nativeContainerHosts().length ? "Check OS and container updates using their configured providers; native image pulls require confirmation" : "Check OS updates";
   $("#refresh").title = "Rediscover machines and read saved container reports; no fresh update checks";
@@ -484,7 +484,7 @@ function openMachineMenu(id, trigger) {
     (v.dockhand ? action("dockhand", "Check container updates", "container", state.settings.dockhand_checks_allowed && !v.dockhand.checking,
       !state.settings.dockhand_checks_allowed ? "Enable dockhand.allow_checks in Settings to allow fresh checks" : v.dockhand.checking ? "A Dockhand check is already running" : "Request a fresh Dockhand digest check for this machine; no downloads or restarts")
       : hasDocker(v) && dockerEnabled(v) ? action("stacks", "Check container updates", "container", canUpgrade(t) && !busy,
-        "Fleetdeck native checks pull Compose images; confirmation is required") : "") +
+        "Fleetdeck native checks compare registry digests without pulling; a registry that can't answer is pulled on the machine") : "") +
     (containerOnly || nextAction(v).includes('data-act="reboot"') ? "" : action("reboot", "Reboot", "reboot", canReboot(t) && !busy && !v.blocked, t.no_reboot || v.blocked || t.note)) +
     (!containerOnly && t.can_backup ? action("backup", "Back up configuration", "backup", !busy) : "") +
     (!containerOnly ? `<button data-docker-settings="${esc(id)}">${icon("settings")}Docker management</button>` : "") +
@@ -817,7 +817,7 @@ const CONFIRM = {
   start: { title: "Boot up this guest?", text: "Starts the stopped VM or LXC through Proxmox. Its configured services and containers may start with it. No updates are installed. Requires VM.PowerMgmt permission in Proxmox.", ok: "Boot up" },
   containers: {
     title: "Check container images?",
-    text: "Fleetdeck native hosts: download (pull) newer Docker Compose images to compare, which uses bandwidth and disk space. Dockhand hosts: request registry digest and metadata checks without image-layer downloads. Nothing is deployed or restarted. Cancelling leaves both container providers unchanged.",
+    text: "Fleetdeck native hosts: compare each image with its registry's current digest (no download); only images a registry can't answer for are pulled on the machine. Dockhand hosts: request registry digest and metadata checks without image-layer downloads. Nothing is deployed or restarted. Cancelling leaves both container providers unchanged.",
     ok: "Check containers",
   },
   dockhand: {
@@ -837,7 +837,7 @@ const CONFIRM = {
   },
   stacks: {
     title: "Check Docker on these machines?",
-    text: "Downloads (pulls) newer images for every running Docker Compose stack on each machine, which can use a lot of bandwidth and disk space. Nothing is restarted. Machines where Docker was found missing are left out.",
+    text: "Compares every running Docker Compose image with its registry (no download); only images a registry can't answer for are pulled on the machine. Nothing is restarted. Machines where Docker was found missing are left out.",
     ok: "Check Docker",
   },
   reboot: {

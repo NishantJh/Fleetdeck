@@ -147,6 +147,10 @@ class StackService(BaseModel):
     tag_id: str = ""
     # The tag's registry digests (repo@sha256:...). Empty for an image built on the machine.
     repo_digests: list[str] = Field(default_factory=list)
+    # What the registry digest check (registry.py) found: "current", "update" or "unknown" ("" when it did not run,
+    # as after a pull-based check), and why when unknown.
+    registry: str = ""
+    registry_note: str = ""
 
 
 class Stack(BaseModel):

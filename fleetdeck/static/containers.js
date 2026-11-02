@@ -22,12 +22,12 @@ function containerView(v) {
   for (const stack of r?.stacks || []) {
     for (const service of stack.services || []) {
       const running = ["running", "restarting"].includes(service.status);
-      const status = stack.error ? "failed" : !running ? "excluded" : service.outdated ? "update" : "current";
+      const status = stack.error ? "failed" : !running ? "excluded" : service.outdated ? "update" : service.registry === "unknown" ? "unknown" : "current";
       rows.push({ container_id: `${stack.name}:${service.name}`, name: service.name, stack: stack.name,
         image: service.image, state: service.status, status, checked_at: r.checked_at,
         image_update: running && service.outdated ? true : status === "current" ? false : null,
         reported_at: running && service.outdated ? r.checked_at : null, check_issue: stack.error ? "stack" : null,
-        source: "fleetdeck_native", nativeStack: stack, image_id: service.image_id, tag_id: service.tag_id, coverage_reason: !running ? "Stopped service · not checked" : null });
+        source: "fleetdeck_native", nativeStack: stack, image_id: service.image_id, tag_id: service.tag_id, coverage_reason: !running ? "Stopped service · not checked" : status === "unknown" ? service.registry_note : null });
     }
     if (stack.error && !stack.services?.length) rows.push({ name: stack.name, stack: stack.name, image: "",
       status: "failed", state: "Stack check unavailable", check_issue: "stack", checked_at: r.checked_at, source: "fleetdeck_native", nativeStack: stack });

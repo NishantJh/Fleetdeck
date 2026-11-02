@@ -30,6 +30,7 @@ from .models import CheckResult, DockerSettings, Job, JobAction, StacksResult, T
 from .notify import Notifier
 from .onboarding import Paths
 from .providers.proxmox import PROTECTED_NOTE
+from .registry import RegistryClient
 from .report import build_report
 from .scheduler import Scheduler
 from .security import LoginThrottle, Sessions, add_login_routes, make_guard, password_ok, session_secret
@@ -182,6 +183,9 @@ def create_app(
             task.add_done_callback(background.discard)
 
     jobs.after_stacks_check = scan_after_check
+    # Docker checks ask the registries about digests instead of pulling. Demo images are made up: no lookups.
+    registry = None if cfg.demo else RegistryClient()
+    jobs.registry = registry
     scheduler = Scheduler(
         cfg.schedule.check_every,
         inventory,
@@ -239,6 +243,8 @@ def create_app(
             await dockhand.aclose()
         if notifier is not None:
             await notifier.aclose()
+        if registry is not None:
+            await registry.aclose()
         for provider in inventory.providers:
             client = getattr(provider, "client", None)
             if client is not None:
