@@ -285,6 +285,23 @@ class ScheduleConfig(BaseModel):
         return seconds
 
 
+class SecurityConfig(BaseModel):
+    """Vulnerability scanning of Docker images with Trivy. Runs in the dashboard's container, never on a machine."""
+
+    # Scan the images of every machine's Docker stacks after a scheduled Docker check, and on demand.
+    # On by default; false turns it off.
+    scan_images: bool = True
+    # Badge and details list findings at or above this severity (counts always cover all of them).
+    min_severity: Literal["UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL"] = "HIGH"
+    # Leave out vulnerabilities that have no fix yet.
+    ignore_unfixed: bool = True
+
+    @field_validator("min_severity", mode="before")
+    @classmethod
+    def _upper(cls, v):
+        return v.upper() if isinstance(v, str) else v
+
+
 class NotifyConfig(BaseModel):
     """Where to send a message when a scheduled check finds updates."""
 
@@ -393,6 +410,7 @@ class AppConfig(BaseModel):
         return v or None
 
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
     notify: list[NotifyConfig] = Field(default_factory=list)
     # The dashboard's address, linked from notifications (e.g. http://192.168.1.50:8080).
     public_url: str | None = None

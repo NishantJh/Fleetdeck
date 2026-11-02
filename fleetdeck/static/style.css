@@ -493,6 +493,10 @@ a.brand { color: var(--text); text-decoration: none; }
 .dashboard-page td.actions { min-width: 138px; }
 .dashboard-page .more-actions { font-size: 21px; line-height: 20px; min-width: 30px; padding: 3px 6px; }
 .docker-panel td { overflow-wrap: anywhere; }
+.vuln-badge { font-weight: 600; }
+.vuln-badge.ok { color: var(--ok); } .vuln-badge.warn { color: var(--warn); } .vuln-badge.bad { color: var(--bad); }
+.vuln-counts { list-style: none; margin: 0 0 12px; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+#vuln-dialog { max-width: min(760px, 94vw); }
 .stack-services { list-style: none; margin: 0; padding: 4px 10px 10px; display: grid; gap: 8px; }
 .stack-services li { display: flex; flex-wrap: wrap; gap: 2px 12px; align-items: baseline; overflow-wrap: anywhere; }
 .stack-services .svc-name { font-weight: 600; }

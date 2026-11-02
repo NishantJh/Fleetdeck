@@ -372,3 +372,11 @@ def test_a_hostile_working_dir_is_never_expanded_by_the_shell():
     script = _in_dir(stack)
     assert '"' not in script  # no double quotes, where $( ) and backticks would still run
     assert "echo 'its folder /x$(id>/tmp/p)`id` is gone'" in script
+
+
+def test_parse_scan_reads_registry_digests():
+    digest, other = "web@sha256:" + "a" * 64, "other@sha256:" + "b" * 64
+    res = _scan(_row())
+    res.stdout += US.join(["__R__", "web:1", f"{digest},{other}"]) + "\n"
+    assert parse_scan(res).stacks[0].services[0].repo_digests == [digest, other]
+    assert parse_scan(_scan(_row())).stacks[0].services[0].repo_digests == []

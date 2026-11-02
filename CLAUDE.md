@@ -31,6 +31,7 @@ Updates and jobs
 - `fleetdeck/snapshots.py`: Proxmox and Incus guest snapshots before an upgrade. Only prunes snapshots whose names
   start with its prefix.
 - `fleetdeck/scheduler.py`: checks every machine on a timer and sends a notification when something new needs attention.
+- `fleetdeck/vulnscan.py`: opt-in (`security.scan_images`) Trivy scans of Docker images, run in the dashboard's container by registry digest, never on targets. Results cached by digest in the store.
 - `fleetdeck/report.py`: plain-text report of what is failing, for help requests.
 
 Backups
@@ -65,7 +66,7 @@ Front end (served from `fleetdeck/static/`, packaged via `pyproject.toml`)
 
 Other
 - `tests/`: one `test_<module>.py` per module. Pytest with `asyncio_mode = "auto"`.
-- `Dockerfile`: python:3.12-slim plus a pinned wireproxy build. Runs as uid 10001 (PUID/PGID to change). Data in `/data`.
+- `Dockerfile`: python:3.12-slim plus a pinned wireproxy build and a pinned Trivy binary. Runs as uid 10001 (PUID/PGID to change). Data in `/data`.
 - `docker-compose.yml`: the example stack. `docs/PLAN.md`: roadmap. `docs/screenshots/`: README images (demo data only).
 - `.github/workflows/ci.yml`: ruff and pytest on every PR from this repo (pull requests from forks are skipped: jobs run on the owner's self-hosted runner). `image.yml`: builds and pushes the image. `ghcr-cleanup.yml`: cleans up old image versions on main.
 
