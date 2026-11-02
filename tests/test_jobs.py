@@ -5,8 +5,14 @@ import pytest
 
 from fleetdeck.inventory import Inventory
 from fleetdeck.jobs import JobManager
-from fleetdeck.models import CheckResult, ExecResult, Job, Target
-from fleetdeck.updates import CHECK_SCRIPT, COMMUNITY_UPDATE_SCRIPT, UPGRADE_SCRIPT
+from fleetdeck.models import CheckResult, ExecResult, Job, Package, Target
+from fleetdeck.updates import (
+    CHECK_SCRIPT,
+    COMMUNITY_UPDATE_SCRIPT,
+    CUSTOM_MARK,
+    UPGRADE_SCRIPT,
+    custom_update_script,
+)
 
 
 class FakeExecutor:
@@ -65,6 +71,35 @@ async def test_failed_check_replaces_stale_result():
     await _finish(jobs)
     assert "connection refused" in jobs.checks["t1"].error
     assert jobs.checks["t1"].os == "Debian"
+
+
+async def test_failed_checks_keep_a_separate_successful_snapshot(tmp_path):
+    from fleetdeck.store import Store
+
+    store = Store(tmp_path / "state.db")
+    jobs = JobManager(_inventory((_target(), FakeExecutor())), store=store)
+    good = CheckResult(
+        checked_at=datetime.now(UTC),
+        os="Debian",
+        reboot_required=True,
+        packages=[Package(name="openssl", available="2", security=True)],
+    )
+    jobs._set_check("t1", good)
+    # A parsed failure and a transport failure both keep the same last good result.
+    jobs._set_check("t1", CheckResult(checked_at=datetime.now(UTC), error="agent unavailable"))
+    jobs._record_check_error("t1", "agent unavailable")
+    failed = jobs.checks["t1"]
+    assert failed.packages == [] and failed.reboot_required is None
+    assert failed.last_successful.packages == good.packages
+    assert failed.last_successful.reboot_required is True
+    assert failed.last_successful.checked_at == good.checked_at
+    assert failed.checked_at > good.checked_at
+    loaded = store.load_checks()["t1"]
+    assert loaded == failed
+    # A fresh successful result clears the history and becomes authoritative.
+    jobs._set_check("t1", CheckResult(checked_at=datetime.now(UTC), reboot_required=False))
+    assert jobs.checks["t1"].last_successful is None
+    store.close()
 
 
 async def test_failed_recheck_does_not_fail_successful_upgrade():
@@ -483,3 +518,128 @@ async def test_host_reboot_blocked_while_guest_runs_any_changing_job(action):
         jobs.submit("t1", "reboot")
     jobs.jobs["g"].status = "succeeded"
     assert jobs.update_blocked(host) is None
+
+
+async def test_monitor_only_machine_is_checked_and_rebooted_but_never_updated(fast_reboot):
+    host = _target("pve")
+    inv = _inventory(
+        (host, RebootingExecutor()),
+        (_guest("omv", "pve", monitor_only=True), RebootingExecutor()),
+        (_guest("ct", "pve"), RebootingExecutor()),
+    )
+    jobs = JobManager(inv)
+    jobs.set_monitor_only(["ct"], True)
+    for tid in ("omv", "ct"):
+        for action in ("upgrade", "stack-update"):
+            with pytest.raises(ValueError, match="monitor only"):
+                jobs.submit(tid, action, stack="web")
+        jobs.submit(tid, "check")
+    await _finish(jobs)
+    assert jobs.checks["omv"].error is None and jobs.checks["ct"].error is None
+    # Its own reboot, and its host's update and reboot, stay allowed.
+    for tid, action in (("omv", "reboot"), ("pve", "upgrade"), ("pve", "reboot")):
+        job = jobs.submit(tid, action)
+        await _finish(jobs)
+        assert job.status == "succeeded", (tid, action, job.error)
+
+    jobs.set_monitor_only(["ct"], False)
+    assert jobs.submit("ct", "upgrade")
+    await _finish(jobs)
+
+
+async def test_monitor_only_set_while_an_update_is_queued_stops_it():
+    gate = asyncio.Event()
+    inv = _inventory((_target("busy"), FakeExecutor(gate=gate)), (_target("omv"), FakeExecutor()))
+    jobs = JobManager(inv, max_parallel=1)
+    jobs.submit("busy", "check")
+    queued = jobs.submit("omv", "upgrade")
+    jobs.set_monitor_only(["omv"], True)
+    gate.set()
+    await _finish(jobs)
+    assert queued.status == "failed" and "monitor only" in queued.error
+
+
+def test_monitor_only_survives_a_restart(tmp_path):
+    from fleetdeck.store import Store
+
+    inv = _inventory((_target("a"), FakeExecutor()), (_target("b"), FakeExecutor()))
+    s = Store(tmp_path / "state.db")
+    JobManager(inv, store=s).set_monitor_only(["a", "b"], True)
+    JobManager(inv, store=s).set_monitor_only(["b"], False)
+    s.close()
+    assert JobManager(inv, store=Store(tmp_path / "state.db")).monitor_only_ids == {"a"}
+
+
+class OwnUpdaterExecutor(CommunityExecutor):
+    """A machine with its own updater (e.g. OpenMediaVault's omv-upgrade)."""
+
+    def __init__(self, rc=0):
+        super().__init__()
+        self.rc = rc
+
+    async def run(self, script, on_line=None, timeout=0):
+        if CUSTOM_MARK in script:
+            self.scripts.append(script)
+            if on_line:
+                on_line("stdout", "Updating OMV")
+            return ExecResult(rc=self.rc, stdout="__PM__=apt\n__REBOOT__=no\n")
+        return await super().run(script, on_line, timeout)
+
+
+async def test_own_update_command_runs_instead_of_os_upgrade_and_app_update():
+    ex = OwnUpdaterExecutor()
+    jobs = JobManager(_inventory((_target(update_command="omv-upgrade"), ex)))
+    job = jobs.submit("t1", "upgrade")
+    assert job.update_command == "omv-upgrade"
+    await _finish(jobs)
+    assert job.status == "succeeded", job.error
+    assert ex.scripts[0] == custom_update_script("omv-upgrade")
+    assert UPGRADE_SCRIPT not in ex.scripts and COMMUNITY_UPDATE_SCRIPT not in ex.scripts
+    assert "== Running this machine's update command: omv-upgrade" in job.log and "Updating OMV" in job.log
+    assert "== Re-checking for remaining updates" in job.log
+
+
+async def test_failed_own_update_command_fails_the_job_without_falling_back():
+    ex = OwnUpdaterExecutor(rc=2)
+    jobs = JobManager(_inventory((_target(update_command="omv-upgrade"), ex)))
+    job = jobs.submit("t1", "upgrade")
+    await _finish(jobs)
+    assert job.status == "failed" and job.error == "update command exited with code 2"
+    assert UPGRADE_SCRIPT not in ex.scripts and CHECK_SCRIPT not in ex.scripts
+
+
+async def test_update_command_set_on_dashboard_and_config_wins():
+    ex = OwnUpdaterExecutor()
+    jobs = JobManager(_inventory((_target(), ex), (_target("t2", update_command="from-config"), ex)))
+    jobs.set_update_command("t1", "my-update")
+    jobs.set_update_command("t2", "ignored")
+    assert jobs.update_command(jobs.inventory.get("t1")[0]) == "my-update"
+    assert jobs.update_command(jobs.inventory.get("t2")[0]) == "from-config"
+    jobs.set_update_command("t1", None)
+    assert jobs.update_command(jobs.inventory.get("t1")[0]) is None
+
+
+async def test_security_only_update_refused_on_machine_with_own_command():
+    jobs = JobManager(_inventory((_target(update_command="omv-upgrade"), OwnUpdaterExecutor())))
+    with pytest.raises(ValueError, match="own update command"):
+        jobs.submit("t1", "upgrade", security_only=True)
+
+
+async def test_resumed_own_update_command_does_not_run_the_app_update():
+    ex = OwnUpdaterExecutor()
+    jobs = JobManager(_inventory((_target(), ex)))
+    job = Job(
+        id="j1", target_id="t1", target_name="t1", action="upgrade", status="running", created_at=datetime.now(UTC)
+    )
+    job.update_command, job.remote = "omv-upgrade", "j1"
+    jobs.jobs[job.id] = job
+
+    async def finish(job_, executor, on_line, script=None, what="upgrade"):
+        job_.remote = None
+        return "__PM__=apt\n__REBOOT__=no\n__CSAPP__=plex\n"
+
+    jobs._upgrade = finish
+    target, executor = jobs.inventory.get("t1")
+    await jobs._continue(job, target, executor, lambda *_: None, None)
+    assert COMMUNITY_UPDATE_SCRIPT not in ex.scripts
+    assert "== Re-checking for remaining updates" in job.log

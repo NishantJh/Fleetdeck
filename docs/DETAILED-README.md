@@ -33,6 +33,16 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
     The regular OS upgrade then runs right after it (also if the app's own update failed), because many of these containers
     have more installed than the helper script put there.
     On by default. Turn it off with `community_scripts_update: false` (the dashboard then only warns and you run `update` yourself).
+  * **A machine's own update command:** for appliances with their own updater, such as `omv-upgrade` on
+    OpenMediaVault, Update can run that command (as root, with `sh -c`) instead of the built-in upgrade. Set it in the
+    config (`update_command:` on a host, `update_commands:` by VMID, guest or node name under `proxmox:`, by instance
+    name under `incus:`) or with a machine's **Update command…** button, which asks for the dashboard password again,
+    only works from the networks in `console.allow_from`, writes an audit row and sends a notification. One set in the
+    config can't be changed on the dashboard. The Update dialog shows the command. It runs like a normal update (snapshot
+    first, live log, survives a dashboard restart, re-check after), but the helper-script app update is skipped, and if
+    the command fails the job fails: the built-in upgrade is not tried instead. Scheduled security updates leave these
+    machines alone (the command may install more than security fixes) and the notification says so. A monitor-only
+    machine is never updated, command or not.
 * Check results and the Activity history are saved to `data/state.db` (SQLite), so they survive a
   restart or an image update. A job that was running when the dashboard stopped shows as interrupted.
 * **Reboot** reboots a machine, waits until it is back (its boot id changes), then re-checks it.
@@ -151,6 +161,11 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
 ![The dashboard (demo data)](screenshots/dashboard-light.png#gh-light-mode-only)
 ![The dashboard (demo data)](screenshots/dashboard-dark.png#gh-dark-mode-only)
 
+On a phone, each machine becomes a card with its own Update and Docker buttons:
+
+![The dashboard on a phone (demo data)](screenshots/dashboard-phone-light.png#gh-light-mode-only)
+![The dashboard on a phone (demo data)](screenshots/dashboard-phone-dark.png#gh-dark-mode-only)
+
 The first-run setup page creates the admin login:
 
 ![The setup page](screenshots/setup-light.png#gh-light-mode-only)
@@ -177,6 +192,10 @@ changes are hard to undo.
   touches your own SSH keys.
 * It upgrades only when you press *Update*, and reboots only when you ask. A Proxmox node that runs a
   guest you put under `protect:` is never rebooted from here.
+* A machine set to *Monitor only* (its button on the dashboard, or `monitor_only:` in the config) is
+  checked and reported as usual, but no update is ever installed on it from here: not by *Update*,
+  *Update selected*, a Docker stack update or automatic security updates. Its reboot, backups and
+  snapshots still work, and so does its host's reboot.
 * The setup script never changes `sshd_config` or the firewall, except the UDP port of a tunnel you
   chose. Removing a machine on the setup page gives you a script that undoes its setup.
 * Keep the dashboard on your LAN or behind a VPN, with a login (`auth:`, set by the setup page). If you

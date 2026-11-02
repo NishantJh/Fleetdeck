@@ -36,6 +36,8 @@ class Target(BaseModel):
     source: str  # name of the configured Proxmox/Incus/host entry
     kind: Kind
     parent: str | None = None  # host this guest runs on
+    # Set in the config: runs instead of the built-in OS upgrade (see JobManager.update_command).
+    update_command: str | None = None
     status: str = "running"
     updatable: bool = True
     # Can be checked but not upgraded from here (e.g. a Proxmox node without SSH settings).
@@ -48,6 +50,8 @@ class Target(BaseModel):
     can_snapshot: bool = False
     # A host the "Back up" button works on (see backup_runs.py).
     can_backup: bool = False
+    # Set monitor-only in the config: checked as usual, never updated from here (see JobManager.monitor_only).
+    monitor_only: bool = False
 
 
 class Package(BaseModel):
@@ -56,6 +60,18 @@ class Package(BaseModel):
     current: str | None = None
     # Comes from a security repository (apt only: e.g. bookworm-security, jammy-security).
     security: bool = False
+    # Ubuntu apt has deferred this package for this machine while a phased rollout is in progress.
+    phased: bool = False
+    # The package is not itself phased, but apt can upgrade it only when related phased packages are included.
+    phased_dependency: bool = False
+
+
+class SuccessfulCheck(BaseModel):
+    """Historical context only; never used to authorize an upgrade or reboot."""
+
+    packages: list[Package] = Field(default_factory=list)
+    reboot_required: bool | None = None
+    checked_at: datetime
 
 
 class CheckResult(BaseModel):
@@ -65,6 +81,7 @@ class CheckResult(BaseModel):
     reboot_required: bool | None = None
     checked_at: datetime
     error: str | None = None
+    last_successful: SuccessfulCheck | None = None
     # Extra context to show next to the result, e.g. which repositories were used.
     notes: list[str] = Field(default_factory=list)
     # The dashboard's own container runs on this machine (see updates.self_script).
@@ -88,6 +105,10 @@ class StackService(BaseModel):
     # A newer image for this tag is already on the machine (pulled by a check), but the container
     # was made from an older one.
     outdated: bool = False
+    # What the comparison used, shown in the details so a mismatch can be diagnosed: the ID of the image
+    # the container was made from, and the ID the tag points at on the machine now ("" if unknown).
+    image_id: str = ""
+    tag_id: str = ""
 
 
 class Stack(BaseModel):
@@ -143,6 +164,8 @@ class Job(BaseModel):
     reboot_if_required: bool = False
     # Upgrade only: install just the packages from a security repository (see updates.SECURITY_UPGRADE_SCRIPT).
     security_only: bool = False
+    # Upgrade only: the machine's own update command, run instead of the built-in OS upgrade.
+    update_command: str | None = None
     # Upgrade: take a snapshot first (guests only). Upgrade/rollback: the snapshot taken / restored.
     snapshot_first: bool = False
     snapshot: str | None = None

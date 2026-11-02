@@ -12,7 +12,7 @@ from pathlib import Path
 from . import detached
 from .backup_runs import DASHBOARD
 from .inventory import Inventory
-from .models import CheckResult, Job, JobAction, Stack, StacksResult, Target
+from .models import CheckResult, Job, JobAction, Stack, StacksResult, SuccessfulCheck, Target
 from .snapshots import Snapshots, prune, snapshot_name, unsupported
 from .stacks import SCAN_SCRIPT, _own_id, parse_pull_failures, parse_scan, pull_script, update_script
 from .store import Store, mark_interrupted
@@ -25,6 +25,7 @@ from .updates import (
     SECURITY_UPGRADE_SCRIPT,
     UPGRADE_SCRIPT,
     clean_line,
+    custom_update_script,
     parse_boot_id,
     parse_check,
     parse_community_script,
@@ -43,6 +44,8 @@ REBOOT_POLL = 5.0
 RECHECK_TRIES = 6
 # What a guest can be doing that stops its host from being updated or rebooted.
 GUEST_ACTIONS_BLOCKING_HOST = ("upgrade", "stack-update", "reboot", "rollback")
+# What a monitor-only machine never runs: installing OS, app or Docker updates.
+UPDATES = ("upgrade", "stack-update")
 
 # An upgrade running detached on its target gets this long before the dashboard stops waiting.
 UPGRADE_TIMEOUT = 3600.0
@@ -126,16 +129,35 @@ class JobManager:
         self._waiting_for_guests: set[str] = set()
         # Machines hidden from the dashboard: left out of scheduled checks and their notifications.
         self.hidden: set[str] = set()
+        # Machines set to monitor-only on the dashboard (the config can set it too, see Target.monitor_only).
+        self.monitor_only_ids: set[str] = set()
         # Host id -> the folder its Back up button is set to use every time.
         self.backup_places: dict[str, str] = {}
+        # Machine id -> its own update command, set on the dashboard (the config can set one too, see update_command).
+        self.update_commands: dict[str, str] = {}
         if store is not None:
             self.checks = store.load_checks()
             self.stacks = store.load_stacks()
             self.hidden = store.load_hidden()
+            self.monitor_only_ids = store.load_monitor_only()
             self.backup_places = store.load_backup_places()
+            self.update_commands = store.load_update_commands()
             self.jobs = OrderedDict((j.id, j) for j in store.load_jobs(MAX_JOBS))
 
     def _set_check(self, target_id: str, check: CheckResult) -> None:
+        prev = self.checks.get(target_id)
+        if check.error and prev:
+            check.last_successful = (
+                prev.last_successful
+                if prev.error
+                else SuccessfulCheck(
+                    packages=prev.packages, reboot_required=prev.reboot_required, checked_at=prev.checked_at
+                )
+            )
+            check.os = check.os or prev.os
+            check.package_manager = check.package_manager or prev.package_manager
+            check.runs_dashboard = prev.runs_dashboard
+            check.community_script = prev.community_script
         self.checks[target_id] = check
         if self.store is not None:
             self._persist(self.store.save_check, target_id, check)
@@ -153,6 +175,22 @@ class JobManager:
         if self.store is not None:
             self._persist(self.store.set_hidden, target_ids, hidden)
 
+    def set_monitor_only(self, target_ids: list[str], on: bool) -> None:
+        if on:
+            self.monitor_only_ids.update(target_ids)
+        else:
+            self.monitor_only_ids.difference_update(target_ids)
+        if self.store is not None:
+            self._persist(self.store.set_monitor_only, target_ids, on)
+
+    def monitor_only(self, target: Target) -> bool:
+        """Whether the target is only monitored: checks, reboots, backups and snapshots still run, updates don't."""
+        return target.monitor_only or target.id in self.monitor_only_ids
+
+    def _ensure_updates_allowed(self, target: Target, action: JobAction) -> None:
+        if action in UPDATES and self.monitor_only(target):
+            raise ValueError(f"{target.name}: monitor only, updates are not installed from here")
+
     def set_backup_place(self, target_id: str, path: str | None) -> None:
         if path is None:
             self.backup_places.pop(target_id, None)
@@ -160,6 +198,19 @@ class JobManager:
             self.backup_places[target_id] = path
         if self.store is not None:
             self._persist(self.store.set_backup_place, target_id, path)
+
+    def update_command(self, target: Target) -> str | None:
+        """The command that updates this machine instead of the built-in OS upgrade, if it has one. The config's
+        wins over the dashboard's."""
+        return target.update_command or self.update_commands.get(target.id)
+
+    def set_update_command(self, target_id: str, command: str | None) -> None:
+        if command is None:
+            self.update_commands.pop(target_id, None)
+        else:
+            self.update_commands[target_id] = command
+        if self.store is not None:
+            self._persist(self.store.set_update_command, target_id, command)
 
     def _save_job(self, job: Job) -> None:
         if self.store is not None:
@@ -228,6 +279,7 @@ class JobManager:
             _ensure_can_back_up(target, self.inventory.backup_runs.get(target_id))
         else:
             _ensure_runnable(target, executor, action)
+            self._ensure_updates_allowed(target, action)
             if action == "stack-update":
                 _ensure_stack_updatable(target, self.stacks.get(target_id), stack)
         host_id = self._host_id(target)
@@ -241,6 +293,10 @@ class JobManager:
             return existing
         if action in ("upgrade", "reboot") and (why := self.update_blocked(target)):
             raise ValueError(f"{target.name}: {why}")
+        command = self.update_command(target) if action == "upgrade" else None
+        if command and security_only:
+            # Its own command may install anything, so it is never run as a "security only" update.
+            raise ValueError(f"{target.name}: has its own update command, so security updates aren't installed alone")
         job = Job(
             id=uuid.uuid4().hex[:12],
             target_id=target_id,
@@ -248,6 +304,7 @@ class JobManager:
             action=action,
             reboot_if_required=reboot_if_required and action == "upgrade",
             security_only=security_only and action == "upgrade",
+            update_command=command,
             snapshot_first=snapshot_first and action == "upgrade",
             snapshot=snapshot if action == "rollback" else None,
             destination=destination if action == "backup" else None,
@@ -307,6 +364,7 @@ class JobManager:
                     _ensure_can_back_up(target, self.inventory.backup_runs.get(job.target_id))
                 else:
                     _ensure_runnable(target, executor, job.action)
+                    self._ensure_updates_allowed(target, job.action)
                 if job.action in ("upgrade", "reboot"):
                     await self._wait_unblocked(job, target, slot)
                 if job.action == "backup":
@@ -362,7 +420,12 @@ class JobManager:
                 else:
                     if job.snapshot_first:
                         await self._snapshot(job)
-                    if job.security_only:
+                    if job.update_command:
+                        # Instead of the OS upgrade and the helper-script app update; a failure fails the job.
+                        job.log.append(f"== Running this machine's update command: {job.update_command}")
+                        stdout = await self._upgrade(job, executor, on_line)
+                        await self._after_upgrade(job, target, executor, on_line, slot, stdout, app_updated=True)
+                    elif job.security_only:
                         # The community-scripts app update is a full update, not a security-only one.
                         job.log.append("== Installing security updates only")
                         stdout = await self._upgrade(job, executor, on_line)
@@ -423,7 +486,13 @@ class JobManager:
         elif job.remote is not None:
             stdout = await self._upgrade(job, executor, on_line)
             await self._after_upgrade(
-                job, target, executor, on_line, slot, stdout, app_updated=job.app_updated or job.security_only
+                job,
+                target,
+                executor,
+                on_line,
+                slot,
+                stdout,
+                app_updated=job.app_updated or job.security_only or bool(job.update_command),
             )
         else:  # waiting for a reboot, on its own or after an upgrade
             await self._reboot(job, target, executor, on_line, slot)
@@ -432,7 +501,9 @@ class JobManager:
         """Runs the upgrade (or another long ``script``) and returns its output. Detached on the target
         where the executor allows, so it goes on if the dashboard restarts, and :meth:`resume`
         follows it again."""
-        if script is None:
+        if script is None and job.update_command:
+            script, what = custom_update_script(job.update_command), "update command"
+        elif script is None:
             script = SECURITY_UPGRADE_SCRIPT if job.security_only else UPGRADE_SCRIPT
         if not getattr(executor, "detached", False):
             return await _attached(executor, on_line, script, what)
@@ -780,15 +851,15 @@ class JobManager:
             job.log.append(f"! could not delete old snapshots: {e}")
 
     def _record_check_error(self, target_id: str, error: str) -> None:
-        """Show a failed check as an error, keeping the OS name from the last good check."""
+        """Record the latest attempt and retain a separate historical successful result."""
         prev = self.checks.get(target_id)
-        if prev is not None and prev.error == error:
-            return
         self._set_check(
             target_id,
             CheckResult(
                 os=prev.os if prev else None,
                 package_manager=prev.package_manager if prev else None,
+                runs_dashboard=prev.runs_dashboard if prev else False,
+                community_script=prev.community_script if prev else None,
                 checked_at=_now(),
                 error=error,
             ),

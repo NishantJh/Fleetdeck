@@ -11,7 +11,7 @@ permissions:
 jobs:
   automerge:
     if: github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: self-hosted
+    runs-on: [self-hosted, vm]
     timeout-minutes: 45
     steps:
       - name: Merge a patch update once test and image pass

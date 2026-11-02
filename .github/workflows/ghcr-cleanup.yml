@@ -17,7 +17,7 @@ concurrency:
 jobs:
   cleanup:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
-    runs-on: self-hosted
+    runs-on: [self-hosted, vm]
     strategy:
       matrix:
         # homelab-manager is the old image name, still published as an alias.

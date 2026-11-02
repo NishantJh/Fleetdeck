@@ -21,12 +21,17 @@ def _job(jid: str, status="succeeded", log=None, started=False) -> Job:
 
 def test_checks_round_trip(tmp_path):
     s = Store(tmp_path / "state.db")
-    check = CheckResult(checked_at=datetime.now(UTC), os="Debian", packages=[Package(name="curl", available="2")])
+    check = CheckResult(
+        checked_at=datetime.now(UTC),
+        os="Debian",
+        packages=[Package(name="curl", available="2", phased=True)],
+    )
     s.save_check("t1", check)
     s.save_check("t1", check.model_copy(update={"os": "Debian 13"}))
     s.close()
     loaded = Store(tmp_path / "state.db").load_checks()
     assert loaded["t1"].os == "Debian 13" and loaded["t1"].packages[0].name == "curl"
+    assert loaded["t1"].packages[0].phased is True
 
 
 def test_jobs_keep_order_trim_and_mark_interrupted(tmp_path):
@@ -122,3 +127,12 @@ async def test_shutdown_stops_jobs_and_records_them(tmp_path):
     store.close()
     stored = {j.id: j for j in Store(tmp_path / "state.db").load_jobs(limit=10)}
     assert stored[running.id].error == INTERRUPTED and stored[queued.id].error == NEVER_STARTED
+
+
+def test_update_commands_round_trip(tmp_path):
+    s = Store(str(tmp_path / "s.db"))
+    s.set_update_command("t1", "omv-upgrade")
+    s.set_update_command("t1", "omv-upgrade --yes")
+    s.set_update_command("t2", "x")
+    s.set_update_command("t2", None)
+    assert Store(str(tmp_path / "s.db")).load_update_commands() == {"t1": "omv-upgrade --yes"}

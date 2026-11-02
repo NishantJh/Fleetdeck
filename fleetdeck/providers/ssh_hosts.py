@@ -34,11 +34,13 @@ class SSHHostsProvider:
                     name=h.name,
                     platform="ssh",
                     source="hosts",
+                    update_command=h.update_command,
                     kind="host",
                     updatable=h.host_key_problem is None,
                     note=h.host_key_problem,
                     backup=backup,
                     can_backup=h.host_key_problem is None,
+                    monitor_only=h.monitor_only,
                 ),
                 SSHExecutor(h),
             )

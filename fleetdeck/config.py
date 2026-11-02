@@ -31,6 +31,27 @@ def normalize_fingerprint(value: str | None) -> str | None:
     return fp
 
 
+# A machine's own update command (e.g. omv-upgrade) runs as root with sh -c; one line keeps what the confirm
+# dialog shows the same as what runs.
+MAX_UPDATE_COMMAND = 1000
+
+
+def check_update_command(v: str) -> str:
+    v = v.strip()
+    if not v:
+        raise ValueError("the update command is empty")
+    if len(v) > MAX_UPDATE_COMMAND:
+        raise ValueError(f"the update command is longer than {MAX_UPDATE_COMMAND} characters")
+    if any(ord(c) < 32 or ord(c) == 127 for c in v):
+        raise ValueError("the update command must be one line, without control characters")
+    return v
+
+
+def check_update_commands(v: dict | None) -> dict[str, str]:
+    """``{105: "omv-upgrade", "nas": "..."}`` (VMIDs come from YAML as numbers) to str keys, commands checked."""
+    return {str(k): check_update_command(str(c)) for k, c in (v or {}).items()}
+
+
 class HostBackupConfig(BaseModel):
     """Where this machine's backups are. Reading them never writes or locks anything; the dashboard's
     "Back up" button also uses this as the place to put the machine's config (see backup_runs.py)."""
@@ -108,9 +129,15 @@ class ProxmoxConfig(BaseModel):
     node_ssh: dict[str, SSHConfig] = Field(default_factory=dict)
     # VMIDs to hide from the dashboard.
     exclude: list[int] = Field(default_factory=list)
+    # Run this command instead of the built-in OS upgrade, keyed by VMID, guest name or node name,
+    # e.g. {105: omv-upgrade}. Runs as root inside the guest (or on the node).
+    update_commands: dict[str, str] = Field(default_factory=dict)
     # VMIDs shown but never updated from the dashboard, e.g. the LXC/VM the dashboard runs in.
     # Upgrading it (Docker in particular) would restart the dashboard mid-upgrade.
     protect: list[int] = Field(default_factory=list)
+    # VMIDs that are only monitored: checked and reported, but never updated from the dashboard (e.g. an appliance
+    # with its own updater). Unlike protect, reboots, snapshots and the node's own reboot stay allowed.
+    monitor_only: list[int] = Field(default_factory=list)
     # Flag a guest whose newest backup is older than this many hours. 0 turns backup tracking off.
     # Reading backups needs Datastore.Audit, Datastore.AllocateSpace and VM.Backup.
     backup_max_age_hours: int = Field(48, ge=0)
@@ -119,6 +146,11 @@ class ProxmoxConfig(BaseModel):
     @classmethod
     def _fingerprint(cls, v: str | None) -> str | None:
         return normalize_fingerprint(v)
+
+    @field_validator("update_commands", mode="before")
+    @classmethod
+    def _update_commands(cls, v):
+        return check_update_commands(v)
 
 
 class IncusConfig(BaseModel):
@@ -137,6 +169,11 @@ class IncusConfig(BaseModel):
     ssh: SSHConfig | None = None
     # Instance names ("project/name" or "name") to hide.
     exclude: list[str] = Field(default_factory=list)
+    # Instance names ("project/name" or "name") that are only monitored, never updated from the dashboard.
+    monitor_only: list[str] = Field(default_factory=list)
+    # Run this command instead of the built-in OS upgrade, keyed by instance name ("project/name" or "name")
+    # or this entry's name for the host itself. Runs as root.
+    update_commands: dict[str, str] = Field(default_factory=dict)
     # Flag an instance whose newest snapshot or export is older than this many hours. 0 turns it off.
     backup_max_age_hours: int = Field(48, ge=0)
 
@@ -144,6 +181,11 @@ class IncusConfig(BaseModel):
     @classmethod
     def _fingerprint(cls, v: str | None) -> str | None:
         return normalize_fingerprint(v)
+
+    @field_validator("update_commands", mode="before")
+    @classmethod
+    def _update_commands(cls, v):
+        return check_update_commands(v)
 
     @model_validator(mode="after")
     def _url_or_socket(self) -> IncusConfig:
@@ -172,6 +214,15 @@ class HostConfig(SSHConfig):
 
     name: str
     tunnel: TunnelConfig | None = None
+    # Only monitor this machine: checked and reported, never updated from the dashboard.
+    monitor_only: bool = False
+    # Run this command instead of the built-in OS upgrade, e.g. omv-upgrade on OpenMediaVault. Runs as root.
+    update_command: str | None = None
+
+    @field_validator("update_command")
+    @classmethod
+    def _update_command(cls, v: str | None) -> str | None:
+        return None if v is None else check_update_command(v)
 
 
 def check_username(v: str) -> str:

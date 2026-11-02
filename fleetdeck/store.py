@@ -43,7 +43,11 @@ class Store:
         )
         self.db.execute("CREATE TABLE IF NOT EXISTS stacks (target_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS hidden (target_id TEXT PRIMARY KEY)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS monitor_only (target_id TEXT PRIMARY KEY)")
         self.db.execute("CREATE TABLE IF NOT EXISTS backup_places (target_id TEXT PRIMARY KEY, path TEXT NOT NULL)")
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS update_commands (target_id TEXT PRIMARY KEY, command TEXT NOT NULL)"
+        )
         self.db.execute(
             "CREATE TABLE IF NOT EXISTS console_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at TEXT NOT NULL,"
             " data TEXT NOT NULL)"
@@ -107,6 +111,16 @@ class Store:
             sql = "DELETE FROM hidden WHERE target_id = ?"
         self.db.executemany(sql, [(t,) for t in target_ids])
 
+    def load_monitor_only(self) -> set[str]:
+        return {tid for (tid,) in self.db.execute("SELECT target_id FROM monitor_only")}
+
+    def set_monitor_only(self, target_ids: list[str], on: bool) -> None:
+        if on:
+            sql = "INSERT OR IGNORE INTO monitor_only (target_id) VALUES (?)"
+        else:
+            sql = "DELETE FROM monitor_only WHERE target_id = ?"
+        self.db.executemany(sql, [(t,) for t in target_ids])
+
     def get_value(self, key: str) -> str | None:
         row = self.db.execute("SELECT value FROM kv WHERE key = ?", (key,)).fetchone()
         return row[0] if row else None
@@ -141,6 +155,19 @@ class Store:
                 "INSERT INTO backup_places (target_id, path) VALUES (?, ?)"
                 " ON CONFLICT(target_id) DO UPDATE SET path = excluded.path",
                 (target_id, path),
+            )
+
+    def load_update_commands(self) -> dict[str, str]:
+        return dict(self.db.execute("SELECT target_id, command FROM update_commands"))
+
+    def set_update_command(self, target_id: str, command: str | None) -> None:
+        if command is None:
+            self.db.execute("DELETE FROM update_commands WHERE target_id = ?", (target_id,))
+        else:
+            self.db.execute(
+                "INSERT INTO update_commands (target_id, command) VALUES (?, ?)"
+                " ON CONFLICT(target_id) DO UPDATE SET command = excluded.command",
+                (target_id, command),
             )
 
     def load_jobs(self, limit: int) -> list[Job]:

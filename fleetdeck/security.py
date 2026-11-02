@@ -101,6 +101,15 @@ def verify_password(password: bytes, encoded: str) -> bool:
     return secrets.compare_digest(dk, base64.b64decode(want))
 
 
+def password_ok(auth: AuthConfig | None, password: str) -> bool:
+    """The dashboard password, asked again before something that runs as root (console, update commands)."""
+    if auth is None:  # demo mode without a login: nothing to check
+        return True
+    if auth.password_hash:
+        return verify_password(password.encode(), auth.password_hash)
+    return secrets.compare_digest(password.encode(), (auth.password or "").encode())
+
+
 def _credentials(header: str) -> tuple[bytes, bytes] | None:
     scheme, _, encoded = header.partition(" ")
     if scheme.lower() != "basic":
