@@ -12,7 +12,7 @@ RUN CGO_ENABLED=0 go install -trimpath -ldflags="-s -w" github.com/windtf/wirepr
 # here in the dashboard's container, never on a machine. Pinned by version and by the multi-arch index digest
 # (0.76.1, published 2026-10-21; not one of the versions hit by the March 2026 supply-chain compromise,
 # GHSA-69fq-xp46-6x23: 0.69.4 to 0.69.6). Dependabot proposes newer versions after a 7-day cooldown.
-FROM aquasec/trivy:0.76.1@sha256:790fd66d1697395d8693d1acaa1ea702406a20f109b6fc7bac8db623eca6c06c AS trivy
+FROM aquasec/trivy:0.76.2@sha256:8f6bb947dbc528902e11f2f5be52f7b519f6a39d5d148f41166f2040499768fb AS trivy
 
 FROM ${BASE_REGISTRY}/python:3.12-slim
 COPY --from=wireproxy /go/bin/wireproxy /usr/local/bin/wireproxy
