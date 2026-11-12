@@ -60,6 +60,9 @@ STAMP_RE = re.compile(r"\d{8}_\d{6}")
 DASHBOARD = "dashboard"
 # Everything saved on the dashboard goes in this folder inside the backup folder; nothing else there is touched.
 APP_FOLDER = "fleetdeck"
+# Seconds a filesystem call in the dashboard's backup folder may take before the run is failed. A NAS share
+# that is down can block one indefinitely (a hard NFS mount).
+FOLDER_TIMEOUT = 10.0
 
 
 class BackupRun(Protocol):
@@ -110,6 +113,18 @@ def machine_folder(folder: Path | None, name: str) -> Path:
             "user the dashboard runs as (see PUID/PGID)"
         ) from None
     return sub
+
+
+async def machine_folder_async(folder: Path | None, name: str) -> Path:
+    """``machine_folder`` off the event loop, with a time limit: a NAS share whose server is down can block a
+    filesystem call, and that must fail the one backup, never freeze the dashboard."""
+    try:
+        return await asyncio.wait_for(asyncio.to_thread(machine_folder, folder, name), FOLDER_TIMEOUT)
+    except TimeoutError:
+        raise RuntimeError(
+            f"the dashboard's backup folder did not answer within {FOLDER_TIMEOUT:.0f} s "
+            "(is the share mounted and reachable?)"
+        ) from None
 
 
 def _prune(folder: Path, pattern: str, steps: _Steps) -> None:
@@ -391,7 +406,7 @@ async def _stream_step(
     """The machine's config as a tar.gz streamed back over SSH into ``<folder>/<name>/``. It is written under a
     temporary name and renamed once complete, so a failed run leaves nothing that looks like a backup.
     With ``password`` it is encrypted with it (age's passphrase format), else with ``age_recipient`` to that key."""
-    sub = machine_folder(folder, name)
+    sub = await machine_folder_async(folder, name)
     sealed_with = password or age_recipient
     final = sub / f"{FILE_PREFIX}{safe_name(name)}-{_stamp()}.tar.gz{AGE_SUFFIX if sealed_with else ''}"
     part = sub / f".{final.name}.part"
@@ -518,7 +533,8 @@ class IncusHostBackup:
     ) -> None:
         prefix = f"incus-{self.cfg.name}-"
         if destination == DASHBOARD:
-            folder, prefix = machine_folder(dashboard_folder, self.cfg.name), "incus-settings-"
+            folder = await machine_folder_async(dashboard_folder, self.cfg.name)
+            prefix = "incus-settings-"
         else:
             folder = Path(destination) if destination else self.dump_dir
         if folder is None:

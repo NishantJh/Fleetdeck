@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 
 import uvicorn
 
@@ -9,6 +10,9 @@ from .envvars import env
 
 log = logging.getLogger("fleetdeck")
 APP_UID = 10001
+# How long the write test for the backup folder may take. A network share whose server is gone can block a
+# write indefinitely (a hard NFS mount), and the dashboard must still start.
+BACKUP_FOLDER_TIMEOUT = 3.0
 
 
 def configure_logging() -> None:
@@ -31,28 +35,59 @@ def server_options(cfg: AppConfig) -> dict:
     return opts
 
 
-def check_backup_folder() -> None:
-    """After dropping root: try to write in the folder for backups saved on the dashboard, and say what to do
-    if that fails. Nothing is changed or created: a share that is not mounted stays an error at backup time."""
-    folder = env("BACKUP_FOLDER")
-    if not folder:
-        try:
-            folder = load_config(config_path()).backup_folder
-        except Exception:  # noqa: BLE001 - a bad config is reported later, with the setup page
-            return
-    if not folder or not os.path.isdir(folder):
-        return
+def _probe_backup_folder(folder: str) -> OSError | None:
+    """One write test in the folder; None when it works or is not there. It is blocking on purpose: the caller
+    runs it in a thread, because an unreachable network share can block a write indefinitely."""
+    if not os.path.isdir(folder):
+        return None
     try:
         probe = os.path.join(folder, f".fleetdeck-write-test-{os.getpid()}")
         with open(probe, "wb"):
             pass
         os.unlink(probe)
     except OSError as e:
+        return e
+    return None
+
+
+def check_backup_folder(timeout: float = BACKUP_FOLDER_TIMEOUT) -> None:
+    """After dropping root: try to write in the folder for backups saved on the dashboard, and say what to do
+    if that fails. Nothing else is changed or created: a share that is not mounted stays an error at backup time.
+
+    The write test runs in a thread and is abandoned after ``timeout`` seconds, so a network share whose server
+    is unreachable cannot hold up the dashboard's start."""
+    folder = env("BACKUP_FOLDER")
+    if not folder:
+        try:
+            folder = load_config(config_path()).backup_folder
+        except Exception:  # noqa: BLE001 - a bad config is reported later, with the setup page
+            return
+    if not folder:
+        return
+    errors: list[OSError] = []
+
+    def probe() -> None:
+        if (error := _probe_backup_folder(folder)) is not None:
+            errors.append(error)
+
+    worker = threading.Thread(target=probe, name="backup-folder-probe", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        log.warning(
+            "The backup folder %s did not answer within %s s, so the dashboard starts without it. Is the share "
+            "mounted and reachable? Backups saved on the dashboard fail until it is.",
+            folder,
+            timeout,
+        )
+    elif errors:
+        e = errors[0]
+        uid = os.getuid() if hasattr(os, "getuid") else "?"
         log.warning(
             "The backup folder %s is not writable as uid %s (%s). On the NAS, allow that user to write there or map "
             "all users to one that can; the dashboard never changes the folder's owner. Backups saved on the "
             "dashboard fail until then.",
-            folder, os.getuid(), e.strerror or e,
+            folder, uid, e.strerror or e,
         )  # fmt: skip
 
 

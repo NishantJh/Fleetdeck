@@ -431,6 +431,20 @@ def test_backup_folder_check_writes_and_removes_a_probe_and_warns_when_it_cannot
     assert not caplog.text and not (tmp_path / "missing").exists()
 
 
+def test_backup_folder_check_starts_without_waiting_for_a_share_that_never_answers(tmp_path, monkeypatch, caplog):
+    from fleetdeck import __main__ as main_module
+
+    nas = tmp_path / "nas"
+    nas.mkdir()
+    monkeypatch.setenv("FLEETDECK_BACKUP_FOLDER", str(nas))
+    monkeypatch.setattr(main_module, "_probe_backup_folder", lambda folder: time.sleep(1))
+    started = time.monotonic()
+    main_module.check_backup_folder(timeout=0.05)
+    assert time.monotonic() - started < 0.9
+    assert "did not answer within" in caplog.text
+    assert "the dashboard starts without it" in caplog.text
+
+
 def test_reconnecting_keeps_a_hand_added_backup():
     data = {"hosts": [{"name": "pi", "host": "a", "backup": {"type": "path", "path": "/b"}}]}
     ob.upsert(data, "host", {"name": "pi", "host": "b"})

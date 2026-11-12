@@ -3,6 +3,8 @@ import os
 import stat
 import subprocess
 import tarfile
+import time
+from pathlib import Path
 
 import httpx
 import pytest
@@ -688,3 +690,12 @@ def test_backup_password_is_checked():
         AppConfig(backup_password="short")
     assert AppConfig(backup_password="long enough").backup_password == "long enough"
     assert AppConfig().backup_password is None
+
+
+async def test_a_backup_folder_that_never_answers_fails_the_backup_not_the_dashboard(monkeypatch):
+    # A NAS share that is down blocks a filesystem call on a hard NFS mount. The call runs in a thread, and
+    # the wait is bounded, so the event loop stays free and the run reports what happened.
+    monkeypatch.setattr(backup_runs, "FOLDER_TIMEOUT", 0.05)
+    monkeypatch.setattr(backup_runs, "machine_folder", lambda folder, name: time.sleep(1))
+    with pytest.raises(RuntimeError, match="did not answer within"):
+        await backup_runs.machine_folder_async(Path("/backups"), "host")
