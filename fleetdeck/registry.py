@@ -90,6 +90,7 @@ class RegistryClient:
         self.client = client or httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=True)
         self._tokens: dict[tuple[str, str, str], tuple[str, float]] = {}
         self._results: dict[tuple[str, str, str], tuple[str, float]] = {}
+        self._manifests: dict[tuple[str, str, str], tuple[set[str], float]] = {}
         self._sem = asyncio.Semaphore(MAX_PARALLEL)
 
     async def aclose(self) -> None:
@@ -107,7 +108,54 @@ class RegistryClient:
             remote = await self.remote_digest(host, repo, tag)
         except RegistryError as e:
             return Verdict("unknown", e.reason, e.note)
-        return Verdict("current" if remote in local else "update")
+        if remote in local:
+            return Verdict("current")
+        # A multi-platform tag's HEAD digest is the index. Some image stores put only the platform
+        # manifest digest in RepoDigests, which made every current multi-platform image look behind.
+        if local & await self.platform_digests(host, repo, tag):
+            return Verdict("current")
+        return Verdict("update")
+
+    async def platform_digests(self, host: str, repo: str, tag: str) -> set[str]:
+        """The platform manifest digests listed by a multi-platform tag; empty for a single manifest."""
+        key = (host, repo, tag)
+        cached = self._manifests.get(key)
+        if cached and time.monotonic() - cached[1] < RESULT_TTL:
+            return cached[0]
+        try:
+            digests = await self._manifest_digests(host, repo, tag)
+        except RegistryError:
+            return set()
+        self._manifests[key] = (digests, time.monotonic())
+        return digests
+
+    async def _manifest_digests(self, host: str, repo: str, tag: str) -> set[str]:
+        url = f"https://{host}/v2/{repo}/manifests/{tag}"
+        headers = {"Accept": ACCEPT}
+        r = await self._request(url, headers, "GET")
+        if r.status_code == 401:
+            token = await self._token(host, repo, r.headers.get("www-authenticate", ""))
+            r = await self._request(url, {**headers, "Authorization": f"Bearer {token}"}, "GET")
+        if r.status_code != 200 or len(r.content) > 2_000_000:
+            return set()
+        try:
+            data = r.json()
+        except ValueError:
+            return set()
+        manifests = data.get("manifests") if isinstance(data, dict) else None
+        if not isinstance(manifests, list):
+            return set()
+        found = {
+            item["digest"]
+            for item in manifests[:100]
+            if isinstance(item, dict) and isinstance(item.get("digest"), str) and _DIGEST.match(item["digest"])
+        }
+        # Some registries answer HEAD with a platform manifest but GET with the index. The header
+        # digest lets a local index digest match that case too.
+        header = r.headers.get("docker-content-digest", "")
+        if _DIGEST.match(header):
+            found.add(header)
+        return found
 
     async def remote_digest(self, host: str, repo: str, tag: str) -> str:
         key = (host, repo, tag)
