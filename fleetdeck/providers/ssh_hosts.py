@@ -37,6 +37,7 @@ class SSHHostsProvider:
                     update_command=h.update_command,
                     kind="host",
                     updatable=h.host_key_problem is None,
+                    address=h.host,
                     note=h.host_key_problem,
                     backup=backup,
                     can_backup=h.host_key_problem is None,

@@ -317,3 +317,27 @@ def test_image_scan_endpoint_off_when_disabled_and_in_demo_mode():
             time.sleep(0.2)
         assert {v["status"] for v in view["vulns"].values()} == {"scanned"}
         assert client.post(f"/api/targets/{tid}/scan").status_code == 202
+
+
+def test_services_catalogue_and_hide_round_trip(tmp_path):
+    cfg = AppConfig(demo=True, state_file=str(tmp_path / "state.db"))
+    with TestClient(create_app(cfg)) as client:
+        targets = client.get("/api/targets").json()["targets"]
+        pi = next(t for t in targets if t["target"]["name"] == "pi4")["target"]["id"]
+        client.post("/api/actions", json={"action": "stacks", "target_ids": [pi]})
+        _wait_for_jobs(client)
+
+        response = client.get("/api/services")
+        assert response.status_code == 200 and response.headers["cache-control"] == "no-store"
+        services = response.json()["services"]
+        pihole = next(s for s in services if s["name"] == "pihole")
+        assert pihole["ui"] and pihole["links"][0]["url"] == "https://pihole.demo.local/"
+
+        hidden = client.post("/api/services/hidden", json={"service_ids": [pihole["id"]], "hidden": True})
+        assert hidden.status_code == 200 and pihole["id"] in hidden.json()["hidden"]
+        after = client.get("/api/services").json()
+        assert next(s for s in after["services"] if s["id"] == pihole["id"])["hidden"] is True
+        assert after["hidden"] == 1
+
+        client.post("/api/services/hidden", json={"service_ids": [pihole["id"]], "hidden": False})
+        assert client.get("/api/services").json()["hidden"] == 0

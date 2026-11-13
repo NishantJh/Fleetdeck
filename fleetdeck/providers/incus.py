@@ -5,6 +5,7 @@ import logging
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -128,6 +129,9 @@ class IncusProvider:
                     source=self.name,
                     update_command=self.cfg.update_commands.get(self.name),
                     kind="host",
+                    address=(
+                        self.cfg.ssh.host if self.cfg.ssh else urlsplit(self.cfg.url).hostname if self.cfg.url else None
+                    ),
                     updatable=ssh is not None,
                     note=None if ssh else ssh_problem or "add ssh settings to update this host",
                     backup=await self.host_backups.for_machine(self.name, self.cfg.ssh),

@@ -41,6 +41,8 @@ Updates and jobs
 - `fleetdeck/power.py`: explicit Proxmox guest start (Boot up). Needs `VM.PowerMgmt`; never forces, resumes or retries.
 - `fleetdeck/vulnscan.py`: opt-in (`security.scan_images`) Trivy scans of Docker images, run in the dashboard's container by registry digest, never on targets. Results cached by digest in the store.
 - `fleetdeck/report.py`: plain-text report of what is failing, for help requests.
+- `fleetdeck/services.py`: the read-only Services tab: turns containers, ports and proxy labels into safe UI links.
+  `fleetdeck/urls.py`: URL/host validation for those links. Hidden service ids live in `store.py`.
 
 Backups
 - `fleetdeck/backup.py`: the dashboard's own backup (`.hlmbackup`): config, keys and history, AES-256-GCM with a scrypt
@@ -66,6 +68,7 @@ Setup and security
 
 Front end (served from `fleetdeck/static/`, packaged via `pyproject.toml`)
 - `index.html`, `app.js`, `style.css`: the dashboard.
+- `services.js`: the Services tab (cards, categories, search, hide/unhide).
 - `setup.html`, `setup.js`: the setup page.
 - `console.js`: the Run command dialog. `terminal.html`/`.js`/`.css`: the terminal window, served at `/terminal` with its
   own CSP (xterm.js sets style elements). `xterm.js`, `xterm.css`, `xterm-addon-fit.js` are vendored from npm

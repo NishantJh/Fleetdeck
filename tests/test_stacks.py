@@ -397,3 +397,68 @@ def test_parse_scan_reads_registry_digests():
     res.stdout += US.join(["__R__", "web:1", f"{digest},{other}"]) + "\n"
     assert parse_scan(res).stacks[0].services[0].repo_digests == [digest, other]
     assert parse_scan(_scan(_row())).stacks[0].services[0].repo_digests == []
+
+
+def _row_v2(cid="c1" * 32, project="web", service="app", image="web:1", name="/web-app", mode="bridge"):
+    return US.join(
+        ["__C__", project, service, "/tmp", "/tmp/compose.yml", image, "sha256:new", "running", cid, mode, name]
+    )
+
+
+def test_parse_scan_reads_ports_networks_and_proxy_labels():
+    cid = "c1" * 32
+    out = [
+        _row_v2(cid=cid),
+        US.join(["__P__", cid, '{"80/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}]}']),
+        US.join(["__E__", cid, '{"80/tcp": {}}']),
+        US.join(["__N__", cid, "bridge", "bridge=172.18.0.2;lan=192.168.1.5;"]),
+        US.join(["__ND__", "bridge", "bridge"]),
+        US.join(["__ND__", "lan", "macvlan"]),
+        US.join(["__L__", cid, "caddy", "app.lan"]),
+        US.join(["__L__", cid, "traefik.http.routers.app.rule", "Host(`app.example.com`) && PathPrefix(`/ui`)"]),
+        US.join(["__L__", cid, "traefik.http.routers.app.tls", "true"]),
+        US.join(["__L__", cid, "fleetdeck.url", "https://manual.lan"]),
+        US.join(["__L__", cid, "fleetdeck.category", "Tools"]),
+        US.join(["__L__", cid, "traefik.http.middlewares.app.basicauth.users", "user:hash"]),
+    ]
+    res = parse_scan(_scan(*out))
+    service = res.stacks[0].services[0]
+    assert [(p.host_port, p.container_port) for p in service.ports] == [(8080, 80)]
+    assert service.exposed_ports == [80]
+    assert [(n.name, n.driver) for n in service.networks] == [("bridge", "bridge"), ("lan", "macvlan")]
+    assert [(r.kind, r.host, r.path, r.tls) for r in service.proxy] == [
+        ("caddy", "app.lan", "/", True),
+        ("traefik", "app.example.com", "/ui", True),
+    ]
+    assert service.explicit_urls == ["https://manual.lan"]
+    assert service.category == "Tools"
+
+
+def test_parse_scan_reads_standalone_containers_only_when_they_have_identity():
+    cid = "d2" * 32
+    out = [
+        _row_v2(cid=cid, project="", service="", image="glances:latest", name="/glances", mode="host"),
+        US.join(["__L__", cid, "fleetdeck.ui", "true"]),
+        US.join(["__E__", cid, '{"61208/tcp": {}}']),
+    ]
+    res = parse_scan(_scan(*out))
+    assert not res.stacks
+    assert [(s.name, s.network_mode, s.exposed_ports, s.ui) for s in res.standalone] == [
+        ("glances", "host", [61208], True)
+    ]
+
+
+def test_hostile_label_values_are_dropped():
+    cid = "e3" * 32
+    out = [
+        _row_v2(cid=cid),
+        US.join(["__L__", cid, "fleetdeck.url", "javascript:alert(1)"]),
+        US.join(["__L__", cid, "caddy", "*.lan"]),
+        US.join(["__L__", cid, "traefik.http.routers.app.rule", "HostRegexp(`{sub}.lan`)"]),
+        US.join(["__L__", cid, "fleetdeck.category", "bad category!<script>"]),
+    ]
+    res = parse_scan(_scan(*out))
+    service = res.stacks[0].services[0]
+    assert service.explicit_urls == []
+    assert service.proxy == []
+    assert service.category == ""

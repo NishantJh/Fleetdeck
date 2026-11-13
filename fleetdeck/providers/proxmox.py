@@ -5,6 +5,7 @@ import logging
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -360,6 +361,7 @@ class ProxmoxProvider:
                 source=self.name,
                 update_command=self.cfg.update_commands.get(nname),
                 kind="host",
+                address=ssh_cfg.host if ssh_cfg else urlsplit(self.cfg.api_url).hostname,
                 status=node.get("status", "unknown"),
                 updatable=online,
                 check_only=ssh is None,

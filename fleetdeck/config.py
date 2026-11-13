@@ -304,6 +304,28 @@ class SecurityConfig(BaseModel):
         return v.upper() if isinstance(v, str) else v
 
 
+class StaticServiceLink(BaseModel):
+    """A service the dashboard cannot discover (a router, a NAS, a hypervisor) shown in the Services tab."""
+
+    name: str = Field(min_length=1, max_length=80)
+    url: str = Field(min_length=1, max_length=2048)
+    category: str = Field("Other", max_length=40)
+    # The machine this belongs to, shown as a chip. Empty: no machine.
+    machine: str = Field("", max_length=80)
+
+
+class ServicesConfig(BaseModel):
+    """The read-only Services tab: automatic cards from Docker plus optional manual links."""
+
+    enabled: bool = True
+    # Show stopped containers too (dimmed).
+    show_stopped: bool = False
+    # Browser-reachable address per target id or machine name, used for published-port links.
+    addresses: dict[str, str] = Field(default_factory=dict)
+    # Manual cards for things Docker discovery cannot see.
+    links: list[StaticServiceLink] = Field(default_factory=list, max_length=100)
+
+
 class NotifyConfig(BaseModel):
     """Where to send a message when a scheduled check finds updates."""
 
@@ -460,6 +482,7 @@ class AppConfig(BaseModel):
 
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    services: ServicesConfig = Field(default_factory=ServicesConfig)
     notify: list[NotifyConfig] = Field(default_factory=list)
     # The dashboard's address, linked from notifications (e.g. http://192.168.1.50:8080).
     public_url: str | None = None
