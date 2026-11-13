@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from hashlib import sha1
 
 from .config import ServicesConfig
-from .models import ServiceEntry, ServiceLink, ServicesView, StackService, StacksResult, Target
+from .models import ProxyRoute, ServiceEntry, ServiceLink, ServicesView, StackService, StacksResult, Target
 from .urls import safe_host, safe_url
 
 CATEGORY_ORDER = [
@@ -260,6 +260,54 @@ def _entry(
     )
 
 
+def _split_upstream(value: str) -> tuple[str, int] | None:
+    value = value.strip()
+    if value.startswith(("unix/", "unix:")):
+        return None
+    value = value.split("://", 1)[-1].rstrip("/")
+    host, sep, port = value.rpartition(":")
+    if not sep or not port.isdigit():
+        return None
+    port_number = int(port)
+    if not 1 <= port_number <= 65535:
+        return None
+    return host.strip().strip("[]"), port_number
+
+
+def _routes_for(
+    service: StackService,
+    routes: list[ProxyRoute],
+    target: Target,
+    cfg: ServicesConfig,
+) -> list[ProxyRoute]:
+    """Match Caddy routes to this service by container IP/name or by host port. Read-only."""
+    if not routes:
+        return []
+    address = _machine_address(target, cfg)
+    ips = {network.ip for network in service.networks if network.ip}
+    container_ports = {p.container_port for p in service.ports} | set(service.exposed_ports)
+    host_ports = {p.host_port for p in service.ports if p.host_port}
+    names = {service.name, service.container_name} - {""}
+    out: list[ProxyRoute] = []
+    for route in routes:
+        upstream = _split_upstream(route.upstream)
+        if upstream is None:
+            continue
+        host, port = upstream
+        by_container = host in ips or host in names
+        by_host = address is not None and host in (
+            address,
+            target.name,
+            "localhost",
+            "127.0.0.1",
+            "host.docker.internal",
+        )
+        if (by_container and (not container_ports or port in container_ports)) or (by_host and port in host_ports):
+            if not any(r.host == route.host and r.path == route.path for r in [*service.proxy, *out]):
+                out.append(route)
+    return out[:10]
+
+
 def build_services(
     targets: dict[str, Target],
     stacks: dict[str, StacksResult],
@@ -281,9 +329,15 @@ def build_services(
         latest = result.checked_at if latest is None or result.checked_at > latest else latest
         for stack in result.stacks:
             for service in stack.services:
+                extra = _routes_for(service, result.routes, target, cfg)
+                if extra:
+                    service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
                 if (entry := _entry(target, stack.name, service, cfg, hidden, result.checked_at)) is not None:
                     entries.append(entry)
         for service in result.standalone:
+            extra = _routes_for(service, result.routes, target, cfg)
+            if extra:
+                service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
             if (entry := _entry(target, None, service, cfg, hidden, result.checked_at)) is not None:
                 entries.append(entry)
     for link in cfg.links:

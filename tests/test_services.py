@@ -159,3 +159,47 @@ def test_static_links_and_addresses():
 def test_disabled_catalogue_is_empty():
     result = build_services({}, {}, ServicesConfig(enabled=False), set())
     assert not result.enabled and result.services == []
+
+
+def test_caddy_route_matches_container_ip_and_becomes_https_link():
+    app = service(
+        image="unknown/app:1",
+        networks=[NetworkAddress(name="bridge", ip="172.18.0.5", driver="bridge")],
+        ports=[PortMapping(host_port=8080, container_port=80)],
+    )
+    result = StacksResult(
+        stacks=[Stack(name="stack", services=[app])],
+        routes=[ProxyRoute(host="app.lan", tls=True, upstream="172.18.0.5:80")],
+        checked_at=NOW,
+    )
+    services = build_services({"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set()).services
+    assert services[0].links[0].url == "https://app.lan/"
+
+
+def test_caddy_route_matches_published_host_port():
+    app = service(
+        image="unknown/app:1",
+        ports=[PortMapping(host_ip="0.0.0.0", host_port=8080, container_port=80)],
+    )
+    result = StacksResult(
+        stacks=[Stack(name="stack", services=[app])],
+        routes=[ProxyRoute(host="app.lan", tls=True, upstream="pi.lan:8080")],
+        checked_at=NOW,
+    )
+    services = build_services({"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set()).services
+    assert services[0].links[0].url == "https://app.lan/"
+
+
+def test_caddy_route_for_another_service_is_not_attached():
+    app = service(
+        image="unknown/app:1",
+        networks=[NetworkAddress(name="bridge", ip="172.18.0.5", driver="bridge")],
+        exposed_ports=[80],
+    )
+    result = StacksResult(
+        stacks=[Stack(name="stack", services=[app])],
+        routes=[ProxyRoute(host="other.lan", tls=True, upstream="172.18.0.9:80")],
+        checked_at=NOW,
+    )
+    services = build_services({"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set()).services
+    assert services[0].links == []
