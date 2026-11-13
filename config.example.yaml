@@ -73,6 +73,24 @@ community_scripts_update: true
 #   scan_images: true       # false turns it off
 #   min_severity: HIGH      # UNKNOWN, LOW, MEDIUM, HIGH or CRITICAL: what the badge and details list
 #   ignore_unfixed: true    # leave out vulnerabilities that have no fix yet
+# The Services tab: links to each discovered service's own UI. Read-only; it never changes a machine.
+# Cards come from the last Docker check (Compose services and standalone containers) plus manual links.
+# A proxy label (Caddy Docker Proxy, Traefik, nginx-proxy) or `fleetdeck.url` gives the preferred link;
+# otherwise a published host port is used with the machine's address below. Databases and support
+# containers are hidden by default (use "Show support containers" in the tab).
+# services:
+#   enabled: true
+#   show_stopped: false
+#   addresses:                  # browser-reachable hostname/IP per target id or machine name
+#     pi4: pi4.lan
+#     "proxmox:pve:pve": 192.168.1.10
+#   links:                      # things Docker discovery cannot see (router, NAS, hypervisor)
+#     - name: Proxmox
+#       url: https://pve.lan:8006
+#       category: Virtualization
+#     - name: NAS
+#       url: https://nas.lan
+#       category: Storage & backup
 # Check every machine on a timer (e.g. 30m, 6h, 1d; at least 5m). Nothing is upgraded
 # automatically unless you turn on auto_security_updates below; you get a notification when something new is pending.
 schedule:

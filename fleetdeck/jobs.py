@@ -141,6 +141,8 @@ class JobManager:
         self._waiting_for_guests: set[str] = set()
         # Machines hidden from the dashboard: left out of scheduled checks and their notifications.
         self.hidden: set[str] = set()
+        # Service ids hidden from the Services tab. Read-only: this changes nothing about checks or updates.
+        self.hidden_services: set[str] = set()
         # Machines set to monitor-only on the dashboard (the config can set it too, see Target.monitor_only).
         self.monitor_only_ids: set[str] = set()
         # Host id -> the folder its Back up button is set to use every time.
@@ -152,6 +154,7 @@ class JobManager:
             self.stacks = store.load_stacks()
             self.docker_settings = store.load_docker_settings()
             self.hidden = store.load_hidden()
+            self.hidden_services = store.load_hidden_services()
             self.monitor_only_ids = store.load_monitor_only()
             self.backup_places = store.load_backup_places()
             self.update_commands = store.load_update_commands()
@@ -225,6 +228,14 @@ class JobManager:
             self.hidden.difference_update(target_ids)
         if self.store is not None:
             self._persist(self.store.set_hidden, target_ids, hidden)
+
+    def set_hidden_services(self, service_ids: list[str], hidden: bool) -> None:
+        if hidden:
+            self.hidden_services.update(service_ids)
+        else:
+            self.hidden_services.difference_update(service_ids)
+        if self.store is not None:
+            self._persist(self.store.set_hidden_services, service_ids, hidden)
 
     def set_monitor_only(self, target_ids: list[str], on: bool) -> None:
         if on:

@@ -39,6 +39,8 @@ class Target(BaseModel):
     parent: str | None = None  # host this guest runs on
     # Set in the config: runs instead of the built-in OS upgrade (see JobManager.update_command).
     update_command: str | None = None
+    # Browser-reachable hostname or IP, for links to services by published port. None: only proxy links.
+    address: str | None = Field(None, max_length=253)
     status: str = "running"
     updatable: bool = True
     # Can be checked but not upgraded from here (e.g. a Proxmox node without SSH settings).
@@ -132,6 +134,32 @@ class ExecResult(BaseModel):
     stderr: str = ""
 
 
+class PortMapping(BaseModel):
+    """One published or exposed port of a container."""
+
+    host_ip: str = Field("", max_length=64)
+    host_port: int | None = Field(None, ge=1, le=65535)
+    container_port: int = Field(0, ge=0, le=65535)
+    protocol: str = Field("tcp", max_length=8)
+
+
+class NetworkAddress(BaseModel):
+    """A Docker network a container is attached to, with the driver that decides whether its IP is reachable."""
+
+    name: str = Field(max_length=128)
+    ip: str = Field("", max_length=64)
+    driver: str = Field("", max_length=32)
+
+
+class ProxyRoute(BaseModel):
+    """A public route to a service, as a proxy's labels or API describe it."""
+
+    kind: Literal["caddy", "traefik", "nginx"] = "caddy"
+    host: str = Field(max_length=253)
+    path: str = Field("/", max_length=256)
+    tls: bool = True
+
+
 class StackService(BaseModel):
     """One service of a Docker Compose stack, as its container runs now."""
 
@@ -151,6 +179,21 @@ class StackService(BaseModel):
     # as after a pull-based check), and why when unknown.
     registry: str = ""
     registry_note: str = ""
+    # Container identity and networking, for the services catalogue (see services.py). Only host ports and
+    # macvlan/ipvlan IPs become links; bridge/overlay IPs are for matching a proxy's upstream only.
+    container_id: str = Field("", max_length=64)
+    network_mode: str = Field("", max_length=64)
+    ports: list[PortMapping] = Field(default_factory=list)
+    exposed_ports: list[int] = Field(default_factory=list)
+    networks: list[NetworkAddress] = Field(default_factory=list)
+    # Routes from the service's labels, already parsed and validated (never raw label text).
+    proxy: list[ProxyRoute] = Field(default_factory=list)
+    # Validated fleetdeck.url values, in the order the labels give them.
+    explicit_urls: list[str] = Field(default_factory=list)
+    # fleetdeck.ui, when set: True shows the service, False hides it even if it looks like a UI.
+    ui: bool | None = None
+    # fleetdeck.category, when set and valid.
+    category: str = Field("", max_length=40)
 
 
 class Stack(BaseModel):
@@ -190,8 +233,49 @@ class StacksResult(BaseModel):
     compose: str = "none"
     docker_version: str | None = Field(default=None, max_length=64)
     stacks: list[Stack] = Field(default_factory=list)
+    # Containers that Docker runs without a Compose project. Shown in the services catalogue, never updated.
+    standalone: list[StackService] = Field(default_factory=list)
     checked_at: datetime
     error: str | None = None
+
+
+ServiceLinkKind = Literal["explicit", "caddy", "traefik", "nginx", "port", "host", "macvlan", "static"]
+
+
+class ServiceLink(BaseModel):
+    """One URL for a service, with where it came from (shown in the UI)."""
+
+    url: str
+    kind: ServiceLinkKind
+    label: str = ""
+
+
+class ServiceEntry(BaseModel):
+    """One card in the Services tab, derived from the last Docker scan or from services.links."""
+
+    id: str
+    target_id: str
+    machine: str
+    stack: str | None = None
+    name: str
+    image: str = ""
+    state: str = ""
+    category: str = "Other"
+    links: list[ServiceLink] = Field(default_factory=list)
+    # Looks like something with a web UI (proxy route, explicit URL, known app, or a web port).
+    ui: bool = True
+    hidden: bool = False
+    updated_at: datetime | None = None
+
+
+class ServicesView(BaseModel):
+    """What the Services tab shows. Read-only; built from cached scan results."""
+
+    generated_at: datetime
+    enabled: bool = True
+    services: list[ServiceEntry] = Field(default_factory=list)
+    hidden: int = 0
+    checked_at: datetime | None = None
 
 
 JobAction = Literal[

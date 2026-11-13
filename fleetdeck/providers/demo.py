@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 import uuid
 import zlib
@@ -106,15 +107,33 @@ class DemoExecutor:
             return "__DOCKER__=none\n"
         out = ["__DOCKER__=yes", "__COMPOSE__=v2", "__DOCKER_VERSION__=28.5.1"]
         images = {}
+        port = 8080
         for name, (services, behind) in self.stacks.items():
             for svc in services:
                 image = f"{svc}:latest" if svc != "arcane" else "ghcr.io/getarcaneapp/arcane:latest"
                 # Like the containerd image store: the tag is a multi-platform index, the container reports
                 # its platform's manifest, which the tag lists.
                 images[image] = ("sha256:" + "1d" * 32, "sha256:" + "3a" * 32)
+                cid = uuid.uuid4().hex * 2
                 row = ["__C__", name, svc, f"/opt/{name}", f"/opt/{name}/compose.yaml", image]
-                row += ["sha256:" + ("0d" if behind else "3a") * 32, "running", uuid.uuid4().hex * 2]
+                row += ["sha256:" + ("0d" if behind else "3a") * 32, "running", cid, "bridge", f"/{name}-{svc}"]
                 out.append(US.join(row))
+                published = {"80/tcp": [{"HostIp": "0.0.0.0", "HostPort": str(port)}]}
+                out.append(US.join(["__P__", cid, json.dumps(published)]))
+                out.append(US.join(["__L__", cid, "caddy", f"{svc}.demo.local"]))
+                out.append(US.join(["__N__", cid, "bridge", "bridge=172.18.0.2;"]))
+                port += 1
+        # A standalone UI and a support container, so the catalogue's filtering is visible in demo mode.
+        for name, image, ui in (("glances", "glances:latest", True), ("postgres", "postgres:16", False)):
+            cid = uuid.uuid4().hex * 2
+            row = ["__C__", "", "", "", "", image, "sha256:" + "3a" * 32, "running", cid, "bridge", f"/{name}"]
+            out.append(US.join(row))
+            out.append(US.join(["__P__", cid, json.dumps({"80/tcp": [{"HostIp": "0.0.0.0", "HostPort": str(port)}]})]))
+            if ui:
+                out.append(US.join(["__L__", cid, "caddy", f"{name}.demo.local"]))
+            out.append(US.join(["__N__", cid, "bridge", "bridge=172.18.0.3;"]))
+            port += 1
+        out.append(US.join(["__ND__", "bridge", "bridge"]))
         out += [US.join(["__I__", image, image_id, manifest]) for image, (image_id, manifest) in images.items()]
         # Registry digests, except for the one image pretended to be built on the machine.
         for image in images:
@@ -287,7 +306,7 @@ class DemoProvider:
             "incus01": BackupInfo(not_set_up=True, note=NOT_SET_UP),
         }
         found: Discovered = []
-        for platform, name, kind, parent, pm, os_name, lines in items:
+        for index, (platform, name, kind, parent, pm, os_name, lines) in enumerate(items):
             t = Target(
                 id=f"demo:{platform}:{name}",
                 name=name,
@@ -295,6 +314,7 @@ class DemoProvider:
                 source="demo",
                 kind=kind,  # type: ignore[arg-type]
                 parent=parent,
+                address=f"10.0.0.{10 + index}",
                 backup=backups.get(name),
                 can_snapshot=kind != "host" and platform != "ssh",
                 can_backup=name in _DEMO_BACKUPS,

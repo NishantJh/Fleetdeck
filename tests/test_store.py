@@ -136,3 +136,12 @@ def test_update_commands_round_trip(tmp_path):
     s.set_update_command("t2", "x")
     s.set_update_command("t2", None)
     assert Store(str(tmp_path / "s.db")).load_update_commands() == {"t1": "omv-upgrade --yes"}
+
+
+def test_hidden_services_round_trip(tmp_path):
+    path = tmp_path / "state.db"
+    s = Store(path)
+    s.set_hidden_services(["ssh:pi|web|app", "static|nas|abc"], True)
+    s.set_hidden_services(["ssh:pi|web|app"], False)
+    s.close()
+    assert Store(path).load_hidden_services() == {"static|nas|abc"}

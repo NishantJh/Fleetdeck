@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import secrets
 import socket
 from collections.abc import Callable
@@ -11,7 +12,7 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -34,6 +35,7 @@ from .registry import RegistryClient
 from .report import build_report
 from .scheduler import Scheduler
 from .security import LoginThrottle, Sessions, add_login_routes, make_guard, password_ok, session_secret
+from .services import build_services
 from .setup_routes import add_setup_routes
 from .store import Store
 from .tunnels import TunnelManager
@@ -97,6 +99,14 @@ class UpdateCommandRequest(BaseModel):
 class HideRequest(BaseModel):
     target_ids: list[str] = Field(max_length=1000)
     hidden: bool = True
+
+
+class HideServicesRequest(BaseModel):
+    service_ids: list[str] = Field(min_length=1, max_length=500)
+    hidden: bool = True
+
+
+SERVICE_ID = re.compile(r"^[A-Za-z0-9:._/@|\-]{1,512}$")
 
 
 class DockerSettingsRequest(DockerSettings):
@@ -323,6 +333,7 @@ def create_app(
                 "dockhand_poll_seconds": cfg.dockhand.poll_seconds if cfg.dockhand else None,
                 "dockhand_results_persistent": store is not None,
                 "scheduled_container_checks": cfg.schedule.check_docker,
+                "services": cfg.services.enabled,
             },
         }
 
@@ -576,6 +587,30 @@ def create_app(
             background.add(task)
             task.add_done_callback(background.discard)
         return {"update_command": command}
+
+    def services_view():
+        targets = {tid: target for tid, (target, _) in inventory.targets.items()}
+        return build_services(targets, jobs.stacks, cfg.services, jobs.hidden_services)
+
+    @app.get("/api/services")
+    async def list_services(response: Response):
+        """Read-only catalogue from the last Docker scan plus manual links; no machine is contacted."""
+        response.headers["Cache-Control"] = "no-store"
+        return services_view()
+
+    @app.post("/api/services/hidden")
+    async def set_hidden_services(req: HideServicesRequest):
+        """Hide services from the Services tab, or show them again. Never affects checks or updates."""
+        ids = list(dict.fromkeys(req.service_ids))
+        if any(not SERVICE_ID.fullmatch(sid) for sid in ids):
+            raise HTTPException(400, "invalid service id")
+        if req.hidden:
+            known = {entry.id for entry in services_view().services}
+            unknown = [sid for sid in ids if sid not in known]
+            if unknown:
+                raise HTTPException(404, f"unknown service: {', '.join(unknown[:5])}")
+        jobs.set_hidden_services(ids, req.hidden)
+        return {"hidden": sorted(jobs.hidden_services)}
 
     @app.post("/api/hidden")
     async def set_hidden(req: HideRequest):
