@@ -145,11 +145,17 @@ class RegistryClient:
         manifests = data.get("manifests") if isinstance(data, dict) else None
         if not isinstance(manifests, list):
             return set()
-        return {
+        found = {
             item["digest"]
             for item in manifests[:100]
             if isinstance(item, dict) and isinstance(item.get("digest"), str) and _DIGEST.match(item["digest"])
         }
+        # Some registries answer HEAD with a platform manifest but GET with the index. The header
+        # digest lets a local index digest match that case too.
+        header = r.headers.get("docker-content-digest", "")
+        if _DIGEST.match(header):
+            found.add(header)
+        return found
 
     async def remote_digest(self, host: str, repo: str, tag: str) -> str:
         key = (host, repo, tag)

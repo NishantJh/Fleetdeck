@@ -271,3 +271,22 @@ async def test_platform_digest_lookup_is_cached_for_a_single_manifest():
     assert (await c.check("ghcr.io/a/b:1", [f"ghcr.io/a/b@{D2}"])).status == "update"
     assert (await c.check("ghcr.io/a/b:1", [f"ghcr.io/a/b@{D2}"])).status == "update"
     assert calls.count("GET") == 1  # a single-manifest answer is cached too
+
+
+async def test_local_index_digest_matches_when_head_returns_a_platform_manifest():
+    # The opposite split: HEAD gives a platform manifest, GET gives the index and its manifest list.
+    index, platform = D1, D2
+
+    def handler(request):
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"Docker-Content-Digest": platform})
+        return httpx.Response(
+            200,
+            headers={"Docker-Content-Digest": index},
+            json={"manifests": [{"digest": platform}]},
+        )
+
+    c = _client(handler)
+    assert (await c.check("traefik:3", [f"traefik@{index}"])).status == "current"
+    assert (await c.check("traefik:3", [f"traefik@{platform}"])).status == "current"
+    assert (await c.check("traefik:3", [f"traefik@sha256:{'3' * 64}"])).status == "update"
