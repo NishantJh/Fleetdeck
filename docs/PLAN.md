@@ -34,14 +34,23 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 
 ### 3. Toward the "ultimate" dashboard
 - [ ] Live resource view (CPU/RAM/disk) for nodes and guests
-- [ ] Start/stop/restart guests
-- [ ] Run commands on any machine or Docker container: a Run command box first (done, off by default), then an interactive terminal (SSH hosts, Proxmox LXCs and Docker containers on them; [spec](CONSOLE.md))
+- [x] Start a stopped Proxmox guest (Boot up)
+- [ ] Stop/restart guests, for Proxmox and Incus
+- [x] Run commands on any machine or Docker container: the Run command box (off by default) and the interactive terminal ([spec](CONSOLE.md))
 - [x] Docker/Compose stacks on any machine or guest: find them, check for newer images, update one stack (pull + `up -d`, optional image prune)
-- [ ] Docker: schedule image checks, notify, update all stacks at once, per-container actions
+- [x] Docker: scheduled image checks (on by default; registry digests, no downloads)
+- [ ] Docker: notify about stack updates, update all stacks at once, and native per-container actions (Dockhand already has per-container updates)
 - [x] Backup status: last backup per guest (vzdump/PBS), stale, not in a job, failed verification
 - [x] Last backup for Incus (snapshots/exports) and plain hosts (folder, restic, borg)
 - [x] "Back up" button on hosts: the host's own settings (Proxmox node config to PBS, Incus settings, SSH hosts' /etc), to the default place or a chosen folder/share, remembered per host
-- [ ] Set a host's backup location from the setup page
+- [ ] Set a host's backup location from the setup page (for now, through its YAML editor)
 - [ ] Notify when a backup goes stale
 - [x] Login page with session cookies instead of the browser's Basic auth popup
 - [ ] Single sign-on (OIDC)
+
+### 4. Service catalogue
+- [x] Read-only discovery of Compose services and standalone containers: ports, networks, host ports and a filtered set of proxy/UI labels
+- [x] Services tab: links from explicit URLs, proxy labels (Caddy Docker Proxy, Traefik, nginx-proxy), published ports and macvlan/ipvlan; grouped by category with search, hide/unhide and manual `services.links`
+- [ ] Read Caddyfile routes for Caddyfile-based proxies (in review)
+- [ ] Compare multi-platform images by index **and** platform-manifest digest, so current images are never reported as updates (in review)
+
