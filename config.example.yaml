@@ -76,7 +76,8 @@ community_scripts_update: true
 # The Services tab: links to each discovered service's own UI. Read-only; it never changes a machine.
 # Cards come from the last Docker check (Compose services and standalone containers) plus manual links.
 # A proxy label (Caddy Docker Proxy, Traefik, nginx-proxy) or `fleetdeck.url` gives the preferred link;
-# otherwise a published host port is used with the machine's address below. Databases and support
+# a Caddy container's Caddyfile is read automatically (only site, brace and reverse_proxy lines leave the
+# machine). Otherwise a published host port is used with the machine's address below. Databases and support
 # containers are hidden by default (use "Show support containers" in the tab).
 # services:
 #   enabled: true

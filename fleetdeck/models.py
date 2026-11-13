@@ -152,12 +152,15 @@ class NetworkAddress(BaseModel):
 
 
 class ProxyRoute(BaseModel):
-    """A public route to a service, as a proxy's labels or API describe it."""
+    """A public route to a service, as a proxy's labels, Caddyfile or admin API describe it."""
 
     kind: Literal["caddy", "traefik", "nginx"] = "caddy"
     host: str = Field(max_length=253)
     path: str = Field("/", max_length=256)
     tls: bool = True
+    # The proxy's upstream as written (e.g. 172.18.0.5:80 or app:3000); used to match a discovered
+    # Caddy/Caddyfile route to the service that runs there. Never rendered as a link.
+    upstream: str = Field("", max_length=256)
 
 
 class StackService(BaseModel):
@@ -182,6 +185,7 @@ class StackService(BaseModel):
     # Container identity and networking, for the services catalogue (see services.py). Only host ports and
     # macvlan/ipvlan IPs become links; bridge/overlay IPs are for matching a proxy's upstream only.
     container_id: str = Field("", max_length=64)
+    container_name: str = Field("", max_length=128)
     network_mode: str = Field("", max_length=64)
     ports: list[PortMapping] = Field(default_factory=list)
     exposed_ports: list[int] = Field(default_factory=list)
@@ -235,6 +239,8 @@ class StacksResult(BaseModel):
     stacks: list[Stack] = Field(default_factory=list)
     # Containers that Docker runs without a Compose project. Shown in the services catalogue, never updated.
     standalone: list[StackService] = Field(default_factory=list)
+    # Routes read from a Caddyfile or Caddy's admin API. Matched to services by upstream; never rendered raw.
+    routes: list[ProxyRoute] = Field(default_factory=list)
     checked_at: datetime
     error: str | None = None
 

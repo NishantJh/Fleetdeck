@@ -49,7 +49,7 @@ def safe_url(value: object) -> str | None:
     if not isinstance(value, str):
         return None
     value = value.strip()
-    if not value or len(value) > 2048 or _CONTROL.search(value):
+    if not value or len(value) > 2048 or _CONTROL.search(value) or "\\" in value:
         return None
     try:
         parsed = urlsplit(value)

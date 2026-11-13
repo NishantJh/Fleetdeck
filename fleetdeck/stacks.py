@@ -90,6 +90,19 @@ docker inspect --format '{{range $n, $v := .NetworkSettings.Networks}}{{$n}}{{"\
   driver=$(docker network inspect --format '{{.Driver}}' "$net" 2>/dev/null) || continue
   printf '__ND__%s%s%s%s%s\n' "$US" "$net" "$US" "$driver"
 done
+# Caddy: read the Caddyfile and keep only site lines, braces and reverse_proxy directives. Read-only.
+for id in $ids; do
+  image=$(docker inspect --format '{{.Config.Image}}' "$id" 2>/dev/null)
+  case "$image" in
+    *caddy*)
+      docker exec "$id" sh -c 'cat /etc/caddy/Caddyfile 2>/dev/null || cat /config/Caddyfile 2>/dev/null' 2>/dev/null \
+        | head -c 200000 | head -n 2000 | while IFS= read -r line; do
+          case "$line" in
+            *reverse_proxy*|*"{"*|*"}"*) printf '__CF__%s%s%s\n' "$US" "$id" "$line" ;;
+          esac
+        done ;;
+  esac
+done
 exit 0
 """
 
@@ -116,6 +129,69 @@ def _json_object(raw: str) -> dict | None:
     except (TypeError, ValueError):
         return None
     return data if isinstance(data, dict) else None
+
+
+def _caddy_site_hosts(head: str) -> tuple[list[str], bool]:
+    """Hosts and the TLS default from a Caddyfile site line (before its opening brace)."""
+    hosts: list[str] = []
+    tls = True
+    for raw in re.split(r"[,\s]+", head.strip()):
+        raw = raw.strip()
+        if not raw or raw.startswith(("(", "@", ":")):
+            continue
+        scheme = ""
+        if "://" in raw:
+            scheme, _, raw = raw.partition("://")
+        if scheme == "http" or raw.endswith(":80"):
+            tls = False
+        if host := safe_host(raw):
+            hosts.append(host)
+    return hosts[:10], tls
+
+
+def _parse_caddyfile(lines: list[str]) -> list[ProxyRoute]:
+    """Concrete host -> upstream routes from simple Caddyfile site blocks. Best effort, read-only.
+
+    Handles the common ``site { reverse_proxy upstream }`` form (including nested handle/route blocks)
+    and ignores snippets, wildcards, placeholders and non-reverse_proxy handlers."""
+    routes: list[ProxyRoute] = []
+    stack: list[tuple[list[str], bool, int]] = []
+    depth = 0
+    for raw in lines:
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        if line.endswith("{"):
+            hosts, tls = _caddy_site_hosts(line[:-1]) if depth == 0 else ([], True)
+            stack.append((hosts, tls, depth))
+            depth += 1
+            continue
+        if line.startswith("}"):
+            depth = max(0, depth - 1)
+            while stack and stack[-1][2] >= depth:
+                stack.pop()
+            continue
+        if not line.startswith("reverse_proxy"):
+            continue
+        hosts, tls = next(((h, t) for h, t, _ in reversed(stack) if h), ([], True))
+        if not hosts:
+            continue
+        upstream = ""
+        for token in shlex.split(line)[1:]:
+            if token in ("{", "}") or token.startswith(("/", "@")):
+                continue
+            upstream = token
+            break
+        if not upstream or "{" in upstream:
+            continue
+        upstream = upstream.split("://", 1)[-1].rstrip("/")
+        if upstream.startswith("unix/"):
+            continue
+        for host in hosts:
+            if len(routes) >= 200:
+                return routes
+            routes.append(ProxyRoute(host=host, tls=tls, upstream=upstream[:256]))
+    return routes
 
 
 def _parse_ports(raw: str) -> list[PortMapping]:
@@ -272,6 +348,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
     networks: dict[str, list[NetworkAddress]] = {}
     drivers: dict[str, str] = {}
     labels: dict[str, dict[str, str]] = {}
+    caddyfile: dict[str, list[str]] = {}
     for line in res.stdout.splitlines():
         if line.startswith("__DOCKER__="):
             docker = line.split("=", 1)[1]
@@ -310,6 +387,10 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
             parts = line.split(US, 3)
             if len(parts) == 4 and _NAME.match(parts[1]):
                 labels.setdefault(parts[1], {})[parts[2]] = parts[3]
+        elif line.startswith("__CF__" + US):
+            parts = line.split(US, 2)
+            if len(parts) == 3 and len(caddyfile.get(parts[1], [])) < 2000:
+                caddyfile.setdefault(parts[1], []).append(parts[2][:600])
         elif line.startswith("__C__" + US):
             parts = line.split(US)
             if len(parts) in (9, 11):
@@ -340,6 +421,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
             tag_id=now,
             repo_digests=digests.get(image, []),
             container_id=cid,
+            container_name=container_name,
             network_mode=mode[:64],
             ports=ports.get(cid, []),
             exposed_ports=exposed.get(cid, []),
@@ -361,6 +443,16 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
         stack.services.append(entry)
         if own_id and cid == own_id:
             stack.is_dashboard = True
+    routes: list[ProxyRoute] = []
+    for lines in caddyfile.values():
+        routes.extend(_parse_caddyfile(lines))
+    unique: list[ProxyRoute] = []
+    seen: set[tuple[str, str, bool, str]] = set()
+    for route in routes:
+        key = (route.host, route.path, route.tls, route.upstream)
+        if key not in seen:
+            seen.add(key)
+            unique.append(route)
     error = None
     if docker == "none":
         error = "Docker is not installed on this machine"
@@ -378,6 +470,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
         docker_version=docker_version,
         stacks=sorted(stacks.values(), key=lambda s: s.name),
         standalone=standalone,
+        routes=unique[:200],
         checked_at=datetime.now(UTC),
         error=error,
     )

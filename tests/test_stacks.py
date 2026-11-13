@@ -462,3 +462,40 @@ def test_hostile_label_values_are_dropped():
     assert service.explicit_urls == []
     assert service.proxy == []
     assert service.category == ""
+
+
+def test_parse_caddyfile_sites_and_upstreams():
+    from fleetdeck.stacks import _parse_caddyfile
+
+    routes = _parse_caddyfile(
+        [
+            "app.lan {",
+            "  reverse_proxy 172.18.0.5:80",
+            "}",
+            "http://plain.lan, www.plain.lan {",
+            "  handle {",
+            "    reverse_proxy app:3000",
+            "  }",
+            "}",
+            "*.wild.lan {",
+            "  reverse_proxy app:3000",
+            "}",
+        ]
+    )
+    assert [(r.host, r.tls, r.upstream) for r in routes] == [
+        ("app.lan", True, "172.18.0.5:80"),
+        ("plain.lan", False, "app:3000"),
+        ("www.plain.lan", False, "app:3000"),
+    ]
+
+
+def test_parse_scan_reads_caddy_routes():
+    cid = "f4" * 32
+    out = [
+        _row_v2(cid=cid),
+        US.join(["__CF__", cid, "app.lan {"]),
+        US.join(["__CF__", cid, "  reverse_proxy 172.18.0.5:80"]),
+        US.join(["__CF__", cid, "}"]),
+    ]
+    res = parse_scan(_scan(*out))
+    assert [(r.host, r.upstream) for r in res.routes] == [("app.lan", "172.18.0.5:80")]
