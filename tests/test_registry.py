@@ -153,7 +153,8 @@ async def test_results_are_reused_between_machines():
     c = _client(handler)
     await c.check("ghcr.io/a/b:1", [f"x@{D1}"])
     await c.check("ghcr.io/a/b:1", [f"x@{D2}"])
-    assert len(n) == 1
+    # One HEAD; the second machine needs one platform-manifest lookup, which is cached for the tag.
+    assert len(n) == 2
 
 
 # The Docker check no longer pulls where a registry answers.
@@ -240,3 +241,33 @@ def test_scheduled_docker_checks_are_on_by_default():
     from fleetdeck.config import ScheduleConfig
 
     assert ScheduleConfig().check_docker is True
+
+
+async def test_platform_manifest_digest_marks_a_multi_platform_image_current():
+    # Some image stores keep the platform manifest digest in RepoDigests while HEAD returns the index.
+    index, platform = D1, D2
+
+    def handler(request):
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"Docker-Content-Digest": index})
+        return httpx.Response(200, json={"manifests": [{"digest": platform}, {"digest": D1}]})
+
+    c = _client(handler)
+    assert (await c.check("caddy:2", [f"caddy@{platform}"])).status == "current"
+    # A genuinely different local digest stays an update.
+    assert (await c.check("caddy:3", [f"caddy@sha256:{'3' * 64}"])).status == "update"
+
+
+async def test_platform_digest_lookup_is_cached_for_a_single_manifest():
+    calls = []
+
+    def handler(request):
+        calls.append(request.method)
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"Docker-Content-Digest": D1})
+        return httpx.Response(200, json={"schemaVersion": 2})
+
+    c = _client(handler)
+    assert (await c.check("ghcr.io/a/b:1", [f"ghcr.io/a/b@{D2}"])).status == "update"
+    assert (await c.check("ghcr.io/a/b:1", [f"ghcr.io/a/b@{D2}"])).status == "update"
+    assert calls.count("GET") == 1  # a single-manifest answer is cached too
