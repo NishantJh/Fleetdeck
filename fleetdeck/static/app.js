@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), containerExpanded: new Set(), logJob: null, logLines: [], showHidden: false, view: "machines", filter: null };
+const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), containerExpanded: new Set(), logJob: null, logLines: [], showHidden: false, view: "machines", filter: null, services: { enabled: false, services: [] }, showHiddenServices: false, showSupportServices: false, serviceQuery: "" };
 const mobileDashboard = matchMedia("(max-width: 1119px)");
 const $ = (sel) => document.querySelector(sel);
 const renderedHTML = new WeakMap();
@@ -53,8 +53,10 @@ const remember = {
 state.packageFilters = Object.create(null);
 state.containerFilters = Object.create(null);
 state.showHidden = !!remember.get("showHidden");
+state.showHiddenServices = !!remember.get("showHiddenServices");
+state.showSupportServices = !!remember.get("showSupportServices");
 const savedScopeView = remember.get("dashboardScopeView");
-state.view = ["all", "machines", "containers"].includes(savedScopeView) ? savedScopeView : remember.get("dashboardView") === "containers" ? "containers" : "all";
+state.view = ["all", "machines", "containers", "services"].includes(savedScopeView) ? savedScopeView : remember.get("dashboardView") === "containers" ? "containers" : "all";
 // Hidden machines stay out of the counts, Check all and Update selected, even while shown.
 const active = () => state.targets.filter((v) => !v.hidden);
 
@@ -344,6 +346,7 @@ function render() {
   if (mobile) state.selected.clear();
   $("#groups").classList.toggle("mobile-layout", mobile);
   if (!containersVisible()) state.view = "machines";
+  if (!servicesEnabled() && state.view === "services") state.view = "machines";
   const focused = document.activeElement?.dataset?.focusKey;
   // Avoid replacing live controls on every poll when their rendered data did not change.
   const html = (selector, content) => {
@@ -419,16 +422,20 @@ function render() {
   const unknown = active().filter((v) => !v.dockhand && dockerEnabled(v) && v.target.updatable && v.check?.docker_installed == null && !v.stacks).length;
   html("#containers", containersVisible() ? `${hosts.some(v => dockerEnabled(v) && canUpgrade(v.target)) ? `<div class="containers-toolbar"><span class="muted">Native checks download Compose images after confirmation. Dockhand checks registry metadata.</span><button class="small" data-fetch-docker>Fetch image updates</button></div>` : ""}${unknown ? `<p class="muted discovery-note">Docker capability is not known on ${unknown} machine(s). <button class="small" data-discover-docker>Check OS updates to discover hosts</button></p>` : ""}` : "");
   $(".view-tabs").hidden = !containersVisible();
-  $("#groups").hidden = false;
+  $("#view-services").hidden = !servicesEnabled();
+  $("#groups").hidden = state.view === "services";
   $("#containers").hidden = state.view !== "containers";
+  $("#services").hidden = state.view !== "services";
+  if (typeof renderServices === "function") renderServices();
   html("#updates-legend", updatesLegend());
+  $("#updates-legend").hidden = state.view === "services";
   document.querySelectorAll("[data-view]").forEach(el => el.setAttribute("aria-pressed", String(el.dataset.view === state.view)));
 
   const btn = $("#update-selected");
   btn.disabled = state.selected.size === 0;
   btn.title = "Install OS packages on selected machines; containers are managed separately";
   btn.textContent = `Update selected (${state.selected.size})`;
-  $("#bulk-toolbar").hidden = state.selected.size === 0 || state.view === "containers";
+  $("#bulk-toolbar").hidden = state.selected.size === 0 || state.view === "containers" || state.view === "services";
   $("#selection-count").textContent = `${state.selected.size} ${plural(state.selected.size, "machine", "machines")} selected · OS packages only`;
   document.querySelectorAll("[data-machine-menu]").forEach((el) => el.setAttribute("aria-expanded", String(el.dataset.focusKey === machineMenuFocus)));
   document.querySelectorAll("[data-machine-info]").forEach((el) => el.setAttribute("aria-expanded", String(el.dataset.machineInfo === machineInfoId)));
@@ -445,10 +452,11 @@ function render() {
 }
 
 function setView(view, hostId = null) {
-  state.view = containersVisible() && ["all", "machines", "containers"].includes(view) ? view : "machines";
-  if ((state.view === "containers" && state.filter !== "containers") || (state.view === "machines" && state.filter === "containers")) state.filter = null;
+  const allowed = ["all", "machines", "containers"].concat(servicesEnabled() ? ["services"] : []);
+  state.view = containersVisible() && allowed.includes(view) ? view : "machines";
+  if (state.view === "services" || (state.view === "containers" && state.filter !== "containers") || (state.view === "machines" && state.filter === "containers")) state.filter = null;
   remember.set("dashboardScopeView", state.view);
-  if (state.view === "containers") state.selected.clear();
+  if (state.view === "containers" || state.view === "services") state.selected.clear();
   if (hostId) { state.containerExpanded.add(hostId); state.containerFilters[hostId] = "all"; }
   closeMachineMenu();
   closeMachineInformation();
@@ -701,6 +709,15 @@ async function load(refresh = false) {
     state.scanning = !!data.scanning;
     state.backupPlaces = data.backup_places || {};
     state.backupFolder = data.backup_folder || null;
+    if (data.settings?.services) {
+      try {
+        state.services = await api("/api/services");
+      } catch (error) {
+        state.services = { enabled: false, services: [], error: error.message };
+      }
+    } else {
+      state.services = { enabled: false, services: [] };
+    }
     state.jobs = await api("/api/jobs");
     state.schedule = await api("/api/schedule");
     loaded = true;
