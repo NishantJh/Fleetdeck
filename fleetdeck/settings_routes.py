@@ -326,7 +326,11 @@ def apply_machine(raw: dict, req: MachineIn, put: Callable[[str, str], str]) -> 
     if req.kind != "host":
         cmds = {k.strip(): v for k, v in req.update_commands.items() if k.strip() and v.strip()}
         _set(entry, "update_commands", cmds)  # one-line and length are checked by the model
-        entry["backup_max_age_hours"] = req.backup_max_age_hours
+        # 48 is the model default: don't add a line the user never set just because they saved the card.
+        if req.backup_max_age_hours != 48:
+            entry["backup_max_age_hours"] = req.backup_max_age_hours
+        else:
+            entry.pop("backup_max_age_hours", None)
     else:
         if req.monitor_only_host:
             entry["monitor_only"] = True
