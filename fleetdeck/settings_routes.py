@@ -71,6 +71,7 @@ class ServicesIn(BaseModel):
     revision: str
     enabled: bool = True
     show_stopped: bool = False
+    icons: bool = True
     addresses: dict[str, str] = Field(default_factory=dict, max_length=100)
     sources: list[SourceIn] = Field(default_factory=list, max_length=20)
 
@@ -425,10 +426,16 @@ def apply_services(raw: dict, req: ServicesIn, paths: ob.Paths, put: Callable[[s
     ]
     if not services["sources"]:
         del services["sources"]
-    _put(services, "enabled", None if req.enabled else False)
+    # False must be written: _put drops falsy values, and the default is on.
     if req.enabled:
         services.pop("enabled", None)
+    else:
+        services["enabled"] = False
     _put(services, "show_stopped", req.show_stopped)
+    if req.icons:
+        services.pop("icons", None)
+    else:
+        services["icons"] = False
     _put(services, "addresses", {k.strip(): v.strip() for k, v in req.addresses.items() if k.strip() and v.strip()})
     if services:
         data["services"] = services
@@ -520,6 +527,7 @@ def add_settings_routes(
             "writable": paths.writable(),
             "enabled": s.enabled,
             "show_stopped": s.show_stopped,
+            "icons": s.icons,
             "addresses": s.addresses,
             "sources": [source_view(x) for x in s.sources],
         }

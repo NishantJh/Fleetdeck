@@ -271,3 +271,18 @@ def test_route_read_on_another_machines_caddy_links_this_machines_service():
     targets = {"ssh:pi": target(), "ssh:proxy": target()}
     services = build_services(targets, {"ssh:pi": here, "ssh:proxy": proxy}, ServicesConfig(), set()).services
     assert services[0].links[0].url == "https://app.lan/"
+
+
+def test_entries_carry_icon_and_update_flag():
+    plex = service(name="plex", image="plexinc/pms-docker:latest", outdated=True)
+    result = build_services({"ssh:pi": target()}, {"ssh:pi": stacks(plex)}, ServicesConfig(), set())
+    entry = result.services[0]
+    assert entry.icon == "plex" and entry.update
+
+    newer = service(name="radarr", image="lscr.io/linuxserver/radarr:latest", registry="update")
+    nas = Target(id="src:nas", name="nas", platform="ssh", source="services", kind="host", address="nas.lan")
+    result = build_services({"src:nas": nas}, {"src:nas": stacks(newer)}, ServicesConfig(), set())
+    assert result.services[0].icon == "radarr" and not result.services[0].update  # list-only: no update badge
+
+    links = ServicesConfig(links=[StaticServiceLink(name="Proxmox", url="https://pve.lan:8006")])
+    assert build_services({}, {}, links, set()).services[0].icon == "proxmox"

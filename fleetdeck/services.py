@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from hashlib import sha1
 
 from .config import ServicesConfig, StaticServiceLink
+from .icons import icon_slug
 from .models import (
     CheckResult,
     ProxyRoute,
@@ -202,6 +203,7 @@ def native_entries(
                 machine=target.name,
                 name=app.replace("-", " ").title()[:128],
                 image="installed on the machine (not Docker)",
+                icon=icon_slug(name=app),
                 state=target.status[:32],
                 category=_category_for(app) or "Other",
                 links=[link],
@@ -366,6 +368,8 @@ def _entry(
         hidden=is_hidden,
         updated_at=at,
         link_only=target.id.startswith("src:"),
+        update=(service.outdated or service.registry == "update") and not target.id.startswith("src:"),
+        icon=icon_slug(service.image, service.name),
     )
 
 
@@ -482,6 +486,7 @@ def build_services(
                 updated_at=None,
                 link_only=True,
                 manual=link_id is not None,
+                icon=icon_slug(name=link.name),
             )
         )
     order = {name: index for index, name in enumerate(CATEGORY_ORDER)}

@@ -55,28 +55,50 @@ function tileHue(name) {
   return h; // a class, not an inline style: the page's CSP forbids style attributes
 }
 
+const ARROW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>';
+
+function isDown(service) {
+  return !!service.state && !["running", "restarting"].includes(service.state) && !service.link_only;
+}
+
 function serviceCard(service) {
   const links = service.links || [];
   const primary = links[0];
   const letter = (service.name || "?").slice(0, 1).toUpperCase();
-  const where = [service.machine, service.stack].filter(Boolean).join(" · ");
-  const chips = links.slice(1).map((link) => `<a class="chip service-link" href="${esc(link.url)}" target="_blank" rel="noopener noreferrer" title="${esc(link.url)}">${esc(link.label || link.kind)}</a>`).join("");
-  const inner = `<span class="tile-icon hue-${tileHue(service.name)}" aria-hidden="true">${esc(letter)}<span class="dot ${DOT[service.state] || ""}" title="${esc(service.state || "link")}"></span></span>
-      <span class="tile-text"><span class="tile-name">${esc(service.name)}</span><span class="tile-sub muted">${esc(where || (service.link_only ? "link" : ""))}</span></span>`;
+  const port = primary ? (primary.url.match(/:(\d+)(?:\/|$)/) || [])[1] : "";
+  const where = [service.machine, port ? `:${port}` : ""].filter(Boolean).join(" ");
+  const down = isDown(service);
+  const status = service.link_only ? "" : `<span class="svc-status ${down ? "down" : "up"}" title="${esc(service.state || "")}"></span>`;
+  const badges = [
+    service.update ? `<span class="svc-badge update" title="A newer image is available"><span>Update</span></span>` : "",
+    service.link_only && !service.manual && service.machine ? `<span class="svc-badge" title="Listed only: never updated or monitored from here">link</span>` : "",
+  ].join("");
+  const chips = links.slice(1).map((link) => `<a class="svc-chip" href="${esc(link.url)}" target="_blank" rel="noopener noreferrer" title="${esc(link.url)}">${esc(link.label || link.kind)}</a>`).join("");
+  const icon = `<span class="svc-icon hue-${tileHue(service.name)}" aria-hidden="true">${service.icon ? `<img src="/api/icons/${encodeURIComponent(service.icon)}" alt="" loading="lazy" data-svc-icon>` : ""}<span class="svc-letter">${esc(letter)}</span>${status}</span>`;
+  const inner = `${icon}<span class="svc-text"><span class="svc-name">${esc(service.name)}</span><span class="svc-sub"><span class="svc-where">${esc(where || (service.link_only ? "link" : ""))}</span>${badges}</span></span><span class="svc-go">${ARROW}</span>`;
   const main = primary
-    ? `<a class="tile-main" href="${esc(primary.url)}" target="_blank" rel="noopener noreferrer" title="${esc(primary.url)}">${inner}</a>`
-    : `<div class="tile-main no-link" title="Add a fleetdeck.url label or a services.links entry">${inner}</div>`;
+    ? `<a class="svc-main" href="${esc(primary.url)}" target="_blank" rel="noopener noreferrer" title="${esc(primary.url)}">${inner}</a>`
+    : `<div class="svc-main no-link" title="Add a fleetdeck.url label or a services.links entry">${inner}</div>`;
   const action = service.manual
-    ? `<button class="small" data-remove-link="${esc(service.id.split("|")[1])}">Remove</button>`
+    ? `<button class="svc-act" data-remove-link="${esc(service.id.split("|")[1])}">Remove</button>`
     : service.hidden
-      ? `<button class="small" data-unhide-service="${esc(service.id)}">Unhide</button>`
-      : `<button class="small" data-hide-service="${esc(service.id)}">Hide</button>`;
-  const badge = service.link_only && !service.manual && service.machine ? `<span class="chip tile-badge" title="Listed only: never updated or monitored from here">link only</span>` : "";
-  return `<article class="service-tile${service.hidden ? " is-hidden-service" : ""}${service.state && !["running", "restarting"].includes(service.state) && !service.link_only ? " is-stopped" : ""}" data-service-id="${esc(service.id)}">
-    ${main}
-    <div class="tile-foot">${badge}${chips}<span class="tile-actions">${action}</span></div>
+      ? `<button class="svc-act" data-unhide-service="${esc(service.id)}">Unhide</button>`
+      : `<button class="svc-act" data-hide-service="${esc(service.id)}">Hide</button>`;
+  return `<article class="svc${service.hidden ? " is-hidden-service" : ""}${down ? " is-stopped" : ""}" data-service-id="${esc(service.id)}">
+    ${main}${chips ? `<div class="svc-chips">${chips}</div>` : ""}<span class="svc-actions">${action}</span>
   </article>`;
 }
+
+// A missing icon falls back to the letter tile (no inline handlers: CSP).
+document.addEventListener("error", (event) => {
+  const img = event.target;
+  if (!img.matches?.("img[data-svc-icon]")) return;
+  img.closest(".svc-icon")?.classList.remove("has-img");
+  img.remove();
+}, true);
+document.addEventListener("load", (event) => {
+  if (event.target.matches?.("img[data-svc-icon]")) event.target.closest(".svc-icon")?.classList.add("has-img");
+}, true);
 
 function renderServices() {
   const el = $("#services");
@@ -101,10 +123,14 @@ function renderServices() {
     ? `<div class="service-chips" role="group" aria-label="Groups"><button class="chip-btn" data-service-cat="" aria-pressed="${!state.serviceCat}">All</button>${present.map((name) => `<button class="chip-btn" data-service-cat="${esc(name)}" aria-pressed="${state.serviceCat === name}">${esc(name)}</button>`).join("")}</div>`
     : "";
   const visible = state.serviceCat ? present.filter((name) => name === state.serviceCat) : present;
-  const sections = visible.map((name) => `<section class="service-category">
-      <h2>${categoryIcon(name)}${esc(name)} <span class="muted">${groups[name].length}</span></h2>
-      <div class="service-grid${state.serviceDense ? " dense" : ""}">${groups[name].map(serviceCard).join("")}</div>
-    </section>`).join("");
+  const sections = visible.map((name) => {
+    const items = groups[name];
+    const down = items.filter(isDown).length;
+    return `<section class="svc-group">
+      <h2>${categoryIcon(name)}<span>${esc(name)}</span><span class="svc-count">${items.length}</span>${down ? `<span class="svc-count down">${down} down</span>` : ""}</h2>
+      <div class="svc-grid">${items.map(serviceCard).join("")}</div>
+    </section>`;
+  }).join("");
   const empty = query
     ? `<div class="empty"><h3>No services match “${esc(query)}”</h3><p class="muted">Clear the search to show all services.</p><button class="small" data-clear-service-search>Clear search</button></div>`
     : support
@@ -123,19 +149,25 @@ function renderServices() {
       <datalist id="service-groups">${SERVICE_CATEGORY_ORDER.map((name) => `<option value="${esc(name)}">`).join("")}</datalist>
       <button class="small primary" type="submit">Add</button><button class="small" type="button" data-add-link-cancel>Cancel</button>
     </form>` : "";
-  const markup = `<div class="services-toolbar">
-      <input id="service-search" name="fleetdeck-service-filter" type="search" placeholder="Search services" value="${esc(state.serviceQuery || "")}" autocomplete="off" autocapitalize="off" spellcheck="false"${document.activeElement?.id === "service-search" ? "" : " readonly"} data-1p-ignore="true" data-lpignore="true" data-form-type="other" aria-label="Search services">
+  const live = all.filter((x) => !x.hidden);
+  const running = live.filter((x) => x.state === "running").length;
+  const down = live.filter(isDown).length;
+  const updates = live.filter((x) => x.update).length;
+  const machines = new Set(live.map((x) => x.machine).filter(Boolean)).size;
+  const markup = `<div class="svc-hero">
+      <label class="svc-search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="service-search" name="fleetdeck-service-filter" type="search" placeholder="Search services, machines, images" value="${esc(state.serviceQuery || "")}" autocomplete="off" autocapitalize="off" spellcheck="false"${document.activeElement?.id === "service-search" ? "" : " readonly"} data-1p-ignore="true" data-lpignore="true" data-form-type="other" aria-label="Search services"><kbd>/</kbd></label>
+      <div class="svc-summary"><span><i class="ok"></i>${running} running</span>${down ? `<span><i class="bad"></i>${down} stopped</span>` : ""}${updates ? `<span><i class="acc"></i>${updates} updates</span>` : ""}<span>${machines} machine${machines === 1 ? "" : "s"}</span><span class="muted">${esc(checked)}</span></div>
+    </div>
+    <div class="services-toolbar">${chips}<span class="svc-tools">
       ${query ? `<button class="small" data-clear-service-search>Clear search</button>` : ""}
-      <span class="muted">${esc(checked)}</span>
       <button class="small" data-add-link title="Add one clickable card for an address, such as a router. Nothing is discovered or monitored.">Add service link</button>
-      <a class="button small" href="/settings#services" title="Add another machine, such as a NAS, so its containers are discovered automatically (list only).">Add machine for services</a>
+      <a class="button small" href="/settings#services" title="Add another machine, such as a NAS, so its containers are discovered automatically (list only).">Add machine</a>
       ${sources.length ? `<button class="small" data-scan-sources title="Read the container list of ${sources.length} other machine(s). Read-only.">Scan other machines</button>` : ""}
       <button class="small" data-refresh-services title="Read the last Docker scan again; run Check container updates to refresh it">Reload</button>
-      <button class="small" data-toggle-dense aria-pressed="${!!state.serviceDense}">${state.serviceDense ? "Comfortable" : "Compact"}</button>
-      ${hidden ? `<button class="small" data-toggle-hidden-services aria-pressed="${state.showHiddenServices}">${state.showHiddenServices ? "Hide hidden" : `Show hidden (${hidden})`}</button>` : ""}
-      ${support ? `<button class="small" data-toggle-support-services aria-pressed="${state.showSupportServices}">${state.showSupportServices ? "Hide support containers" : `Show support containers (${support})`}</button>` : ""}
-    </div>
-    <p class="muted services-help"><strong>Add service link</strong> adds one card by hand for an address. <strong>Add machine for services</strong> reads another machine's containers so its services are found automatically, and is list only.</p>${form}${sourceNote}${chips}${sections || empty}`;
+      ${hidden ? `<button class="small" data-toggle-hidden-services aria-pressed="${state.showHiddenServices}">${state.showHiddenServices ? "Hide hidden" : `Hidden (${hidden})`}</button>` : ""}
+      ${support ? `<button class="small" data-toggle-support-services aria-pressed="${state.showSupportServices}">${state.showSupportServices ? "Hide support" : `Support (${support})`}</button>` : ""}
+    </span></div>${form}${sourceNote}${sections ? `<div class="svc-board">${sections}</div>` : empty}`;
   if (keepForm) {
     // Polling re-renders must not rebuild the Add link form: keep the node and its focus.
     const active = keepForm.contains(document.activeElement) ? document.activeElement : null;
@@ -179,6 +211,17 @@ async function setServiceHidden(id, hidden) {
     render();
   }
 }
+
+// "/" jumps to the search box on the Services tab, unless you are typing somewhere.
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "/" || state.view !== "services" || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (event.target.closest?.("input, textarea, select, [contenteditable]")) return;
+  const input = $("#service-search");
+  if (!input) return;
+  event.preventDefault();
+  input.removeAttribute("readonly");
+  input.focus();
+});
 
 document.addEventListener("input", (event) => {
   if (event.target.id !== "service-search") return;

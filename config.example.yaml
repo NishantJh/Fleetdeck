@@ -82,6 +82,9 @@ community_scripts_update: true
 # services:
 #   enabled: true
 #   show_stopped: false
+#   # App icons for the tiles, downloaded once from the dashboard-icons set (Apache-2.0) and kept in the data
+#   # folder. false: no downloads, tiles show a coloured letter.
+#   icons: true
 #   addresses:                  # browser-reachable hostname/IP per target id or machine name
 #     pi4: pi4.lan
 #     "proxmox:pve:pve": 192.168.1.10
