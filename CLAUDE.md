@@ -34,15 +34,14 @@ Updates and jobs
 - `fleetdeck/snapshots.py`: Proxmox and Incus guest snapshots before an upgrade. Only prunes snapshots whose names
   start with its prefix.
 - `fleetdeck/scheduler.py`: checks every machine on a timer and sends a notification when something new needs attention.
-- `fleetdeck/stacks.py`: native Docker Compose scan and update over the machine's executor; compares container and tag image IDs.
-- `fleetdeck/registry.py`: asks image registries for a tag's current digest (HEAD, anonymous token, no pull) and compares it with the machine's RepoDigests; runs in the dashboard, never on targets. Anything it can't settle is "unknown" and falls back to a pull.
+- `fleetdeck/stacks.py`: native Docker Compose scan and update over the machine's executor; compares container and tag image IDs. Also captures ports, networks, proxy labels, standalone containers and the machine's own address for the Services catalogue.
+- `fleetdeck/registry.py`: asks image registries for a tag's current digest (HEAD, anonymous token, no pull) and compares it with the machine's RepoDigests, including platform-manifest digests for multi-platform tags; runs in the dashboard, never on targets. Anything it can't settle is "unknown" and falls back to a pull.
 - `fleetdeck/dockhand.py`: read-only Dockhand client and cache (saved reports, optional fresh checks, scheduled-check history).
 - `fleetdeck/dockhand_updates.py`: confirmed container updates through Dockhand; revalidates everything server side.
 - `fleetdeck/power.py`: explicit Proxmox guest start (Boot up). Needs `VM.PowerMgmt`; never forces, resumes or retries.
 - `fleetdeck/vulnscan.py`: opt-in (`security.scan_images`) Trivy scans of Docker images, run in the dashboard's container by registry digest, never on targets. Results cached by digest in the store.
 - `fleetdeck/report.py`: plain-text report of what is failing, for help requests.
-- `fleetdeck/services.py`: the read-only Services tab: turns containers, ports and proxy labels into safe UI links.
-  `fleetdeck/urls.py`: URL/host validation for those links. Hidden service ids live in `store.py`.
+- `fleetdeck/services.py`: the read-only Services tab: turns containers, ports, proxy labels and Caddyfile routes into safe UI links. `fleetdeck/urls.py`: URL/host validation for those links. Hidden service ids live in `store.py`.
 
 Backups
 - `fleetdeck/backup.py`: the dashboard's own backup (`.hlmbackup`): config, keys and history, AES-256-GCM with a scrypt
