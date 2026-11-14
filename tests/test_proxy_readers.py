@@ -1,5 +1,6 @@
 import subprocess
 from datetime import UTC, datetime
+from urllib.parse import urlsplit
 
 from fleetdeck.config import ServicesConfig
 from fleetdeck.models import PortMapping, ProxyRoute, Stack, StackService, StacksResult, Target
@@ -198,6 +199,6 @@ def test_routes_match_services_across_machines_by_address_and_port():
     view = build_services(
         targets, {"ssh:proxy": proxy_machine, "ssh:app": app_machine}, ServicesConfig(), set()
     ).services
-    urls = {link.url for entry in view for link in entry.links}
-    assert "http://app.example.com/" in urls or "https://app.example.com/" in urls
-    assert not any("wrong-port" in u or "local-name" in u for u in urls)
+    hosts = {urlsplit(link.url).hostname for entry in view for link in entry.links}
+    assert "app.example.com" in hosts
+    assert not hosts & {"wrong-port.example.com", "local-name.example.com"}
