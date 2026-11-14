@@ -21,6 +21,9 @@ function servicesEnabled() {
 }
 
 let serviceSearchReady = false;
+// Icon slugs whose image already loaded in this page. Re-renders while a check runs replace the card
+// markup; keeping the loaded state on the new tile avoids the letter -> icon flicker every poll.
+const loadedIcons = new Set();
 
 function serviceMatches(service) {
   if (service.hidden && !state.showHiddenServices) return false;
@@ -61,6 +64,8 @@ function isDown(service) {
   return !!service.state && !["running", "restarting"].includes(service.state) && !service.link_only;
 }
 
+const PORT_LINK_KINDS = new Set(["port", "host", "macvlan"]);
+
 function serviceCard(service) {
   const links = service.links || [];
   const primary = links[0];
@@ -71,18 +76,28 @@ function serviceCard(service) {
   const status = service.link_only ? "" : `<span class="svc-status ${down ? "down" : "up"}" title="${esc(service.state || "")}"></span>`;
   const badges = [
     service.update ? `<span class="svc-badge update" title="A newer image is available"><span>Update</span></span>` : "",
-    service.link_only && !service.manual && service.machine ? `<span class="svc-badge" title="Listed only: never updated or monitored from here">link</span>` : "",
+    service.link_only && !service.manual && service.machine ? `<span class="svc-badge" title="This is a services-only machine: its containers are listed for quick links, but never updated, checked or backed up here.">listed only</span>` : "",
   ].join("");
-  const chips = links.slice(1).map((link) => `<a class="svc-chip" href="${esc(link.url)}" target="_blank" rel="noopener noreferrer" title="${esc(link.url)}">${esc(link.label || link.kind)}</a>`).join("");
-  const icon = `<span class="svc-icon hue-${tileHue(service.name)}" aria-hidden="true">${service.icon ? `<img src="/api/icons/${encodeURIComponent(service.icon)}" alt="" loading="lazy" data-svc-icon>` : ""}<span class="svc-letter">${esc(letter)}</span>${status}</span>`;
-  const inner = `${icon}<span class="svc-text"><span class="svc-name">${esc(service.name)}</span><span class="svc-sub"><span class="svc-where">${esc(where || (service.link_only ? "link" : ""))}</span>${badges}</span></span><span class="svc-go">${ARROW}</span>`;
+  const secondary = links.slice(1);
+  const extraPorts = secondary.filter((link) => PORT_LINK_KINDS.has(link.kind));
+  const chips = secondary
+    .filter((link) => !PORT_LINK_KINDS.has(link.kind))
+    .map((link) => `<a class="svc-chip" href="${esc(link.url)}" target="_blank" rel="noopener noreferrer" title="${esc(link.url)}">${esc(link.label || link.kind)}</a>`)
+    .join("");
+  // One compact disclosure instead of a chip per published port: a media server with four ports no longer makes
+  // its card several rows taller than the others.
+  const ports = extraPorts.length
+    ? `<details class="svc-ports" title="${extraPorts.length} more published port${extraPorts.length === 1 ? "" : "s"}"><summary class="svc-chip">${extraPorts.length} port${extraPorts.length === 1 ? "" : "s"}</summary><div class="svc-port-list">${extraPorts.map((link) => `<a href="${esc(link.url)}" target="_blank" rel="noopener noreferrer" title="${esc(link.url)}">${esc(link.label || link.kind)}</a>`).join("")}</div></details>`
+    : "";
+  const iconLoaded = !!service.icon && loadedIcons.has(service.icon);
+  const icon = `<span class="svc-icon hue-${tileHue(service.name)}${iconLoaded ? " has-img" : ""}" aria-hidden="true">${service.icon ? `<img src="/api/icons/${encodeURIComponent(service.icon)}" alt="" loading="lazy" data-svc-icon data-icon-slug="${esc(service.icon)}">` : ""}<span class="svc-letter">${esc(letter)}</span>${status}</span>`;
+  const inner = `${icon}<span class="svc-text"><span class="svc-name">${esc(service.name)}</span><span class="svc-sub"><span class="svc-where">${esc(where || (service.link_only ? "listed only" : ""))}</span>${badges}</span></span><span class="svc-go">${ARROW}</span>`;
   const main = primary
     ? `<a class="svc-main" href="${esc(primary.url)}" target="_blank" rel="noopener noreferrer" title="${esc(primary.url)}">${inner}</a>`
     : `<div class="svc-main no-link" title="Add a fleetdeck.url label or a services.links entry">${inner}</div>`;
   const current = service.category || "Other";
-  const choices = SERVICE_CATEGORY_ORDER.filter((name) => name !== "Support");
-  const categories = choices.includes(current) ? choices : [...choices, current];
-  const move = `<select class="svc-move" data-move-service="${esc(service.id)}" aria-label="Group for ${esc(service.name)}" title="Move this service to another group">
+  const categories = SERVICE_CATEGORY_ORDER.includes(current) ? SERVICE_CATEGORY_ORDER : [...SERVICE_CATEGORY_ORDER, current];
+  const move = `<select class="svc-move" data-move-service="${esc(service.id)}" aria-label="Group for ${esc(service.name)}" title="Move this service to another group. Support hides it until Show support containers is on.">
     ${["", ...categories].map((name) => `<option value="${esc(name)}"${name === current ? " selected" : ""}>${esc(name || "Automatic (from the app)")}</option>`).join("")}
   </select>`;
   const action = service.manual
@@ -91,7 +106,7 @@ function serviceCard(service) {
       ? `<button class="svc-act" data-unhide-service="${esc(service.id)}">Unhide</button>`
       : `<button class="svc-act" data-hide-service="${esc(service.id)}">Hide</button>`;
   return `<article class="svc${service.hidden ? " is-hidden-service" : ""}${down ? " is-stopped" : ""}" data-service-id="${esc(service.id)}">
-    ${main}${chips ? `<div class="svc-chips">${chips}</div>` : ""}<span class="svc-actions">${move}${action}</span>
+    ${main}${chips || ports ? `<div class="svc-chips">${chips}${ports}</div>` : ""}<div class="svc-foot"><span class="svc-actions">${move}${action}</span></div>
   </article>`;
 }
 
@@ -99,11 +114,15 @@ function serviceCard(service) {
 document.addEventListener("error", (event) => {
   const img = event.target;
   if (!img.matches?.("img[data-svc-icon]")) return;
+  if (img.dataset.iconSlug) loadedIcons.delete(img.dataset.iconSlug);
   img.closest(".svc-icon")?.classList.remove("has-img");
   img.remove();
 }, true);
 document.addEventListener("load", (event) => {
-  if (event.target.matches?.("img[data-svc-icon]")) event.target.closest(".svc-icon")?.classList.add("has-img");
+  const img = event.target;
+  if (!img.matches?.("img[data-svc-icon]")) return;
+  if (img.dataset.iconSlug) loadedIcons.add(img.dataset.iconSlug);
+  img.closest(".svc-icon")?.classList.add("has-img");
 }, true);
 
 function renderServices() {

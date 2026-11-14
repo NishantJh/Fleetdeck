@@ -1068,10 +1068,27 @@ def add_settings_routes(
         return out
 
     def _view_extra(request: Request) -> dict:
+        """What this request itself says about TLS, for the Console/Network warning.
+
+        uvicorn only applies X-Forwarded-Proto when the proxy is in trusted_proxies (set at start-up). If the
+        browser is on HTTPS but that did not happen, say so with the proxy's address instead of calling the
+        page plain http, which sends people looking in the wrong place."""
+        forwarded = request.headers.get("x-forwarded-proto", "").split(",", 1)[0].strip().lower()
+        if forwarded not in ("http", "https"):
+            forwarded = ""
+            match = re.search(r"(?:^|;)\s*proto\s*=\s*\"?([a-z]+)", request.headers.get("forwarded", ""), re.I)
+            if match and match[1].lower() in ("http", "https"):
+                forwarded = match[1].lower()
+        secure = is_secure(request)
+        address = client_ip(request)
         return {
-            "your_address": client_ip(request),
+            "your_address": address,
             "your_host": request.headers.get("host", ""),
-            "plain_http": not is_secure(request),
+            "plain_http": not secure,
+            "forwarded_proto": forwarded,
+            # Only a request that is actually using a proxy has one to name. With uvicorn trusting the proxy,
+            # client_ip is the visitor and secure is already true, so this is only set when trust is missing.
+            "proxy_address": address if not secure and (forwarded or request.headers.get("x-forwarded-for")) else "",
         }
 
     @app.get("/api/settings/console")

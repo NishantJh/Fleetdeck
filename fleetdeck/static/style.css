@@ -1481,7 +1481,17 @@ a.svc-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2p
 .svc:hover .svc-go { opacity: 1; transform: none; color: var(--accent); }
 .svc-chips { display: flex; gap: 4px; flex-wrap: wrap; padding: 0 10px 8px 61px; margin-top: -6px; }
 .svc-chip { font-size: 11px; text-decoration: none; padding: 0 7px; border-radius: 999px; background: var(--chip); color: var(--text-2); line-height: 18px; }
-.svc-actions { position: absolute; right: 6px; bottom: 5px; display: flex; align-items: center; gap: 3px; opacity: 0; transition: opacity .12s; }
+.svc-ports { position: relative; }
+.svc-ports > summary { list-style: none; cursor: pointer; user-select: none; white-space: nowrap; flex: none; }
+.svc-ports > summary::-webkit-details-marker { display: none; }
+.svc-ports[open] > summary { background: var(--accent); color: #fff; }
+.svc-port-list { position: absolute; z-index: 20; right: 0; bottom: calc(100% + 5px); display: flex; flex-direction: column;
+  min-width: 130px; padding: 4px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--panel);
+  box-shadow: var(--shadow); }
+.svc-port-list a { padding: 4px 7px; border-radius: 5px; color: var(--text-2); font-size: 11px; text-decoration: none; white-space: nowrap; }
+.svc-port-list a:hover, .svc-port-list a:focus-visible { background: var(--chip); color: var(--text); }
+.svc-foot { display: flex; align-items: center; justify-content: flex-end; min-height: 22px; padding: 0 8px 5px; margin-top: -4px; }
+.svc-actions { display: flex; align-items: center; gap: 3px; margin-left: auto; opacity: 0; transition: opacity .12s; }
 .svc:hover .svc-actions, .svc:focus-within .svc-actions { opacity: 1; }
 .svc-act { height: 20px; padding: 0 7px; font-size: 10.5px; border-radius: 6px; }
 .svc-move { height: 20px; max-width: 104px; padding: 0 3px; font-size: 10.5px; border-radius: 6px; border: 1px solid var(--border); background: var(--chip); color: var(--text-2); }
@@ -1490,8 +1500,7 @@ a.svc-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2p
 .svc.is-hidden-service { opacity: .6; border-style: dashed; }
 @media (hover: none) {
   /* No hover on touch: keep the group picker and the hide/remove action reachable. */
-  .svc-actions { position: static; justify-content: flex-end; flex-wrap: wrap; padding: 0 8px 6px; opacity: 1; }
-  .svc-main { padding-bottom: 4px; }
+  .svc-actions { flex-wrap: wrap; opacity: 1; }
 }
 @media (max-width: 700px) {
   .svc-hero { padding-top: 4px; }

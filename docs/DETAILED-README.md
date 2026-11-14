@@ -449,8 +449,14 @@ Tools, Virtualization, Other). A card carries the service name, machine and stac
 link and any secondary links. Search filters by name, machine, stack, image or category.
 
 Each card has a small **group picker**: choose another group to move that service there, or *Automatic (from the app)*
-to put it back where its image, name or `fleetdeck.category` label says. The choice is kept in the dashboard's state
-database (like hiding), so it survives rescans and restarts and never edits the machine, its labels or `config.yaml`.
+to put it back where its image, name or `fleetdeck.category` label says. Choosing **Support** hides it with the support
+containers; moving a support container to a normal group shows it, with its links, without turning on *Show support
+containers*. The choice is kept in the dashboard's state database (like hiding), so it survives rescans and restarts
+and never edits the machine, its labels or `config.yaml`.
+
+When a service publishes several ports, the card shows the primary link and a single **N ports** menu instead of one
+chip per port, so a media server does not make its card several rows taller than the others. Its tooltip says how many
+are in addition to the primary link.
 
 The view never changes a machine. It is built from cached scan results; **Reload** reads them again, and **Check
 container updates** refreshes the underlying scan. Standalone containers are included for the catalogue, but never
@@ -472,7 +478,8 @@ In order:
 A service is considered to have a UI when it has one of those links, is a known app, or publishes a web port.
 Infrastructure images (databases, queues, exporters, Tailscale/Gerbil and proxy containers) are hidden by default.
 **Show support containers** reveals them; **Show hidden** reveals services you hid yourself. Hiding is stored on the
-server and survives restarts.
+server and survives restarts. Cards from a services-only machine (a NAS or another Docker host added under Settings →
+Services) carry a **listed only** badge: they are never updated, checked or backed up from here.
 
 Labels you can use:
 
@@ -700,7 +707,10 @@ The setup page writes an ordinary `config.yaml`, and everything below can also b
 * Behind a reverse proxy, set `trusted_proxies` to its address (or the Docker network's range), so
   the lockout applies to each visitor's IP rather than the proxy's. The proxy must pass the original
   `Host` header, because `allowed_hosts` and the cross-site check compare against it. Caddy and
-  Traefik do this by default; with nginx add `proxy_set_header Host $host;`.
+  Traefik do this by default; with nginx add `proxy_set_header Host $host;`. If the Console or Network
+  page still says the request arrived over plain HTTP while your browser is on HTTPS, the proxy is not
+  in `trusted_proxies` (or Fleetdeck was not restarted after adding it); the warning names the proxy
+  address, and adding its network there removes it.
 * Cross-site form posts are refused, and the page can't be framed by another site.
 
 ### Put it behind HTTPS

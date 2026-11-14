@@ -347,13 +347,20 @@ def _entry(
     cfg: ServicesConfig,
     hidden: set[str],
     at: datetime | None,
+    categories: dict[str, str] | None = None,
 ) -> ServiceEntry | None:
     if service.status not in ("running", "restarting") and not cfg.show_stopped:
         return None
     ui, category = classify(service)
     key = f"{target.id}|{stack or 'standalone'}|{service.name}"[:512]
     is_hidden = key in hidden
-    links = service_links(service, address) if (ui or is_hidden) else []
+    if chosen := (categories or {}).get(key):
+        # The group picker is authoritative: moving a support container to a user group makes it a normal
+        # service (with its links), and moving a service to Support makes it obey "show support containers".
+        category, ui = chosen, chosen != "Support"
+    elif not ui:
+        category = service.category or "Support"
+    links = service_links(service, address) if (ui or is_hidden or chosen) else []
     return ServiceEntry(
         id=key,
         target_id=target.id,
@@ -362,7 +369,7 @@ def _entry(
         name=service.name[:128],
         image=service.image[:512],
         state=service.status[:32],
-        category=category if ui else service.category or "Support",
+        category=category,
         links=links,
         ui=ui,
         hidden=is_hidden,
@@ -457,13 +464,17 @@ def build_services(
                 extra = routes_of(target_id, service, result, address)
                 if extra:
                     service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
-                if (entry := _entry(target, stack.name, service, address, cfg, hidden, result.checked_at)) is not None:
+                if (
+                    entry := _entry(target, stack.name, service, address, cfg, hidden, result.checked_at, categories)
+                ) is not None:
                     entries.append(entry)
         for service in result.standalone:
             extra = routes_of(target_id, service, result, address)
             if extra:
                 service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
-            if (entry := _entry(target, None, service, address, cfg, hidden, result.checked_at)) is not None:
+            if (
+                entry := _entry(target, None, service, address, cfg, hidden, result.checked_at, categories)
+            ) is not None:
                 entries.append(entry)
     entries.extend(native_entries(targets, checks or {}, cfg, hidden))
     manual = [(None, link) for link in cfg.links] + [(lid, link) for lid, link in (added or {}).items()]
@@ -497,6 +508,7 @@ def build_services(
         for entry in entries:
             if chosen := categories.get(entry.id):
                 entry.category = chosen
+                entry.ui = chosen != "Support"
     order = {name: index for index, name in enumerate(CATEGORY_ORDER)}
     entries.sort(key=lambda e: (order.get(e.category, len(order)), e.name.lower(), e.machine.lower()))
     return ServicesView(
