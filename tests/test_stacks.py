@@ -505,6 +505,46 @@ def test_parse_scan_reads_ports_networks_and_proxy_labels():
     assert service.category == "Tools"
 
 
+def test_parse_scan_reads_homepage_and_dashgate_labels():
+    cid = "f4" * 32
+    out = [
+        _row_v2(cid=cid),
+        US.join(["__L__", cid, "homepage.name", "Uptime Kuma"]),
+        US.join(["__L__", cid, "homepage.href", "https://uptime.internal.lan"]),
+        US.join(["__L__", cid, "homepage.description", "Status pages"]),
+        US.join(["__L__", cid, "homepage.group", "Monitoring"]),
+        US.join(["__L__", cid, "homepage.icon", "uptime-kuma.png"]),
+    ]
+    service = parse_scan(_scan(*out)).stacks[0].services[0]
+    assert service.display_name == "Uptime Kuma"
+    assert service.explicit_urls == ["https://uptime.internal.lan"]
+    assert service.description == "Status pages"
+    assert service.category == "Monitoring"
+    assert service.icon == "uptime-kuma"
+
+    dashgate = [
+        _row_v2(cid=cid),
+        US.join(["__L__", cid, "dashgate.name", "Fleetdeck"]),
+        US.join(["__L__", cid, "dashgate.url", "https://fleetdeck.internal.lan"]),
+    ]
+    service = parse_scan(_scan(*dashgate)).stacks[0].services[0]
+    assert (service.display_name, service.explicit_urls) == ("Fleetdeck", ["https://fleetdeck.internal.lan"])
+
+
+def test_fleetdeck_labels_win_over_homepage_labels():
+    cid = "f5" * 32
+    out = [
+        _row_v2(cid=cid),
+        US.join(["__L__", cid, "fleetdeck.url", "https://fleetdeck.lan"]),
+        US.join(["__L__", cid, "homepage.href", "https://homepage.lan"]),
+        US.join(["__L__", cid, "fleetdeck.category", "Tools"]),
+        US.join(["__L__", cid, "homepage.group", "Media"]),
+    ]
+    service = parse_scan(_scan(*out)).stacks[0].services[0]
+    assert service.explicit_urls == ["https://fleetdeck.lan", "https://homepage.lan"]
+    assert service.category == "Tools"
+
+
 def test_parse_scan_reads_standalone_containers_only_when_they_have_identity():
     cid = "d2" * 32
     out = [
@@ -587,6 +627,12 @@ def test_parse_scan_reads_the_machines_own_address():
     assert (res.host_name, res.host_address) == ("pi4", "192.168.1.50")
     res = parse_scan(_scan(US.join(["__H__", "pi4", "127.0.0.1"])))
     assert res.host_address == ""
+
+
+def test_parse_scan_reads_every_name_and_address_of_the_machine():
+    res = parse_scan(_scan(US.join(["__HA__", "pi4.lan", "192.168.1.50 10.0.0.4 127.0.0.1 ::1 fe80::1 2001:db8::5"])))
+    # Loopback and link-local addresses are dropped; names and usable addresses stay, in scan order.
+    assert res.host_addresses == ["pi4.lan", "192.168.1.50", "10.0.0.4", "2001:db8::5"]
 
 
 def test_parse_scan_reads_native_caddyfile_without_docker():

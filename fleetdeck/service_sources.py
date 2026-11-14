@@ -53,11 +53,21 @@ def _unraid_url(template: str, address: str, ports: list[PortMapping]) -> str | 
 
 
 def _finish(item: dict, labels: dict[str, str], ports: list[PortMapping], address: str) -> dict:
-    proxy, urls, ui, category = _parse_labels({k: v for k, v in labels.items() if isinstance(v, str)})
+    parsed = _parse_labels({k: v for k, v in labels.items() if isinstance(v, str)})
     webui = labels.get("net.unraid.docker.webui")
+    urls = parsed.urls
     if isinstance(webui, str) and (url := _unraid_url(webui, address, ports)) and url not in urls:
-        urls.insert(0, url)
-    return {"proxy": proxy, "explicit_urls": urls[:5], "ui": ui, "category": category, **item}
+        urls = [url, *urls]
+    return {
+        "proxy": parsed.proxy,
+        "explicit_urls": urls[:5],
+        "ui": parsed.ui,
+        "category": parsed.category,
+        "description": parsed.description,
+        "display_name": parsed.display_name,
+        "icon": parsed.icon,
+        **item,
+    }
 
 
 def parse_inspect(stdout: str, address: str) -> StacksResult:

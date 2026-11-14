@@ -23,9 +23,10 @@ import re
 import shlex
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import NamedTuple
 
 from .models import ExecResult, NetworkAddress, PortMapping, ProxyRoute, Stack, StackService, StacksResult
-from .proxy_readers import MAX_JSON, MAX_LINES, PROXY_SCAN_SH, TAG, routes_from_lines
+from .proxy_readers import MAX_CADDY_JSON, MAX_JSON, MAX_LINES, PROXY_SCAN_SH, TAG, routes_from_lines
 from .updates import _CONTAINER_ID
 from .urls import safe_host, safe_path, safe_url
 
@@ -62,6 +63,11 @@ host_name=$(hostname 2>/dev/null | head -n 1 | cut -c1-253)
 host_ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')
 [ -n "$host_ip" ] || host_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
 printf '__H__%s%s%s%s%s\n' "$US" "$host_name" "$US" "$host_ip"
+# Every other name and IPv4 address the machine answers to, so a proxy's upstream can be matched to it.
+host_fqdn=$(hostname -f 2>/dev/null | head -n 1 | cut -c1-253)
+host_ips=$(hostname -I 2>/dev/null)
+[ -n "$host_ips" ] || host_ips=$(ip -o -4 addr show 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | tr '\n' ' ')
+printf '__HA__%s%s%s%s\n' "$US" "$host_fqdn" "$US" "$host_ips"
 if docker compose version >/dev/null 2>&1; then echo "__COMPOSE__=v2"
 elif command -v docker-compose >/dev/null 2>&1; then echo "__COMPOSE__=v1"
 else echo "__COMPOSE__=none"; fi
@@ -85,7 +91,7 @@ LBL='{{range $k, $v := .Config.Labels}}{{$k}}{{"\x1f"}}{{$v}}{{"\n"}}{{end}}'
 for id in $ids; do
   docker inspect --format "$LBL" "$id" 2>/dev/null | head -n 200 | cut -c1-600 | while IFS="$US" read -r k v; do
     case "$k" in
-      caddy|caddy_*|caddy.*|traefik.http.routers.*|VIRTUAL_HOST|VIRTUAL_PORT|VIRTUAL_PROTO|fleetdeck.url|fleetdeck.ui|fleetdeck.category)
+      caddy|caddy_*|caddy.*|traefik.http.routers.*|VIRTUAL_HOST|VIRTUAL_PORT|VIRTUAL_PROTO|fleetdeck.url|fleetdeck.ui|fleetdeck.category|fleetdeck.description|homepage.name|homepage.href|homepage.description|homepage.group|homepage.icon|dashgate.name|dashgate.url|dashgate.description|dashgate.group|dashgate.icon)
         printf '__L__%s%s%s%s%s%s%s\n' "$US" "$id" "$US" "$k" "$US" "$v" ;;
     esac
   done
@@ -117,7 +123,9 @@ for id in $ids; do
           case "$line" in
             *reverse_proxy*|*"{"*|*"}"*) printf '__CF__%s%s%s\n' "$US" "$id" "$line" ;;
           esac
-        done ;;
+        done
+      # The live config also has imported files and config from labels (caddy-docker-proxy).
+      px_caddy_api "$id" | px_emit "ca:$id" ;;
   esac
 done
 exit 0
@@ -267,6 +275,20 @@ def _parse_networks(raw: str) -> list[NetworkAddress]:
     return out[:20]
 
 
+def _scan_host(value: str) -> str:
+    """A name or address from the scan, or '' when unusable or not reachable from a browser."""
+    value = value.strip()
+    if not value:
+        return ""
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return safe_host(value) or ""
+    if address.is_loopback or address.is_link_local or address.is_unspecified or address.is_multicast:
+        return ""
+    return str(address)
+
+
 def _tri_bool(value: str) -> bool | None:
     value = value.strip().lower()
     if value in ("1", "true", "yes", "on"):
@@ -294,15 +316,43 @@ def _path_from_rule(rule: str) -> str:
     return safe_path(match.group(1)) or "/" if match else "/"
 
 
-def _parse_labels(labels: dict[str, str]) -> tuple[list[ProxyRoute], list[str], bool | None, str]:
-    """Proxy routes, explicit URLs, the ui override and the category from a filtered label set.
+class ServiceLabels(NamedTuple):
+    """What the filtered labels say about one container (see ``_parse_labels``)."""
 
-    Only the keys captured by SCAN_SCRIPT reach here, and middleware/auth/header labels are ignored
-    even if they share a prefix. Values are capped again here."""
+    proxy: list[ProxyRoute]
+    urls: list[str]
+    ui: bool | None
+    category: str
+    description: str
+    display_name: str
+    icon: str
+
+
+def _label_icon(value: str) -> str:
+    """A dashboard-icons slug from a homepage.icon / dashgate.icon value, or ''."""
+    name = value.strip().lower()
+    for ext in (".png", ".webp", ".svg", ".ico"):
+        if name.endswith(ext):
+            name = name[: -len(ext)]
+            break
+    return name if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,63}", name) else ""
+
+
+def _parse_labels(labels: dict[str, str]) -> ServiceLabels:
+    """Proxy routes, explicit URLs, the ui override and the card fields from a filtered label set.
+
+    fleetdeck.* labels win; homepage.* (and dashgate.*) labels are read too so a container already set
+    up for those dashboards keeps its URL, name, group, icon and description. Only the keys captured by
+    SCAN_SCRIPT reach here, and middleware/auth/header labels are ignored even if they share a prefix.
+    Values are capped again here."""
     proxy: list[ProxyRoute] = []
-    urls: list[str] = []
+    fleetdeck_urls: list[str] = []
+    extra_urls: list[str] = []  # dashgate.url / homepage.href, behind fleetdeck.url
     ui: bool | None = None
-    category = ""
+    categories: dict[str, str] = {}
+    descriptions: dict[str, str] = {}
+    display_name = ""
+    icon = ""
     traefik: dict[str, dict[str, str]] = {}
     nginx_tls = False
 
@@ -317,15 +367,22 @@ def _parse_labels(labels: dict[str, str]) -> tuple[list[ProxyRoute], list[str], 
         key, value = key[:128], value[:512]
         if key == "fleetdeck.ui":
             ui = _tri_bool(value)
-        elif key == "fleetdeck.category":
+        elif key in ("fleetdeck.category", "dashgate.group", "homepage.group"):
             clean = value.strip()
-            if re.fullmatch(r"[A-Za-z0-9 &_-]{1,40}", clean):
-                category = clean
-        elif key == "fleetdeck.url":
+            if re.fullmatch(r"[A-Za-z0-9 &_/-]{1,40}", clean):
+                categories[key.split(".", 1)[0]] = clean
+        elif key in ("fleetdeck.description", "dashgate.description", "homepage.description"):
+            descriptions[key.split(".", 1)[0]] = " ".join(value.split())[:160]
+        elif key in ("dashgate.name", "homepage.name"):
+            display_name = " ".join(value.split())[:128] or display_name
+        elif key in ("dashgate.icon", "homepage.icon"):
+            icon = _label_icon(value) or icon
+        elif key in ("fleetdeck.url", "dashgate.url", "homepage.href"):
+            bucket = fleetdeck_urls if key == "fleetdeck.url" else extra_urls
             for part in re.split(r"[\s,;]+", value):
                 url = safe_url(part)
-                if url and url not in urls and len(urls) < 5:
-                    urls.append(url)
+                if url and url not in bucket and len(bucket) < 5:
+                    bucket.append(url)
         elif key == "caddy" or re.fullmatch(r"caddy_[0-9]+", key):
             for host in re.split(r"[\s,]+", value):
                 add("caddy", host)
@@ -351,7 +408,19 @@ def _parse_labels(labels: dict[str, str]) -> tuple[list[ProxyRoute], list[str], 
         )
         for host in hosts[:10]:
             add("traefik", host, path, tls)
-    return proxy, urls, ui, category
+    urls: list[str] = []
+    for url in [*fleetdeck_urls, *extra_urls]:
+        if url not in urls and len(urls) < 5:
+            urls.append(url)
+    return ServiceLabels(
+        proxy=proxy,
+        urls=urls,
+        ui=ui,
+        category=categories.get("fleetdeck") or categories.get("dashgate") or categories.get("homepage", ""),
+        description=(descriptions.get("fleetdeck") or descriptions.get("dashgate") or descriptions.get("homepage", "")),
+        display_name=display_name,
+        icon=icon,
+    )
 
 
 def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
@@ -370,6 +439,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
     caddyfile: dict[str, list[str]] = {}
     proxy_files: dict[str, list[str]] = {}
     host_name, host_address = "", ""
+    host_addresses: list[str] = []
     for line in res.stdout.splitlines():
         if line.startswith("__DOCKER__="):
             docker = line.split("=", 1)[1]
@@ -393,6 +463,13 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
                     )
                     if not unusable:
                         host_address = str(address)
+        elif line.startswith("__HA__" + US):
+            parts = line.split(US)
+            for raw in " ".join(parts[1:]).split():
+                if len(host_addresses) >= 20:
+                    break
+                if (host := _scan_host(raw)) and host not in host_addresses:
+                    host_addresses.append(host)
         elif line.startswith("__I__" + US):
             parts = line.split(US)
             if len(parts) in (3, 4, 5):
@@ -431,7 +508,8 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
         elif line.startswith("__PF__" + US):
             parts = line.split(US, 2)
             if len(parts) == 3 and TAG.match(parts[1]) and len(proxy_files.get(parts[1], [])) < MAX_LINES:
-                proxy_files.setdefault(parts[1], []).append(parts[2][: MAX_JSON if parts[1][:2] == "ta" else 600])
+                capped = MAX_CADDY_JSON if parts[1][:2] == "ca" else MAX_JSON if parts[1][:2] == "ta" else 600
+                proxy_files.setdefault(parts[1], []).append(parts[2][:capped])
         elif line.startswith("__C__" + US):
             parts = line.split(US)
             if len(parts) in (9, 11):
@@ -446,7 +524,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
         project, service, wd, files, image, image_id, status, cid = row[:8]
         mode = row[8] if len(row) > 8 else ""
         container_name = (row[9] if len(row) > 9 else "").lstrip("/")[:128]
-        proxy, urls, ui, category = _parse_labels(labels.get(cid, {}))
+        parsed = _parse_labels(labels.get(cid, {}))
         now = local.get(image, "")
         # Same ID (classic store), or the container's ID is one of the tag's own manifests (containerd
         # store). Unknown tag: don't guess. A wrong "up to date" is better than a permanent false alarm.
@@ -468,10 +546,13 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
             ports=ports.get(cid, []),
             exposed_ports=exposed.get(cid, []),
             networks=networks.get(cid, []),
-            proxy=proxy,
-            explicit_urls=urls,
-            ui=ui,
-            category=category,
+            proxy=parsed.proxy,
+            explicit_urls=parsed.urls,
+            ui=parsed.ui,
+            category=parsed.category,
+            description=parsed.description,
+            display_name=parsed.display_name,
+            icon=parsed.icon,
         )
         if not project:
             standalone.append(entry.model_copy(update={"name": fallback}))
@@ -516,6 +597,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
         routes=unique[:400],
         host_name=host_name,
         host_address=host_address,
+        host_addresses=host_addresses[:20],
         checked_at=datetime.now(UTC),
         error=error,
     )

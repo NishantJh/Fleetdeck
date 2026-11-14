@@ -17,10 +17,11 @@ from .models import ProxyRoute
 from .urls import safe_host, safe_path
 
 # Tag prefixes of ``__PF__`` lines: nx = nginx files/containers, npm = Nginx Proxy Manager,
-# tf = Traefik file provider, ta = Traefik API (r = routers, s = services).
-TAG = re.compile(r"^(nx|npm|tf|ta):[A-Za-z0-9_.:-]{1,80}$")
+# tf = Traefik file provider, ta = Traefik API (r = routers, s = services), ca = Caddy admin API.
+TAG = re.compile(r"^(nx|npm|tf|ta|ca):[A-Za-z0-9_.:-]{1,80}$")
 MAX_LINES = 3000
 MAX_JSON = 300_000
+MAX_CADDY_JSON = 1_000_000
 
 PROXY_SCAN_SH = r"""
 px_nginx() {
@@ -46,6 +47,26 @@ px_traefik() {
 px_emit() {
   while IFS= read -r l; do printf '__PF__%s%s%s%s\n' "$US" "$1" "$US" "$l"; done
 }
+# Caddy's running config from its admin API: resolves imports and label-driven routes. Read-only, local.
+# $1 is "host" or a container id. Prints at most 1 MB of JSON on one line, or nothing.
+px_caddy_api() {
+  { if [ "$1" = "host" ]; then
+      if command -v wget >/dev/null 2>&1; then
+        wget -qO- -T 5 http://127.0.0.1:2019/config/ 2>/dev/null
+      elif command -v curl >/dev/null 2>&1; then
+        curl -fsS -m 5 http://127.0.0.1:2019/config/ 2>/dev/null
+      fi
+    else
+      docker exec "$1" sh -c '
+        if command -v wget >/dev/null 2>&1; then
+          wget -qO- -T 5 http://127.0.0.1:2019/config/ 2>/dev/null
+        else
+          curl -fsS -m 5 http://127.0.0.1:2019/config/ 2>/dev/null
+        fi' 2>/dev/null
+    fi
+  } | head -c 1000000 | tr -d '\n\r'
+  echo
+}
 px_tpath() {
   { if [ -d "$2" ]; then
       find "$2" -maxdepth 2 -type f \( -name '*.yml' -o -name '*.yaml' -o -name '*.toml' \) 2>/dev/null | head -n 20
@@ -63,6 +84,8 @@ proxy_scan() {
     head -c 100000 "$f" 2>/dev/null | px_nginx | px_emit "nx:host:$t"
   done
   px_tpath host /etc/traefik
+  # Caddy on the machine itself (its admin API, so imported Caddyfiles count too).
+  px_caddy_api host | px_emit "ca:host"
   command -v docker >/dev/null 2>&1 || return 0
   docker ps -a --format '{{.ID}} {{.Image}}' 2>/dev/null | head -n 200 | while read -r cid image; do
     case "$image" in
@@ -70,8 +93,10 @@ proxy_scan() {
         docker exec "$cid" sh -c 'cat /data/nginx/proxy_host/*.conf 2>/dev/null' 2>/dev/null \
           | head -c 400000 | px_nginx | px_emit "npm:$cid" ;;
       *nginx*)
-        docker exec "$cid" sh -c 'cat /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* 2>/dev/null' 2>/dev/null \
-          | head -c 200000 | px_nginx | px_emit "nx:$cid" ;;
+        docker exec "$cid" sh -c 'cat /etc/nginx/conf.d/*.conf /etc/nginx/sites-enabled/* \
+          /config/nginx/site-confs/*.conf /config/nginx/proxy-confs/*.conf \
+          /config/nginx/proxy_confs/*.conf 2>/dev/null' 2>/dev/null \
+          | head -c 400000 | px_nginx | px_emit "nx:$cid" ;;
       *traefik*)
         for what in routers services; do
           { docker exec "$cid" wget -qO- -T 5 "http://127.0.0.1:8080/api/http/$what" 2>/dev/null \
@@ -328,6 +353,84 @@ def routes_from_lines(groups: dict[str, list[str]]) -> list[ProxyRoute]:
         elif kind == "ta":
             cid, _, what = rest.rpartition(":")
             api.setdefault(cid, {})[what] = "".join(lines)[:MAX_JSON]
+        elif kind == "ca":
+            routes.extend(parse_caddy_config("".join(lines)[:MAX_CADDY_JSON]))
     for parts in api.values():
         routes.extend(parse_traefik_api(parts.get("r", ""), parts.get("s", "")))
     return routes
+
+
+# ---- Caddy (admin API) -------------------------------------------------------------------------------
+
+
+def _caddy_path(value: str) -> str:
+    """A browser path from a Caddy path matcher (`/app/*` -> `/app/`), or '/'."""
+    value = value.strip()
+    if value.endswith("*"):
+        value = value[:-1]
+    if value and not value.startswith("/"):
+        value = "/" + value
+    return safe_path(value) or "/"
+
+
+def _walk_caddy(routes: object, hosts: list[str], path: str, tls: bool, out: list[ProxyRoute], depth: int) -> None:
+    """Collect reverse_proxy handlers from a Caddy JSON route tree, walking into subroutes."""
+    if depth > 20 or len(out) >= 200 or not isinstance(routes, list):
+        return
+    for route in routes[:200]:
+        if not isinstance(route, dict):
+            continue
+        route_hosts, route_path = hosts, path
+        for matcher in route.get("match") or []:
+            if not isinstance(matcher, dict):
+                continue
+            names = matcher.get("host")
+            if isinstance(names, list) and names:
+                route_hosts = [str(name) for name in names if isinstance(name, str)][:10] or route_hosts
+            paths = matcher.get("path")
+            if isinstance(paths, list) and paths and isinstance(paths[0], str):
+                route_path = _caddy_path(paths[0])
+        for handler in route.get("handle") or []:
+            if not isinstance(handler, dict):
+                continue
+            kind = handler.get("handler")
+            if kind == "subroute":
+                _walk_caddy(handler.get("routes") or [], route_hosts, route_path, tls, out, depth + 1)
+            elif kind == "reverse_proxy":
+                for upstream in handler.get("upstreams") or []:
+                    dial = upstream.get("dial") if isinstance(upstream, dict) else None
+                    if not isinstance(dial, str) or not dial or dial.startswith("unix"):
+                        continue
+                    for host in route_hosts[:10]:
+                        if len(out) >= 200:
+                            return
+                        if safe_host(host):
+                            out.append(
+                                ProxyRoute(kind="caddy", host=host, path=route_path, tls=tls, upstream=dial[:256])
+                            )
+
+
+def parse_caddy_config(raw: str) -> list[ProxyRoute]:
+    """Routes from Caddy's running config (the admin API's ``/config/`` JSON).
+
+    Caddy resolves ``import`` and label-driven config there, so routes the main Caddyfile does not
+    contain are still found. ``listen`` decides the scheme; concrete hosts are required."""
+    try:
+        data = json.loads(raw or "{}")
+    except ValueError:
+        return []
+    http = (data.get("apps") or {}).get("http") if isinstance(data, dict) else None
+    servers = http.get("servers") if isinstance(http, dict) else None
+    if not isinstance(servers, dict):
+        return []
+    routes: list[ProxyRoute] = []
+    for server in list(servers.values())[:50]:
+        if not isinstance(server, dict):
+            continue
+        listen = [str(item) for item in server.get("listen") or [] if isinstance(item, (str, int))]
+        # Caddy serves TLS on 443 (and 8443 in custom setups); no listen list means the default :443.
+        tls = any(item.rsplit(":", 1)[-1] in ("443", "8443") for item in listen) if listen else True
+        _walk_caddy(server.get("routes") or [], [], "/", tls, routes, 0)
+        if len(routes) >= 200:
+            break
+    return routes[:200]

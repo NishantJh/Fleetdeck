@@ -466,14 +466,23 @@ enter the update/pull path.
 
 In order:
 
-1. A `fleetdeck.url=https://app.example` label on the service.
+1. `services.urls` in the config, or a `fleetdeck.url=https://app.example` label on the service. This is the
+   homepage-style explicit `href`: it always wins, so no proxy discovery can point the card somewhere else.
 2. A proxy route: Caddy Docker Proxy (`caddy=app.example`), Traefik (`traefik.http.routers.<name>.rule=Host(...)`)
    or nginx-proxy (`VIRTUAL_HOST=app.example`).
-3. Routes read from a **Caddyfile** in a Caddy container (`/etc/caddy/Caddyfile` or `/config/Caddyfile`). Only site
-   lines, braces and `reverse_proxy` directives are read; snippets, imports, wildcards and placeholders are skipped.
+3. Routes read from Caddy's **live admin config** (`http://127.0.0.1:2019/config/`, in the container or on the
+   machine), so imported Caddyfiles (e.g. `import sites/*`) and label-driven config are included. A Caddyfile at
+   `/etc/caddy/Caddyfile` or `/config/Caddyfile` is read as a fallback. Nginx and Nginx Proxy Manager files and
+   Traefik's file provider or API are read the same way: a route belongs to a service when its upstream is that
+   container's IP or name, or one of the machine's own names/addresses with a port the service publishes (or
+   listens on, with host networking). When several proxy URLs fit, a local one (a private address or a
+   `.lan`/`.local`/`.home.arpa` name) is the card's main link and the public one is a chip.
 4. A published host port, using the machine's own address (`services.addresses`, the provider's address, or the
    address the scan discovers from the default route).
 5. A host-network or macvlan/ipvlan address. Bridge and overlay container IPs are **never** used as browser links.
+
+The card shows the description (`fleetdeck.description` or `services.descriptions`) under the name, otherwise the
+address it opens. Groups collapse from their header and stay collapsed across reloads.
 
 A service is considered to have a UI when it has one of those links, is a known app, or publishes a web port.
 Infrastructure images (databases, queues, exporters, Tailscale/Gerbil and proxy containers) are hidden by default.
@@ -486,6 +495,12 @@ Labels you can use:
 - `fleetdeck.url=https://...` — explicit link, highest priority.
 - `fleetdeck.ui=true|false` — force a service into or out of the normal list.
 - `fleetdeck.category=Media` — override its category.
+- `fleetdeck.description=Status pages` — one line under the card's name.
+
+Labels already written for **Homepage** or **DashGate** are read too, so a container set up for either keeps its
+card: `homepage.href` / `dashgate.url` (link), `homepage.name` / `dashgate.name`, `homepage.description` /
+`dashgate.description`, `homepage.group` / `dashgate.group` (category) and `homepage.icon` / `dashgate.icon`
+(dashboard-icons slug). A `fleetdeck.*` label wins when both are set.
 
 ### Configuration
 
@@ -496,6 +511,11 @@ services:
   addresses:                # browser-reachable hostname/IP per target id or machine name
     pi4: pi4.lan
     "proxmox:pve:docker-vm": 192.168.1.20
+  urls:                     # explicit card links (homepage-style href), by card id, container or service name
+    uptime-kuma: https://uptime.internal.lan
+    fleetdeck: [https://fleetdeck.internal.lan, https://fleetdeck.example.com]
+  descriptions:             # one line under the card's name
+    uptime-kuma: Status pages
   links:                    # things Docker discovery cannot see
     - name: Proxmox
       url: https://pve.lan:8006
@@ -504,6 +524,10 @@ services:
       url: https://nas.lan
       category: Storage & backup
 ```
+
+`services.urls` is the deterministic way to point a discovered card at a URL: the first URL becomes the card's
+main link and the rest are chips, ahead of anything the scan found. Keys match the card id
+(`target|stack|service`), the container name or the compose service name, case-insensitively.
 
 `services.addresses` is the reliable way to give a machine a browser-reachable name. The scan also reports the
 machine's default-route address; a provider's SSH/API address is used when set. There is deliberately no fallback to

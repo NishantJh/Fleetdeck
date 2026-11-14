@@ -199,6 +199,11 @@ class StackService(BaseModel):
     ui: bool | None = None
     # fleetdeck.category, when set and valid.
     category: str = Field("", max_length=40)
+    # fleetdeck.description, when set: a one-line description for the card.
+    description: str = Field("", max_length=160)
+    # A name or icon from a label (homepage.name / homepage.icon), when set and valid.
+    display_name: str = Field("", max_length=128)
+    icon: str = Field("", max_length=64)
 
 
 class Stack(BaseModel):
@@ -246,6 +251,9 @@ class StacksResult(BaseModel):
     # they do not fall back to a container-only name.
     host_name: str = Field("", max_length=253)
     host_address: str = Field("", max_length=64)
+    # The machine's other names and addresses (FQDN, every IPv4 interface). Only used to match a proxy's
+    # upstream to this machine (see services._routes_for); never rendered as a link.
+    host_addresses: list[str] = Field(default_factory=list)
     checked_at: datetime
     error: str | None = None
 
@@ -272,6 +280,8 @@ class ServiceEntry(BaseModel):
     image: str = ""
     state: str = ""
     category: str = "Other"
+    # One line under the name (fleetdeck.description or services.descriptions); empty: machine/stack.
+    description: str = ""
     links: list[ServiceLink] = Field(default_factory=list)
     # Looks like something with a web UI (proxy route, explicit URL, known app, or a web port).
     ui: bool = True
