@@ -678,6 +678,7 @@ def create_app(
             raise HTTPException(404, "unknown link")
         del added[link_id]
         jobs.set_hidden_services([f"manual|{link_id}"], False)
+        jobs.set_service_categories([f"manual|{link_id}"], "")
         if store is not None:
             store.delete_service_link(link_id)
         return services_view()
