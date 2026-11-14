@@ -9,6 +9,7 @@ With ``services.icons`` off nothing is downloaded and the tiles keep their colou
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 import time
@@ -37,15 +38,19 @@ class IconCache:
         self._client = client
         self._locks: dict[str, asyncio.Lock] = {}
 
+    def _file(self, slug: str, ext: str) -> Path:
+        # Named by a hash of the slug, never the request text itself, so no request can name another path.
+        return self.folder / f"{hashlib.sha256(slug.encode()).hexdigest()[:32]}.{ext}"
+
     def _cached(self, slug: str) -> tuple[Path, str] | None:
         for ext, media in TYPES.items():
-            path = self.folder / f"{slug}.{ext}"
+            path = self._file(slug, ext)
             if path.is_file():
                 return path, media
         return None
 
     def _missing(self, slug: str) -> bool:
-        marker = self.folder / f"{slug}.missing"
+        marker = self._file(slug, "missing")
         try:
             return time.time() - marker.stat().st_mtime < MISS_TTL
         except OSError:
@@ -79,7 +84,7 @@ class IconCache:
                     return None
                 try:
                     self.folder.mkdir(parents=True, exist_ok=True)
-                    path = self.folder / f"{slug}.{ext}"
+                    path = self._file(slug, ext)
                     tmp = path.with_suffix(".part")
                     tmp.write_bytes(r.content)
                     tmp.replace(path)
@@ -89,7 +94,7 @@ class IconCache:
                 return path, media
             try:
                 self.folder.mkdir(parents=True, exist_ok=True)
-                (self.folder / f"{slug}.missing").touch()
+                (self._file(slug, "missing")).touch()
             except OSError:
                 pass
             return None

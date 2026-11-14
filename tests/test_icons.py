@@ -55,7 +55,7 @@ async def test_png_fallback_and_missing_marker(tmp_path):
     cache = IconCache(tmp_path, client=client({"png/foo.png": (200, PNG)}, calls))
     assert (await cache.get("foo"))[1] == "image/png"
     assert await cache.get("nothing") is None
-    assert (tmp_path / "nothing.missing").exists()
+    assert len(list(tmp_path.glob("*.missing"))) == 1
     before = len(calls)
     assert await cache.get("nothing") is None
     assert len(calls) == before  # remembered, not asked again
@@ -64,7 +64,7 @@ async def test_png_fallback_and_missing_marker(tmp_path):
 async def test_rejects_non_images_and_disabled(tmp_path):
     calls = []
     cache = IconCache(tmp_path, client=client({"svg/bad.svg": (200, b"<html>")}, calls))
-    assert await cache.get("bad") is None and not list(tmp_path.glob("bad.*"))
+    assert await cache.get("bad") is None and not list(tmp_path.iterdir())
     off = IconCache(tmp_path, enabled=False, client=client({"svg/plex.svg": (200, SVG)}, calls))
     before = len(calls)
     assert await off.get("plex") is None and len(calls) == before
@@ -76,7 +76,7 @@ async def test_offline_leaves_no_marker(tmp_path):
 
     cache = IconCache(tmp_path, client=httpx.AsyncClient(transport=httpx.MockTransport(boom)))
     assert await cache.get("plex") is None
-    assert not (tmp_path / "plex.missing").exists()
+    assert not list(tmp_path.glob("*.missing"))
 
 
 def test_icon_route_validates_and_sandboxes(tmp_path):
@@ -87,8 +87,8 @@ def test_icon_route_validates_and_sandboxes(tmp_path):
 
     path = tmp_path / "config.yaml"
     path.write_text("demo: true\nstate_file: state.db\nservices:\n  icons: false\n")
-    (tmp_path / "icons").mkdir()
-    (tmp_path / "icons" / "plex.svg").write_bytes(SVG)
+    IconCache(tmp_path / "icons")._file("plex", "svg").parent.mkdir()
+    IconCache(tmp_path / "icons")._file("plex", "svg").write_bytes(SVG)
     with TestClient(create_app(load_config(str(path)), config_file=str(path))) as c:
         r = c.get("/api/icons/plex")
         assert r.status_code == 200 and r.headers["content-type"] == "image/svg+xml"
