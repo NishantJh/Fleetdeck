@@ -218,5 +218,84 @@ window.FleetdeckSettings = (() => {
     root.replaceChildren(h("h2", {}, sec.title), h("p", { class: "muted" }, sec.intro), ...rows, h("div", { class: "row" }, save, status));
   }
 
-  return { mountServices, mountSecrets, mountSection };
+  const NOTIFY_TYPES = {
+    ntfy: "ntfy", gotify: "Gotify", discord: "Discord", telegram: "Telegram", webhook: "Generic JSON webhook",
+  };
+
+  function targetCard(t, index, api, onRemove) {
+    const state = { ...t, previous_index: index, token: "", url: t.url_set && t.type !== "ntfy" && t.type !== "gotify" ? "" : t.url };
+    const fields = h("div", { class: "form-grid" });
+    const status = h("p", { class: "muted small", role: "status" });
+    const text = (key, label, opts = {}) => {
+      const secretUrl = key === "url" && opts.secret;
+      const input = h("input", { type: opts.secret ? "password" : "text", value: opts.secret ? "" : (state[key] ?? ""), autocomplete: "off", spellcheck: "false",
+        placeholder: opts.secret && state[opts.flag] ? "configured, leave blank to keep" : (opts.placeholder || "") });
+      input.oninput = () => { state[key] = input.value; };
+      return field(label, input, opts.help || (secretUrl ? "Stored encrypted." : undefined));
+    };
+    const type = h("select", {}, Object.entries(NOTIFY_TYPES).map(([k, v]) => h("option", { value: k }, v)));
+    type.value = state.type;
+    type.onchange = () => { state.type = type.value; draw(); };
+    const draw = () => {
+      const secretUrl = state.type === "discord" || state.type === "webhook";
+      fields.replaceChildren(
+        field("Service", type),
+        text("name", "Name (optional)", { placeholder: "Phone" }),
+        ...(state.type === "telegram" ? [
+          text("token", "Bot token", { secret: true, flag: "token_set", help: "Stored encrypted." }),
+          text("chat_id", "Chat ID"),
+        ] : secretUrl ? [
+          text("url", state.type === "discord" ? "Webhook address" : "Address that accepts a JSON POST", { secret: true, flag: "url_set" }),
+        ] : [
+          text("url", state.type === "ntfy" ? "Topic address" : "Server address", { placeholder: state.type === "ntfy" ? "https://ntfy.sh/my-topic" : "https://gotify.lan" }),
+          text("token", state.type === "ntfy" ? "Access token (optional)" : "Application token", { secret: true, flag: "token_set", help: "Stored encrypted. Changing the address needs the token again." }),
+        ]),
+      );
+    };
+    draw();
+    const test = async () => {
+      status.textContent = "Sending a test message ...";
+      try {
+        const r = await api("/api/settings/notify/test", { method: "POST", body: JSON.stringify(state) });
+        status.textContent = r.ok ? "Sent. Check your device." : `Failed: ${r.error}`;
+      } catch (e) { status.textContent = `Failed: ${e.message}`; }
+    };
+    const card = h("div", { class: "source-card" }, fields, status,
+      h("div", { class: "row" }, h("button", { type: "button", onclick: test }, "Send test"),
+        h("button", { type: "button", class: "ghost danger-text", onclick: () => onRemove(card) }, "Remove")));
+    card.value = () => state;
+    return card;
+  }
+
+  async function mountNotify(root, api) {
+    const data = await api("/api/settings/notify");
+    const box = h("div", { class: "source-list" });
+    const status = h("span", { class: "muted", "aria-live": "polite" });
+    const cards = [];
+    const add = (t, i) => {
+      const card = targetCard(t, i, api, (c) => { cards.splice(cards.indexOf(c), 1); c.remove(); });
+      cards.push(card);
+      box.append(card);
+    };
+    data.targets.forEach((t, i) => add(t, i));
+    const save = h("button", { class: "primary", type: "button", disabled: !data.writable }, "Save notifications");
+    save.onclick = async () => {
+      status.textContent = "Saving ...";
+      try {
+        await api("/api/settings/notify", { method: "PUT", body: JSON.stringify({ revision: data.revision, targets: cards.map((c) => c.value()) }) });
+        root.replaceChildren();
+        await mountNotify(root, api);
+        root.querySelector("[aria-live]").textContent = "Saved. Applies now.";
+      } catch (e) { status.textContent = e.message; }
+    };
+    root.replaceChildren(
+      h("h2", {}, "Notifications"),
+      h("p", { class: "muted" }, "Where to send a message when a check finds updates, a critical vulnerability appears, or a guarded command runs. Messages only go out when Schedule has a check interval."),
+      box,
+      h("div", { class: "row" }, h("button", { type: "button", onclick: () => add({ type: "ntfy", name: "", url: "", url_set: false, token_set: false, chat_id: "" }, null) }, "Add a target")),
+      h("div", { class: "row" }, save, status),
+    );
+  }
+
+  return { mountServices, mountSecrets, mountSection, mountNotify };
 })();

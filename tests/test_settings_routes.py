@@ -222,3 +222,110 @@ def test_section_stale_revision_conflicts(app_client):
     cur = c.get("/api/settings/updates").json()
     assert c.put("/api/settings/updates", json={**cur, "snapshot_keep": 4}).status_code == 200
     assert c.put("/api/settings/updates", json={**cur, "snapshot_keep": 5}).status_code == 409
+
+
+@pytest.fixture
+def notify_client(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "state_file: state.db\nauth:\n  username: me\n  password_hash: "
+        + hash_password("pw")
+        + "\nnotify:\n  - type: gotify\n    name: Phone\n    url: https://g.lan\n    token: gotify-token-1\n"
+        "  - type: discord\n    url: https://discord.com/api/webhooks/1/secretpart\n"
+    )
+    app = create_app(load_config(str(path)), config_file=str(path))
+    with TestClient(app) as c:
+        c.auth = ("me", "pw")
+        yield c, path, app
+
+
+def test_notify_get_hides_secrets(notify_client):
+    c, _, _ = notify_client
+    r = c.get("/api/settings/notify")
+    t = r.json()["targets"]
+    assert t[0]["token_set"] is True and t[0]["url"] == "https://g.lan"
+    assert t[1]["url"] == "" and t[1]["url_set"] is True
+    assert "gotify-token-1" not in r.text and "secretpart" not in r.text
+
+
+def test_notify_blank_keeps_and_new_goes_to_store(notify_client):
+    c, path, app = notify_client
+    cur = c.get("/api/settings/notify").json()
+    keep = {**cur["targets"][0], "token": None, "previous_index": 0, "name": "Phone 2"}
+    keep_hook = {**cur["targets"][1], "url": "", "previous_index": 1}
+    new = {"type": "telegram", "name": "TG", "token": "123:abc", "chat_id": "42"}
+    r = c.put("/api/settings/notify", json={"revision": cur["revision"], "targets": [keep, keep_hook, new]})
+    assert r.status_code == 200, r.text
+    text = path.read_text()
+    saved = yaml.safe_load(text)["notify"]
+    assert saved[0]["token"] == "gotify-token-1" and saved[0]["name"] == "Phone 2"
+    assert saved[1]["url"].endswith("secretpart")
+    assert saved[2]["token"] == "${SECRET:notify.TG.token}" and "123:abc" not in text
+    # applied live
+    assert [t.type for t in app.state.notifier.targets] == ["gotify", "discord", "telegram"]
+    assert load_config(str(path)).notify[2].token == "123:abc"
+
+
+def test_notify_secret_url_stored_encrypted(notify_client):
+    c, path, _ = notify_client
+    cur = c.get("/api/settings/notify").json()
+    hook = {"type": "webhook", "name": "Hook", "url": "https://hooks.example/abc123"}
+    r = c.put("/api/settings/notify", json={"revision": cur["revision"], "targets": [hook]})
+    assert r.status_code == 200, r.text
+    assert "abc123" not in path.read_text()
+    assert yaml.safe_load(path.read_text())["notify"][0]["url"] == "${SECRET:notify.Hook.url}"
+
+
+def test_notify_changed_address_drops_token_and_remove_all(notify_client):
+    c, path, app = notify_client
+    cur = c.get("/api/settings/notify").json()
+    moved = {**cur["targets"][0], "token": None, "previous_index": 0, "url": "https://other.lan"}
+    r = c.put("/api/settings/notify", json={"revision": cur["revision"], "targets": [moved]})
+    assert r.status_code == 400 and "token" in r.json()["detail"]  # gotify needs its token again
+    r = c.put("/api/settings/notify", json={"revision": cur["revision"], "targets": []})
+    assert r.status_code == 200
+    assert "notify" not in yaml.safe_load(path.read_text())
+    assert app.state.notifier.targets == []
+
+
+def test_notify_stale_revision_and_duplicate_names(notify_client):
+    c, _, _ = notify_client
+    cur = c.get("/api/settings/notify").json()
+    a = {"type": "webhook", "name": "x", "url": "https://h.example/1"}
+    assert c.put("/api/settings/notify", json={"revision": "old", "targets": [a]}).status_code == 409
+    assert c.put("/api/settings/notify", json={"revision": cur["revision"], "targets": [a, a]}).status_code == 400
+
+
+def test_notify_test_sends_without_saving(notify_client, monkeypatch):
+    import httpx
+
+    from fleetdeck.notify import Notifier
+
+    c, path, _ = notify_client
+    before = path.read_text()
+    seen = []
+
+    async def fake(self, t, title, body):
+        seen.append((t.type, t.token))
+        return httpx.Response(200)
+
+    monkeypatch.setattr(Notifier, "_send_one", fake)
+    cur = c.get("/api/settings/notify").json()
+    t = {**cur["targets"][0], "token": None, "previous_index": 0}
+    assert c.post("/api/settings/notify/test", json=t).json() == {"ok": True}
+    assert seen == [("gotify", "gotify-token-1")]  # blank token: the saved one is used
+    assert path.read_text() == before
+
+    async def refused(self, t, title, body):
+        return httpx.Response(401, text="bad gotify-token-1")
+
+    monkeypatch.setattr(Notifier, "_send_one", refused)
+    r = c.post("/api/settings/notify/test", json=t).json()
+    assert r["ok"] is False and "401" in r["error"] and "gotify-token-1" not in r["error"]
+
+    async def boom(self, t, title, body):
+        raise httpx.ConnectError("https://api.telegram.org/bot123:abc/sendMessage")
+
+    monkeypatch.setattr(Notifier, "_send_one", boom)
+    r = c.post("/api/settings/notify/test", json={"type": "telegram", "token": "123:abc", "chat_id": "1"}).json()
+    assert r["ok"] is False and "123:abc" not in r["error"]

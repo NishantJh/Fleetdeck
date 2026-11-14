@@ -452,6 +452,8 @@ async function render() {
         box.hidden = false;
         if (!box.childElementCount) window.FleetdeckSettings.mountSection(box, api, name).catch((e) => notice(e.message));
       }
+      $("#settings-notify").hidden = false;
+      if (!$("#settings-notify").childElementCount) window.FleetdeckSettings.mountNotify($("#settings-notify"), api).catch((e) => notice(e.message));
       if (!$("#settings-services").childElementCount) window.FleetdeckSettings.mountServices($("#settings-services"), api).catch((e) => notice(e.message));
     }
     if (!state.first_run && !configLoaded) await loadConfiguration();
