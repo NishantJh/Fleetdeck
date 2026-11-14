@@ -269,6 +269,18 @@ def test_services_tab_groups_extra_ports_and_remembers_loaded_icons():
     assert "loadedIcons" in js and "data-icon-slug" in js  # no letter -> icon flicker on every poll
 
 
+def test_services_tab_has_homepage_style_cards_and_collapsible_groups():
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent / "fleetdeck" / "static"
+    js = (root / "services.js").read_text(encoding="utf-8")
+    css = (root / "style.css").read_text(encoding="utf-8")
+    assert "svc-state" in js and "serviceState(" in js  # RUNNING / STOPPED tag
+    assert "service.description" in js and "linkHost(" in js  # description, else the address it opens
+    assert "data-toggle-svc-group" in js and "collapsedServiceGroups" in js
+    assert ".svc-group.is-collapsed .svc-grid" in css and ".svc-collapse" in css
+
+
 def test_route_read_on_another_machines_caddy_links_this_machines_service():
     app = service(
         image="unknown/app:1",
@@ -279,6 +291,173 @@ def test_route_read_on_another_machines_caddy_links_this_machines_service():
     targets = {"ssh:pi": target(), "ssh:proxy": target()}
     services = build_services(targets, {"ssh:pi": here, "ssh:proxy": proxy}, ServicesConfig(), set()).services
     assert services[0].links[0].url == "https://app.lan/"
+
+
+def test_route_for_the_machines_ip_is_found_when_links_use_its_name():
+    # services.addresses names the machine "pi.lan" while the proxy forwards to its LAN IP: still this machine.
+    app = service(image="unknown/app:1", ports=[PortMapping(host_port=8080, container_port=80)])
+    result = StacksResult(
+        stacks=[Stack(name="stack", services=[app])],
+        routes=[ProxyRoute(kind="nginx", host="app.lan", tls=True, upstream="192.168.1.20:8080")],
+        host_address="192.168.1.20",
+        checked_at=NOW,
+    )
+    links = build_services({"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set()).services[0].links
+    assert links[0].url == "https://app.lan/" and links[0].kind == "nginx"
+    assert links[1].url == "http://pi.lan:8080"
+
+
+def test_route_for_a_secondary_address_of_the_machine_is_found():
+    # The proxy forwards to an interface the default route does not use; the scan reports every address.
+    app = service(image="unknown/app:1", ports=[PortMapping(host_port=8080, container_port=80)])
+    result = StacksResult(
+        stacks=[Stack(name="stack", services=[app])],
+        routes=[ProxyRoute(kind="nginx", host="app.lan", tls=True, upstream="10.0.0.4:8080")],
+        host_address="192.168.1.20",
+        host_addresses=["pi.lan", "192.168.1.20", "10.0.0.4"],
+        checked_at=NOW,
+    )
+    links = build_services({"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set()).services[0].links
+    assert links[0].url == "https://app.lan/"
+
+
+def test_route_for_a_host_network_service_matches_its_container_port():
+    # A host-network container publishes no ports; the proxy forwards to <machine>:<the port it listens on>.
+    app = service(image="unknown/app:1", network_mode="host", exposed_ports=[8096])
+    result = StacksResult(
+        stacks=[Stack(name="stack", services=[app])],
+        routes=[ProxyRoute(kind="traefik", host="app.lan", tls=True, upstream="192.168.1.20:8096")],
+        host_address="192.168.1.20",
+        checked_at=NOW,
+    )
+    links = build_services({"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set()).services[0].links
+    assert [link.kind for link in links] == ["traefik", "host"]
+
+
+def test_route_for_an_address_a_port_is_published_on_is_found():
+    app = service(image="unknown/app:1", ports=[PortMapping(host_ip="192.168.1.21", host_port=8080, container_port=80)])
+    result = StacksResult(
+        stacks=[Stack(name="stack", services=[app])],
+        routes=[ProxyRoute(kind="nginx", host="app.lan", tls=True, upstream="192.168.1.21:8080")],
+        host_address="192.168.1.20",
+        checked_at=NOW,
+    )
+    links = build_services({"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set()).services[0].links
+    assert links[0].url == "https://app.lan/"
+
+
+def test_route_to_a_container_ip_matches_even_when_it_names_an_undeclared_port():
+    # An image's EXPOSE list is only a hint; a proxy can still reach a port the container listens on.
+    app = service(
+        image="unknown/app:1",
+        networks=[NetworkAddress(name="bridge", ip="172.18.0.5", driver="bridge")],
+        exposed_ports=[80],
+    )
+    result = StacksResult(
+        stacks=[Stack(name="stack", services=[app])],
+        routes=[ProxyRoute(host="app.lan", tls=True, upstream="172.18.0.5:3000")],
+        checked_at=NOW,
+    )
+    links = build_services({"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set()).services[0].links
+    assert links[0].url == "https://app.lan/"
+
+
+def test_a_lan_proxy_url_is_the_primary_link_before_a_public_one():
+    links = service_links(
+        service(
+            proxy=[
+                ProxyRoute(kind="traefik", host="app.example.com"),
+                ProxyRoute(kind="traefik", host="app.home.arpa", path="/ui"),
+                ProxyRoute(kind="traefik", host="192.168.1.20"),
+            ]
+        ),
+        "pi.lan",
+    )
+    assert [link.url for link in links] == [
+        "https://app.home.arpa/ui",
+        "https://192.168.1.20/",
+        "https://app.example.com/",
+    ]
+
+
+def test_a_configured_url_wins_over_every_discovered_link():
+    # Like a homepage `href`: services.urls is explicit, so no proxy parsing or guessing can override it.
+    app = service(
+        name="uptime-kuma",
+        container_name="uptime-kuma",
+        image="louislam/uptime-kuma:1",
+        networks=[NetworkAddress(name="bridge", ip="172.18.0.5", driver="bridge")],
+        ports=[PortMapping(host_port=3001, container_port=3001)],
+    )
+    result = StacksResult(
+        stacks=[Stack(name="stack", services=[app])],
+        routes=[ProxyRoute(kind="caddy", host="uptime.lan", tls=True, upstream="172.18.0.5:3001")],
+        checked_at=NOW,
+    )
+    cfg = ServicesConfig(
+        urls={"uptime-kuma": ["https://uptime.internal.lan", "https://uptime.example.com"]},
+        descriptions={"uptime-kuma": "Status pages"},
+    )
+    entry = build_services({"ssh:pi": target()}, {"ssh:pi": result}, cfg, set()).services[0]
+    assert [link.url for link in entry.links] == [
+        "https://uptime.internal.lan",
+        "https://uptime.example.com",
+        "https://uptime.lan/",
+        "http://pi.lan:3001",
+    ]
+    assert entry.links[0].kind == "explicit"
+    assert entry.description == "Status pages"
+
+
+def test_a_configured_url_can_use_the_card_id_or_service_name():
+    app = service(name="app", container_name="web-1", ports=[PortMapping(host_port=8080, container_port=80)])
+    result = StacksResult(stacks=[Stack(name="web", services=[app])], checked_at=NOW)
+    by_id = build_services(
+        {"ssh:pi": target()},
+        {"ssh:pi": result},
+        ServicesConfig(urls={"ssh:pi|web|app": "https://app.internal.lan"}),
+        set(),
+    ).services[0]
+    assert by_id.links[0].url == "https://app.internal.lan"
+    by_service = build_services(
+        {"ssh:pi": target()},
+        {"ssh:pi": result},
+        ServicesConfig(urls={"APP": "https://app.internal.lan"}),
+        set(),
+    ).services[0]
+    assert by_service.links[0].url == "https://app.internal.lan"
+
+
+def test_a_description_label_shows_when_the_config_has_none():
+    app = service(description="Requests and reads", ports=[PortMapping(host_port=8080, container_port=80)])
+    entry = build_services(
+        {"ssh:pi": target()}, {"ssh:pi": stacks(app)}, ServicesConfig(descriptions={"app": "From config"}), set()
+    ).services[0]
+    assert entry.description == "From config"
+    entry = build_services({"ssh:pi": target()}, {"ssh:pi": stacks(app)}, ServicesConfig(), set()).services[0]
+    assert entry.description == "Requests and reads"
+
+
+def test_a_homepage_name_and_icon_are_used_on_the_card():
+    app = service(
+        display_name="Uptime Kuma",
+        icon="uptime-kuma",
+        image="louislam/uptime-kuma:1",
+        ports=[PortMapping(host_port=3001, container_port=3001)],
+    )
+    entry = build_services({"ssh:pi": target()}, {"ssh:pi": stacks(app)}, ServicesConfig(), set()).services[0]
+    assert (entry.name, entry.icon) == ("Uptime Kuma", "uptime-kuma")
+
+
+def test_a_bad_configured_url_is_ignored_and_discovery_still_works():
+    app = service(ports=[PortMapping(host_port=8080, container_port=80)])
+    entry = build_services(
+        {"ssh:pi": target()},
+        {"ssh:pi": stacks(app)},
+        ServicesConfig(urls={"app": "javascript:alert(1)"}),
+        set(),
+    ).services[0]
+    assert [link.kind for link in entry.links] == ["port"]
 
 
 def test_category_override_moves_a_card_and_can_be_reset():

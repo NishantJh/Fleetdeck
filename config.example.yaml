@@ -75,10 +75,13 @@ community_scripts_update: true
 #   ignore_unfixed: true    # leave out vulnerabilities that have no fix yet
 # The Services tab: links to each discovered service's own UI. Read-only; it never changes a machine.
 # Cards come from the last Docker check (Compose services and standalone containers) plus manual links.
-# A proxy label (Caddy Docker Proxy, Traefik, nginx-proxy) or `fleetdeck.url` gives the preferred link;
-# a Caddy container's Caddyfile is read automatically (only site, brace and reverse_proxy lines leave the
-# machine). Otherwise a published host port is used with the machine's address below. Databases and support
-# containers are hidden by default (use "Show support containers" in the tab).
+# `services.urls` (or a `fleetdeck.url` / homepage.href / dashgate.url label) is an explicit link, like a
+# homepage `href`, and wins over everything the scan found. Otherwise a proxy label (Caddy Docker Proxy,
+# Traefik, nginx-proxy) or a route read from Caddy (its live admin config, so imported Caddyfiles and
+# labels count), nginx/Nginx Proxy Manager or Traefik is used; routes are matched by container IP/name or
+# by the machine's address below + a port it publishes. A local proxy URL wins over a public one. Otherwise
+# a published host port is used with the machine's address below. Databases and support containers are
+# hidden by default (use "Show support containers" in the tab).
 # services:
 #   enabled: true
 #   show_stopped: false
@@ -88,6 +91,11 @@ community_scripts_update: true
 #   addresses:                  # browser-reachable hostname/IP per target id or machine name
 #     pi4: pi4.lan
 #     "proxmox:pve:pve": 192.168.1.10
+#   urls:                       # explicit link(s) per card id, container name or compose service name
+#     uptime-kuma: https://uptime.internal.lan
+#     fleetdeck: [https://fleetdeck.internal.lan, https://fleetdeck.example.com]
+#   descriptions:               # one line under the name (a `fleetdeck.description` label works too)
+#     uptime-kuma: Status pages
 #   links:                      # things Docker discovery cannot see (router, NAS, hypervisor)
 #     - name: Proxmox
 #       url: https://pve.lan:8006

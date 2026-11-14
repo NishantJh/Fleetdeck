@@ -11,6 +11,7 @@ import ipaddress
 import re
 from datetime import UTC, datetime
 from hashlib import sha1
+from urllib.parse import urlsplit
 
 from .config import ServicesConfig, StaticServiceLink
 from .icons import icon_slug
@@ -180,20 +181,51 @@ NATIVE_APPS = {
 
 
 def native_entries(
-    targets: dict[str, Target], checks: dict[str, CheckResult], cfg: ServicesConfig, hidden: set[str]
+    targets: dict[str, Target],
+    checks: dict[str, CheckResult],
+    cfg: ServicesConfig,
+    hidden: set[str],
+    stacks: dict[str, StacksResult] | None = None,
 ) -> list[ServiceEntry]:
     """Cards for apps that run directly on a machine (helper-script containers), from the last OS check."""
     out: list[ServiceEntry] = []
+    stacks = stacks or {}
     for target_id, target in targets.items():
         check = checks.get(target_id)
         app = (check.community_script or "").lower() if check else ""
         spec = NATIVE_APPS.get(app) or NATIVE_APPS.get(app.replace("-", "").replace("_", ""))
-        address = _machine_address(target, cfg)
+        result = stacks.get(target_id)
+        addresses = _machine_addresses(
+            target, cfg, result.host_address if result else "", result.host_addresses if result else None
+        )
+        address = addresses[0] if addresses else None
         if not spec or not address:
             continue
         port, scheme, path = spec
-        link = _link(_authority_url(scheme, address, port) + path, "port", f"port {port}")
-        if link is None:
+        keys = (
+            f"{target_id}|app|{app}",
+            app,
+            app.replace("-", "").replace("_", ""),
+            f"{target.name}|{app}",
+        )
+        routes: list[ProxyRoute] = []
+        if result is not None:
+            # A helper-script app listens on the machine itself: match a proxy upstream like host networking.
+            listening = StackService(name=app, image="", status="running", exposed_ports=[port], network_mode="host")
+            other = [route for tid, res in stacks.items() if tid != target_id for route in res.routes]
+            routes = [
+                *_routes_for(listening, result.routes, addresses),
+                *_routes_for(listening, other, addresses, foreign=True),
+            ]
+        links: list[ServiceLink] = []
+        for url in _override_urls(cfg, keys):
+            if (link := _link(url, "explicit", "Configured")) and all(x.url != link.url for x in links):
+                links.append(link)
+        links.extend(_proxy_links(routes, links))
+        if link := _link(_authority_url(scheme, address, port) + path, "port", f"port {port}"):
+            if all(x.url != link.url for x in links):
+                links.append(link)
+        if not links:
             continue
         key = f"{target_id}|app|{app}"[:512]
         out.append(
@@ -206,7 +238,8 @@ def native_entries(
                 icon=icon_slug(name=app),
                 state=target.status[:32],
                 category=_category_for(app) or "Other",
-                links=[link],
+                description=str(_lookup(cfg.descriptions, keys) or "")[:160],
+                links=links[:5],
                 ui=True,
                 hidden=key in hidden,
                 updated_at=check.checked_at if check else None,
@@ -263,22 +296,102 @@ def _authority(host: str, port: int | None = None) -> str:
     return host if port is None else f"{host}:{port}"
 
 
+def _host_key(value: str) -> str:
+    """The host part of a name, ``host:port`` or URL, normalised for comparing with a proxy upstream."""
+    value = value.strip()
+    if not value:
+        return ""
+    bare = value[1:-1] if value.startswith("[") and value.endswith("]") else value
+    try:
+        return str(ipaddress.ip_address(bare))
+    except ValueError:
+        pass
+    try:
+        host = urlsplit(value if "://" in value else f"//{value}").hostname
+    except ValueError:
+        return ""
+    return (host or "").strip().rstrip(".").lower()
+
+
+def _is_local_host(host: str) -> bool:
+    """Whether a link's host is likely reachable on the local network (not a public domain)."""
+    host = host.strip().lower().rstrip(".")
+    if not host:
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return address.is_private or address.is_link_local or address.is_loopback
+    if "." not in host:
+        return True
+    return host.endswith(
+        (".lan", ".local", ".localdomain", ".home.arpa", ".internal", ".intranet", ".home", ".corp", ".lab")
+    )
+
+
+def _is_local_url(url: str) -> bool:
+    try:
+        host = urlsplit(url).hostname or ""
+    except ValueError:
+        return True
+    return _is_local_host(host)
+
+
+def _proxy_links(routes: list[ProxyRoute], known: list[ServiceLink] | None = None) -> list[ServiceLink]:
+    """Links for a service's proxy routes, local (LAN) URLs before public ones. Best source first."""
+    links: list[ServiceLink] = []
+    for route in routes:
+        scheme = "https" if route.tls else "http"
+        if link := _link(f"{scheme}://{route.host}{route.path}", route.kind, f"via {route.kind.title()}"):
+            if all(x.url != link.url for x in [*(known or []), *links]):
+                links.append(link)
+    links.sort(key=lambda link: 0 if _is_local_url(link.url) else 1)
+    return links
+
+
 def _link(url: str, kind: str, label: str) -> ServiceLink | None:
     url = safe_url(url)
     return ServiceLink(url=url, kind=kind, label=label) if url else None
 
 
-def service_links(service: StackService, address: str | None) -> list[ServiceLink]:
+def _lookup(mapping: dict, keys: tuple[str, ...]):
+    """The first value for a card id, container or service name (case-insensitive on the key)."""
+    for key in keys:
+        if not key:
+            continue
+        if (value := mapping.get(key)) is not None:
+            return value
+        if (value := mapping.get(key.lower())) is not None:
+            return value
+    return None
+
+
+def _service_keys(target: Target, stack: str | None, service: StackService) -> tuple[str, ...]:
+    """The names a services.urls / services.descriptions entry may use for this card."""
+    return (
+        f"{target.id}|{stack or 'standalone'}|{service.name}",
+        service.container_name,
+        service.name,
+        f"{target.name}|{service.name}",
+    )
+
+
+def _override_urls(cfg: ServicesConfig, keys: tuple[str, ...]) -> list[str]:
+    return [url for url in _lookup(cfg.urls, keys) or [] if safe_url(url)]
+
+
+def service_links(service: StackService, address: str | None, overrides: list[str] | None = None) -> list[ServiceLink]:
     """Safe links for one service, best source first. Never a bridge/overlay container IP."""
     out: list[ServiceLink] = []
+    for url in overrides or ():
+        if (link := _link(url, "explicit", "Configured")) and all(x.url != link.url for x in out):
+            out.append(link)
     for url in service.explicit_urls:
         if (link := _link(url, "explicit", "Configured")) and all(x.url != link.url for x in out):
             out.append(link)
-    for route in service.proxy:
-        scheme = "https" if route.tls else "http"
-        if link := _link(f"{scheme}://{route.host}{route.path}", route.kind, f"via {route.kind.title()}"):
-            if all(x.url != link.url for x in out):
-                out.append(link)
+    out.extend(_proxy_links(service.proxy, out))
     if address:
         address = safe_host(address) or address
         for port in service.ports:
@@ -329,14 +442,17 @@ def _address_value(value: str | None) -> str | None:
     return str(address)
 
 
-def _machine_address(target: Target, cfg: ServicesConfig, host_address: str = "") -> str | None:
-    for key in (target.id, target.name):
-        if value := cfg.addresses.get(key):
-            if host := _address_value(value):
-                return host
-    if host := _address_value(target.address):
-        return host
-    return _address_value(host_address)
+def _machine_addresses(
+    target: Target, cfg: ServicesConfig, host_address: str = "", host_addresses: list[str] | None = None
+) -> list[str]:
+    """Every name and address this machine answers to, preferred link address first, for matching proxy routes."""
+    out: list[str] = []
+    values = [cfg.addresses.get(key) for key in (target.id, target.name)]
+    values += [target.address, host_address, *(host_addresses or [])]
+    for value in values:
+        if value and (host := _address_value(value)) and host not in out:
+            out.append(host)
+    return out
 
 
 def _entry(
@@ -352,6 +468,7 @@ def _entry(
     if service.status not in ("running", "restarting") and not cfg.show_stopped:
         return None
     ui, category = classify(service)
+    keys = _service_keys(target, stack, service)
     key = f"{target.id}|{stack or 'standalone'}|{service.name}"[:512]
     is_hidden = key in hidden
     if chosen := (categories or {}).get(key):
@@ -360,23 +477,24 @@ def _entry(
         category, ui = chosen, chosen != "Support"
     elif not ui:
         category = service.category or "Support"
-    links = service_links(service, address) if (ui or is_hidden or chosen) else []
+    links = service_links(service, address, _override_urls(cfg, keys)) if (ui or is_hidden or chosen) else []
     return ServiceEntry(
         id=key,
         target_id=target.id,
         machine=target.name,
         stack=stack,
-        name=service.name[:128],
+        name=(service.display_name or service.name)[:128],
         image=service.image[:512],
         state=service.status[:32],
         category=category,
+        description=(str(_lookup(cfg.descriptions, keys) or "") or service.description)[:160],
         links=links,
         ui=ui,
         hidden=is_hidden,
         updated_at=at,
         link_only=target.id.startswith("src:"),
         update=(service.outdated or service.registry == "update") and not target.id.startswith("src:"),
-        icon=icon_slug(service.image, service.name),
+        icon=service.icon or icon_slug(service.image, service.name),
     )
 
 
@@ -397,29 +515,42 @@ def _split_upstream(value: str) -> tuple[str, int] | None:
 def _routes_for(
     service: StackService,
     routes: list[ProxyRoute],
-    address: str | None,
+    addresses: str | list[str] | None,
     *,
     foreign: bool = False,
 ) -> list[ProxyRoute]:
-    """Match Caddy routes to this service by container IP/name or by host port. Read-only.
+    """Match proxy routes to this service by container IP/name or by a machine address and port. Read-only.
 
-    ``foreign`` routes were read on another machine's proxy: only the machine address + published port counts."""
+    ``addresses`` are every name/address the machine answers to (see ``_machine_addresses``), so a proxy
+    that forwards to the machine's IP, its hostname or a secondary interface still matches. ``foreign``
+    routes were read on another machine's proxy: only this machine's address + a port it listens on counts."""
     if not routes:
         return []
-    ips = {network.ip for network in service.networks if network.ip}
+    if isinstance(addresses, str):
+        addresses = [addresses]
+    keys = {key for value in addresses or () if (key := _host_key(value))}
+    if not foreign:
+        keys |= {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
+    ips = {key for network in service.networks if network.ip and (key := _host_key(network.ip))}
     container_ports = {p.container_port for p in service.ports} | set(service.exposed_ports)
     host_ports = {p.host_port for p in service.ports if p.host_port}
-    names = {service.name, service.container_name} - {""}
+    # A port published on one specific interface: the proxy may forward to that address, not the default one.
+    published_on = {key for p in service.ports if p.host_port and (key := _host_key(p.host_ip))}
+    # A host-network container listens on the machine itself, so its container ports are host ports too.
+    listen_ports = host_ports | (container_ports if service.network_mode == "host" else set())
+    names = {name.strip().lower() for name in (service.name, service.container_name) if name}
     out: list[ProxyRoute] = []
     for route in routes:
         upstream = _split_upstream(route.upstream)
         if upstream is None:
             continue
         host, port = upstream
-        by_container = not foreign and (host in ips or host in names)
-        local_names = () if foreign else ("localhost", "127.0.0.1", "host.docker.internal")
-        by_host = address is not None and host in (address, *local_names)
-        if (by_container and (not container_ports or port in container_ports)) or (by_host and port in host_ports):
+        key = _host_key(host)
+        # A route to this container's own IP is for this container, whatever port it names.
+        by_ip = not foreign and key in ips
+        by_name = not foreign and key in names and (not container_ports or port in container_ports)
+        by_host = bool(key) and (key in keys or key in published_on) and port in listen_ports
+        if by_ip or by_name or by_host:
             if not any(r.host == route.host and r.path == route.path for r in [*service.proxy, *out]):
                 out.append(route)
     return out[:10]
@@ -448,20 +579,22 @@ def build_services(
     latest: datetime | None = None
     pooled = [(tid, route) for tid, res in stacks.items() for route in res.routes]
 
-    def routes_of(target_id: str, service: StackService, result: StacksResult, address: str | None):
-        found = _routes_for(service, result.routes, address)
+    def routes_of(target_id: str, service: StackService, result: StacksResult, addresses: list[str]):
+        # Routes read on this machine's own proxy first (local links), then ones read on another machine's proxy.
+        found = _routes_for(service, result.routes, addresses)
         other = [route for tid, route in pooled if tid != target_id]
-        return [*found, *_routes_for(service, other, address, foreign=True)]
+        return [*found, *_routes_for(service, other, addresses, foreign=True)]
 
     for target_id, target in targets.items():
         result = stacks.get(target_id)
         if result is None:
             continue
         latest = result.checked_at if latest is None or result.checked_at > latest else latest
-        address = _machine_address(target, cfg, result.host_address)
+        addresses = _machine_addresses(target, cfg, result.host_address, result.host_addresses)
+        address = addresses[0] if addresses else None
         for stack in result.stacks:
             for service in stack.services:
-                extra = routes_of(target_id, service, result, address)
+                extra = routes_of(target_id, service, result, addresses)
                 if extra:
                     service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
                 if (
@@ -469,14 +602,14 @@ def build_services(
                 ) is not None:
                     entries.append(entry)
         for service in result.standalone:
-            extra = routes_of(target_id, service, result, address)
+            extra = routes_of(target_id, service, result, addresses)
             if extra:
                 service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
             if (
                 entry := _entry(target, None, service, address, cfg, hidden, result.checked_at, categories)
             ) is not None:
                 entries.append(entry)
-    entries.extend(native_entries(targets, checks or {}, cfg, hidden))
+    entries.extend(native_entries(targets, checks or {}, cfg, hidden, stacks))
     manual = [(None, link) for link in cfg.links] + [(lid, link) for lid, link in (added or {}).items()]
     for link_id, link in manual:
         url = safe_url(link.url)

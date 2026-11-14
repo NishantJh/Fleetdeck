@@ -59,12 +59,39 @@ function tileHue(name) {
 }
 
 const ARROW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>';
+const CHEVRON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 
 function isDown(service) {
   return !!service.state && !["running", "restarting"].includes(service.state) && !service.link_only;
 }
 
 const PORT_LINK_KINDS = new Set(["port", "host", "macvlan"]);
+
+// Groups the user collapsed, kept across reloads (homepage-style collapsible sections).
+const COLLAPSED_GROUPS_KEY = "collapsedServiceGroups";
+let collapsedServiceGroups = null;
+function collapsedGroups() {
+  if (collapsedServiceGroups === null) {
+    const saved = remember.get(COLLAPSED_GROUPS_KEY);
+    collapsedServiceGroups = new Set(Array.isArray(saved) ? saved.filter((name) => typeof name === "string") : []);
+  }
+  return collapsedServiceGroups;
+}
+
+function linkHost(url) {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+}
+
+function serviceState(service, down) {
+  if (service.link_only && !service.manual) return ["Listed only", "muted"];
+  if (down) return ["Stopped", "bad"];
+  if (service.update) return ["Update", "acc"];
+  return ["Running", "ok"];
+}
 
 function serviceCard(service) {
   const links = service.links || [];
@@ -74,6 +101,8 @@ function serviceCard(service) {
   const where = [service.machine, port ? `:${port}` : ""].filter(Boolean).join(" ");
   const down = isDown(service);
   const status = service.link_only ? "" : `<span class="svc-status ${down ? "down" : "up"}" title="${esc(service.state || "")}"></span>`;
+  const [stateText, stateClass] = serviceState(service, down);
+  const state = `<span class="svc-state ${stateClass}" title="${esc(service.state || "")}">${stateText}</span>`;
   const badges = [
     service.update ? `<span class="svc-badge update" title="A newer image is available"><span>Update</span></span>` : "",
     service.link_only && !service.manual && service.machine ? `<span class="svc-badge" title="This is a services-only machine: its containers are listed for quick links, but never updated, checked or backed up here.">listed only</span>` : "",
@@ -91,9 +120,12 @@ function serviceCard(service) {
     : "";
   const iconLoaded = !!service.icon && loadedIcons.has(service.icon);
   const icon = `<span class="svc-icon hue-${tileHue(service.name)}${iconLoaded ? " has-img" : ""}" aria-hidden="true">${service.icon ? `<img src="/api/icons/${encodeURIComponent(service.icon)}" alt="" loading="lazy" data-svc-icon data-icon-slug="${esc(service.icon)}">` : ""}<span class="svc-letter">${esc(letter)}</span>${status}</span>`;
-  const inner = `${icon}<span class="svc-text"><span class="svc-name">${esc(service.name)}</span><span class="svc-sub"><span class="svc-where">${esc(where || (service.link_only ? "listed only" : ""))}</span>${badges}</span></span><span class="svc-go">${ARROW}</span>`;
+  // Under the name: a description if there is one, otherwise the address the card actually opens.
+  const subtitle = service.description || (primary ? linkHost(primary.url) : "") || where || (service.link_only ? "listed only" : "");
+  const heading = primary ? `${service.name} — ${primary.url}` : `${service.name}${where ? ` — ${where}` : ""}`;
+  const inner = `${icon}<span class="svc-text"><span class="svc-name">${esc(service.name)}</span><span class="svc-sub"><span class="svc-where">${esc(subtitle)}</span>${badges}</span></span><span class="svc-aside">${state}<span class="svc-go">${ARROW}</span></span>`;
   const main = primary
-    ? `<a class="svc-main" href="${esc(primary.url)}" target="_blank" rel="noopener noreferrer" title="${esc(primary.url)}">${inner}</a>`
+    ? `<a class="svc-main" href="${esc(primary.url)}" target="_blank" rel="noopener noreferrer" title="${esc(heading)}">${inner}</a>`
     : `<div class="svc-main no-link" title="Add a fleetdeck.url label or a services.links entry">${inner}</div>`;
   const current = service.category || "Other";
   const categories = SERVICE_CATEGORY_ORDER.includes(current) ? SERVICE_CATEGORY_ORDER : [...SERVICE_CATEGORY_ORDER, current];
@@ -148,11 +180,13 @@ function renderServices() {
     ? `<div class="service-chips" role="group" aria-label="Groups"><button class="chip-btn" data-service-cat="" aria-pressed="${!state.serviceCat}">All</button>${present.map((name) => `<button class="chip-btn" data-service-cat="${esc(name)}" aria-pressed="${state.serviceCat === name}">${esc(name)}</button>`).join("")}</div>`
     : "";
   const visible = state.serviceCat ? present.filter((name) => name === state.serviceCat) : present;
+  const collapsed = collapsedGroups();
   const sections = visible.map((name) => {
     const items = groups[name];
     const down = items.filter(isDown).length;
-    return `<section class="svc-group">
-      <h2>${categoryIcon(name)}<span>${esc(name)}</span><span class="svc-count">${items.length}</span>${down ? `<span class="svc-count down">${down} down</span>` : ""}</h2>
+    const isCollapsed = collapsed.has(name);
+    return `<section class="svc-group${isCollapsed ? " is-collapsed" : ""}">
+      <h2><button class="svc-collapse" data-toggle-svc-group="${esc(name)}" aria-expanded="${!isCollapsed}" aria-label="${isCollapsed ? "Expand" : "Collapse"} ${esc(name)}" title="${isCollapsed ? "Expand" : "Collapse"} this group">${CHEVRON}</button>${categoryIcon(name)}<span>${esc(name)}</span><span class="svc-count">${items.length}</span>${down ? `<span class="svc-count down">${down} down</span>` : ""}</h2>
       <div class="svc-grid">${items.map(serviceCard).join("")}</div>
     </section>`;
   }).join("");
@@ -277,7 +311,7 @@ document.addEventListener("submit", (event) => {
 });
 
 document.addEventListener("click", (event) => {
-  const act = event.target.closest("[data-add-link],[data-add-link-cancel],[data-remove-link],[data-scan-sources],[data-toggle-dense],[data-service-cat]");
+  const act = event.target.closest("[data-add-link],[data-add-link-cancel],[data-remove-link],[data-scan-sources],[data-toggle-dense],[data-service-cat],[data-toggle-svc-group]");
   if (act) {
     const d = act.dataset;
     if (d.addLink !== undefined || d.addLinkCancel !== undefined) {
@@ -296,6 +330,13 @@ document.addEventListener("click", (event) => {
     }
     if (d.serviceCat !== undefined) {
       state.serviceCat = d.serviceCat;
+      return renderServices();
+    }
+    if (d.toggleSvcGroup !== undefined) {
+      const set = collapsedGroups();
+      if (set.has(d.toggleSvcGroup)) set.delete(d.toggleSvcGroup);
+      else set.add(d.toggleSvcGroup);
+      remember.set(COLLAPSED_GROUPS_KEY, [...set]);
       return renderServices();
     }
   }

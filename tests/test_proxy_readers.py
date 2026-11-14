@@ -1,3 +1,4 @@
+import json
 import subprocess
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
@@ -6,6 +7,7 @@ from fleetdeck.config import ServicesConfig
 from fleetdeck.models import PortMapping, ProxyRoute, Stack, StackService, StacksResult, Target
 from fleetdeck.proxy_readers import (
     PROXY_SCAN_SH,
+    parse_caddy_config,
     parse_nginx,
     parse_traefik_api,
     parse_traefik_file,
@@ -152,6 +154,194 @@ def test_routes_from_lines_groups_tags():
     }
     hosts = {r.host for r in routes_from_lines(groups)}
     assert hosts == {"app.lan", "a.lan"}
+
+
+# Caddy's admin API /config/ JSON, in the shape Caddy returns for a Caddyfile that imports sites/*.caddy
+# and uses handle_path (so the routes are nested in subroutes).
+CADDY_CONFIG = json.dumps(
+    {
+        "apps": {
+            "http": {
+                "servers": {
+                    "srv0": {
+                        "automatic_https": {"disable": True},
+                        "listen": [":443"],
+                        "routes": [
+                            {
+                                "handle": [
+                                    {
+                                        "handler": "subroute",
+                                        "routes": [
+                                            {
+                                                "handle": [
+                                                    {
+                                                        "handler": "reverse_proxy",
+                                                        "upstreams": [{"dial": "fleetdeck:8080"}],
+                                                    }
+                                                ]
+                                            }
+                                        ],
+                                    }
+                                ],
+                                "match": [{"host": ["fleetdeck.internal.lan"]}],
+                                "terminal": True,
+                            },
+                            {
+                                "handle": [
+                                    {
+                                        "handler": "subroute",
+                                        "routes": [
+                                            {
+                                                "handle": [
+                                                    {
+                                                        "handler": "subroute",
+                                                        "routes": [
+                                                            {
+                                                                "handle": [
+                                                                    {"handler": "rewrite", "strip_path_prefix": "/app"}
+                                                                ]
+                                                            },
+                                                            {
+                                                                "handle": [
+                                                                    {
+                                                                        "handler": "reverse_proxy",
+                                                                        "upstreams": [{"dial": "app:3000"}],
+                                                                    }
+                                                                ]
+                                                            },
+                                                        ],
+                                                    }
+                                                ],
+                                                "match": [{"path": ["/app/*"]}],
+                                            }
+                                        ],
+                                    }
+                                ],
+                                "match": [{"host": ["pathapp.internal.lan"]}],
+                                "terminal": True,
+                            },
+                            {
+                                "handle": [
+                                    {
+                                        "handler": "subroute",
+                                        "routes": [
+                                            {
+                                                "handle": [
+                                                    {
+                                                        "handler": "reverse_proxy",
+                                                        "upstreams": [{"dial": "uptime-kuma:3001"}],
+                                                    }
+                                                ]
+                                            }
+                                        ],
+                                    }
+                                ],
+                                "match": [{"host": ["uptime.internal.lan"]}],
+                                "terminal": True,
+                            },
+                        ],
+                    }
+                }
+            }
+        }
+    }
+)
+
+
+def test_parse_caddy_config_reads_hosts_upstreams_and_paths():
+    got = {(r.host, r.path, r.upstream, r.tls) for r in parse_caddy_config(CADDY_CONFIG)}
+    assert got == {
+        ("fleetdeck.internal.lan", "/", "fleetdeck:8080", True),
+        ("pathapp.internal.lan", "/app/", "app:3000", True),
+        ("uptime.internal.lan", "/", "uptime-kuma:3001", True),
+    }
+
+
+def test_parse_caddy_config_uses_plain_http_for_a_port_80_server():
+    raw = json.dumps(
+        {
+            "apps": {
+                "http": {
+                    "servers": {
+                        "s": {
+                            "listen": [":80"],
+                            "routes": [
+                                {
+                                    "match": [{"host": ["app.lan"]}],
+                                    "handle": [
+                                        {
+                                            "handler": "reverse_proxy",
+                                            "upstreams": [{"dial": "172.18.0.5:8000"}],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+    )
+    (route,) = parse_caddy_config(raw)
+    assert (route.host, route.tls, route.upstream) == ("app.lan", False, "172.18.0.5:8000")
+
+
+def test_parse_caddy_config_skips_unusable_input():
+    assert parse_caddy_config("nope") == []
+    hostless = json.dumps(
+        {
+            "apps": {
+                "http": {
+                    "servers": {
+                        "s": {
+                            "listen": [":80"],
+                            "routes": [
+                                {
+                                    "handle": [
+                                        {
+                                            "handler": "reverse_proxy",
+                                            "upstreams": [{"dial": "app:80"}],
+                                        }
+                                    ]
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+    )
+    assert parse_caddy_config(hostless) == []
+    wildcard = json.dumps(
+        {
+            "apps": {
+                "http": {
+                    "servers": {
+                        "s": {
+                            "listen": [":443"],
+                            "routes": [
+                                {
+                                    "match": [{"host": ["*.lan"]}],
+                                    "handle": [
+                                        {
+                                            "handler": "reverse_proxy",
+                                            "upstreams": [{"dial": "app:80"}],
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        }
+    )
+    assert parse_caddy_config(wildcard) == []
+
+
+def test_routes_from_lines_reads_the_caddy_admin_config():
+    hosts = {r.host for r in routes_from_lines({"ca:host": [CADDY_CONFIG]})}
+    assert hosts == {"fleetdeck.internal.lan", "pathapp.internal.lan", "uptime.internal.lan"}
 
 
 def test_shell_filters_keep_routes_and_drop_secrets(tmp_path):

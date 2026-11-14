@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from fleetdeck.app import create_app
 from fleetdeck.config import AppConfig, ServicesConfig, ServiceSource, SSHConfig
-from fleetdeck.models import CheckResult, Target
+from fleetdeck.models import CheckResult, ProxyRoute, StacksResult, Target
 from fleetdeck.service_sources import SSH_SCRIPT, SourceCache, parse_api, parse_inspect, source_target
 from fleetdeck.services import build_services, native_entries
 
@@ -111,6 +111,26 @@ def test_native_helper_script_apps():
     (entry,) = native_entries({target.id: target}, {target.id: check}, ServicesConfig(), set())
     assert entry.links[0].url == "http://plex.lan:32400/web"
     assert native_entries({target.id: target}, {}, ServicesConfig(), set()) == []
+
+
+def test_helper_script_app_uses_a_proxy_route_when_one_is_read():
+    target = Target(id="pve:plex", name="plex", platform="proxmox", source="pve", kind="lxc", address="plex.lan")
+    check = CheckResult(target_id="pve:plex", checked_at=NOW, community_script="plex")
+    result = StacksResult(
+        routes=[ProxyRoute(kind="nginx", host="plex.example.com", tls=True, upstream="plex.lan:32400")],
+        checked_at=NOW,
+    )
+    (entry,) = native_entries({target.id: target}, {target.id: check}, ServicesConfig(), set(), {target.id: result})
+    assert [link.url for link in entry.links] == ["https://plex.example.com/", "http://plex.lan:32400/web"]
+
+
+def test_helper_script_app_takes_a_configured_url_and_description():
+    target = Target(id="pve:plex", name="plex", platform="proxmox", source="pve", kind="lxc", address="plex.lan")
+    check = CheckResult(target_id="pve:plex", checked_at=NOW, community_script="plex")
+    cfg = ServicesConfig(urls={"plex": "https://plex.internal.lan"}, descriptions={"plex": "Movies and TV"})
+    (entry,) = native_entries({target.id: target}, {target.id: check}, cfg, set())
+    assert entry.links[0].url == "https://plex.internal.lan"
+    assert entry.description == "Movies and TV"
 
 
 def test_add_and_remove_manual_link(tmp_path):

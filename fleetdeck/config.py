@@ -351,10 +351,47 @@ class ServicesConfig(BaseModel):
     icons: bool = True
     # Browser-reachable address per target id or machine name, used for published-port links.
     addresses: dict[str, str] = Field(default_factory=dict)
+    # Explicit links per discovered service, like a homepage `href`. Keyed by card id, container name or
+    # compose service name; a found URL comes before everything the scan discovered. Wins over addresses.
+    urls: dict[str, list[str]] = Field(default_factory=dict)
+    # A one-line description under the name (same keys as `urls`); empty cards fall back to machine/stack.
+    descriptions: dict[str, str] = Field(default_factory=dict)
     # Manual cards for things Docker discovery cannot see.
     links: list[StaticServiceLink] = Field(default_factory=list, max_length=100)
     # Other machines (a NAS) whose containers are listed here only. Never added for updates or monitoring.
     sources: list[ServiceSource] = Field(default_factory=list, max_length=20)
+
+    @field_validator("urls", mode="before")
+    @classmethod
+    def _urls_one_or_many(cls, value: object) -> object:
+        """Accept `name: https://...` as well as `name: [https://..., https://...]`."""
+        if not isinstance(value, dict):
+            return value
+        if len(value) > 200:
+            raise ValueError("services.urls has too many entries (at most 200)")
+        out: dict[str, list[str]] = {}
+        for key, urls in value.items():
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9 ._|:/-]{1,160}", key):
+                raise ValueError(f"services.urls key {key!r} is not a name, container or card id")
+            items = [urls] if isinstance(urls, str) else urls
+            if not isinstance(items, list) or not items or len(items) > 5:
+                raise ValueError(f"services.urls[{key!r}] must be a URL or 1-5 URLs")
+            if not all(isinstance(item, str) and len(item) <= 2048 for item in items):
+                raise ValueError(f"services.urls[{key!r}] must be http(s) URLs")
+            out[key.lower()] = items
+        return out
+
+    @field_validator("descriptions")
+    @classmethod
+    def _descriptions(cls, value: dict[str, str]) -> dict[str, str]:
+        if len(value) > 200:
+            raise ValueError("services.descriptions has too many entries (at most 200)")
+        out: dict[str, str] = {}
+        for key, text in value.items():
+            clean = " ".join(str(text).split())
+            if key and clean:
+                out[key.lower()[:160]] = clean[:160]
+        return out
 
 
 class NotifyConfig(BaseModel):
