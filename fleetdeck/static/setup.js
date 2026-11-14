@@ -452,6 +452,11 @@ async function render() {
         box.hidden = false;
         if (!box.childElementCount) window.FleetdeckSettings.mountSection(box, api, name).catch((e) => notice(e.message));
       }
+      for (const name of ["console", "network"]) {
+        const box = $(`#settings-${name}`);
+        box.hidden = false;
+        if (!box.childElementCount) window.FleetdeckSettings.mountGuarded(box, api, name).catch((e) => notice(e.message));
+      }
       $("#settings-notify").hidden = false;
       if (!$("#settings-notify").childElementCount) window.FleetdeckSettings.mountNotify($("#settings-notify"), api).catch((e) => notice(e.message));
       if (!$("#settings-services").childElementCount) window.FleetdeckSettings.mountServices($("#settings-services"), api).catch((e) => notice(e.message));

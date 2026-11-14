@@ -300,5 +300,91 @@ window.FleetdeckSettings = (() => {
     );
   }
 
-  return { mountServices, mountSecrets, mountSection, mountNotify };
+  // Console and network: they decide who can reach the dashboard and run commands, so saving asks for the password
+  // again, and anything that could lock you out is shown first and saved only after you confirm.
+  const GUARDED = {
+    console: {
+      title: "Run command and terminal",
+      intro: "Run commands and open a terminal on a machine from the dashboard (docs/CONSOLE.md). Off by default. Every use is logged and needs the password again.",
+      fields: [
+        { key: "enabled", type: "bool", label: "Switch the console on", help: "Needs the dashboard login." },
+        { key: "terminal", type: "bool", label: "Allow the interactive terminal", help: "Off keeps only Run command." },
+        { key: "allow_from", type: "list", label: "Networks allowed to use it", rows: 5, help: "One per line, such as 192.168.0.0/16. Loopback, private networks and Tailscale-style 100.64.0.0/10 by default." },
+        { key: "allow_plain_http", type: "bool", label: "Allow over plain http:// from those networks", help: "Passwords and commands travel unencrypted. Prefer https (see the README for Caddy)." },
+        { key: "unlock_minutes", type: "number", label: "Stay unlocked for (minutes)", min: 1, max: 60 },
+        { key: "keep_days", type: "number", label: "Keep the audit log for (days)", min: 1, max: 3650 },
+        { key: "notify", type: "bool", label: "Send a notification when a terminal opens or a guarded command runs" },
+        { key: "exclude", type: "list", label: "Machines that never get it", rows: 3, help: "One machine name or id per line." },
+      ],
+    },
+    network: {
+      title: "Network",
+      intro: "How the dashboard is reached. Mistakes here can lock you out: you are asked to confirm anything risky, and changes apply after a restart.",
+      fields: [
+        { key: "public_url", type: "text", label: "Dashboard address", placeholder: "http://192.168.1.50:8080", help: "Linked from notifications." },
+        { key: "allowed_hosts", type: "list", label: "Allowed host names", rows: 3, help: "One per line, such as 192.168.1.50 or fleetdeck.lan (no port). Any other Host header is refused. Blank allows any." },
+        { key: "trusted_proxies", type: "list", label: "Trusted reverse proxies", rows: 3, help: "One address or range per line, such as 172.18.0.0/16. Needed behind Caddy or nginx so each visitor keeps their own address. Blank trusts only 127.0.0.1." },
+        { key: "known_hosts", type: "text", label: "SSH known_hosts file", help: "Used by SSH connections that don't name their own. Blank: the dashboard's own file." },
+      ],
+    },
+  };
+
+  async function mountGuarded(root, api, name, note) {
+    const spec = GUARDED[name];
+    const data = await api(`/api/settings/${name}`);
+    const state = {};
+    const rows = spec.fields.map((f) => {
+      const val = data[f.key];
+      state[f.key] = val;
+      if (f.type === "bool") {
+        const input = h("input", { type: "checkbox" });
+        input.checked = !!val;
+        input.onchange = () => { state[f.key] = input.checked; };
+        return h("div", {}, check(f.label, input), f.help ? h("span", { class: "muted small" }, f.help) : null);
+      }
+      let input;
+      if (f.type === "list") {
+        input = h("textarea", { rows: f.rows || 3, spellcheck: "false" });
+        input.value = (val || []).join("\n");
+        input.oninput = () => { state[f.key] = input.value.split("\n"); };
+      } else {
+        input = h("input", { type: f.type === "number" ? "number" : "text", value: val ?? "", min: f.min, max: f.max, placeholder: f.placeholder || (f.key === "known_hosts" ? data.default_known_hosts : ""), autocomplete: "off", spellcheck: "false" });
+        input.oninput = () => { state[f.key] = f.type === "number" ? Number(input.value) : input.value; };
+      }
+      return field(f.label, input, f.help);
+    });
+    const password = h("input", { type: "password", autocomplete: "current-password" });
+    const status = h("span", { class: "muted", "aria-live": "polite" });
+    const warnBox = h("div", { class: "warn-box", role: "alert", hidden: true });
+    const save = h("button", { class: "primary", type: "button", disabled: !data.writable }, `Save ${spec.title.toLowerCase()}`);
+    const send = async (confirm) => {
+      status.textContent = "Saving ...";
+      warnBox.hidden = true;
+      try {
+        const r = await api(`/api/settings/${name}`, { method: "PUT", body: JSON.stringify({ revision: data.revision, password: password.value, confirm, ...state }) });
+        if (!r.saved) {
+          warnBox.replaceChildren(h("strong", {}, "This could lock you out or weaken security:"), h("ul", {}, r.warnings.map((w) => h("li", {}, w))),
+            h("button", { type: "button", class: "danger", onclick: () => send(true) }, "Save anyway"));
+          warnBox.hidden = false;
+          status.textContent = "Not saved yet.";
+          return;
+        }
+        const msg = r.restart_needed.length ? `Saved. ${r.restart_needed.join(", ")} apply after a restart.` : "Saved.";
+        root.replaceChildren();
+        await mountGuarded(root, api, name, msg);
+      } catch (e) { status.textContent = e.message; }
+    };
+    save.onclick = () => send(false);
+    const banners = [];
+    if (data.plain_http) banners.push(h("p", { class: "warn-box" }, "This page is on plain http://. Anything typed here, including passwords and commands, can be read on the network. Use https where you can."));
+    if (name === "console" && !data.has_auth) banners.push(h("p", { class: "warn-box" }, "There is no dashboard login yet, so the console stays off."));
+    if (data.restart_pending && (!Array.isArray(data.restart_pending) || data.restart_pending.length)) {
+      banners.push(h("p", { class: "muted" }, `Saved changes wait for a restart${Array.isArray(data.restart_pending) ? `: ${data.restart_pending.join(", ")}` : ""}.`));
+    }
+    status.textContent = note || "";
+    root.replaceChildren(h("h2", {}, spec.title), h("p", { class: "muted" }, spec.intro), ...banners, ...rows,
+      field("Your password (asked again for this section)", password), warnBox, h("div", { class: "row" }, save, status));
+  }
+
+  return { mountServices, mountSecrets, mountSection, mountNotify, mountGuarded };
 })();
