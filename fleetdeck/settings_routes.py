@@ -21,7 +21,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 
 from . import onboarding as ob
-from .config import AppConfig, ServiceSource
+from .config import AppConfig, ScheduleConfig, ServiceSource
 from .secrets_migrate import find_plaintext, migrate
 from .secrets_store import SecretError, SecretStore, secret_name
 from .service_sources import scan_source
@@ -70,6 +70,74 @@ class ServicesIn(BaseModel):
 class SourceTest(BaseModel):
     source: SourceIn
     trust_fingerprint: str | None = None
+
+
+class ScheduleIn(BaseModel):
+    revision: str
+    check_every: str = Field("", max_length=16)  # 30m, 6h, 1d; blank = only when you click Check
+    check_docker: bool = True
+    auto_security_updates: bool = False
+
+
+class SecurityIn(BaseModel):
+    revision: str
+    scan_images: bool = True
+    min_severity: Literal["UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL"] = "HIGH"
+    ignore_unfixed: bool = True
+
+
+class UpdatesIn(BaseModel):
+    revision: str
+    max_parallel: int = Field(4, ge=1, le=64)
+    snapshot_before_upgrade: bool = True
+    snapshot_keep: int = Field(3, ge=1, le=100)
+    community_scripts_update: bool = True
+
+
+def duration_text(seconds: int | None) -> str:
+    """Seconds back to the shortest form the form accepts (21600 -> 6h)."""
+    if not seconds:
+        return ""
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds % size == 0:
+            return f"{seconds // size}{unit}"
+    return f"{seconds}s"
+
+
+def apply_schedule(raw: dict, req: ScheduleIn) -> dict:
+    data = deepcopy(raw)
+    sch = data.get("schedule") or {}
+    every = req.check_every.strip()
+    if every:
+        new = ScheduleConfig(check_every=every).check_every
+        old = ScheduleConfig.model_validate({"check_every": sch.get("check_every")}).check_every
+        if new != old:  # an unchanged value keeps the way it was written
+            sch["check_every"] = every
+    else:
+        sch.pop("check_every", None)
+    sch["check_docker"] = req.check_docker
+    sch["auto_security_updates"] = req.auto_security_updates
+    data["schedule"] = sch
+    return data
+
+
+def apply_security(raw: dict, req: SecurityIn) -> dict:
+    data = deepcopy(raw)
+    sec = data.get("security") or {}
+    sec.update(scan_images=req.scan_images, min_severity=req.min_severity, ignore_unfixed=req.ignore_unfixed)
+    data["security"] = sec
+    return data
+
+
+def apply_updates(raw: dict, req: UpdatesIn) -> dict:
+    data = deepcopy(raw)
+    data.update(
+        max_parallel=req.max_parallel,
+        snapshot_before_upgrade=req.snapshot_before_upgrade,
+        snapshot_keep=req.snapshot_keep,
+        community_scripts_update=req.community_scripts_update,
+    )
+    return data
 
 
 def source_view(s: ServiceSource) -> dict:
@@ -286,6 +354,114 @@ def add_settings_routes(
         if sources is not None and not sources.fake:
             sources.reload(validated.services.sources)
         return {"saved": True}
+
+    def _revision() -> str:
+        return hashlib.sha256(text().encode()).hexdigest()
+
+    async def _save_section(req, apply: Callable[[dict, object], dict], live: Callable[[AppConfig], list[str]]):
+        """Save one plain section: revision check, validate, write, then apply what can change without a restart.
+        Returns the settings that need a restart."""
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        editable()
+        async with lock:
+            if req.revision != _revision():
+                raise HTTPException(409, "The configuration changed; reload the page before saving")
+            try:
+                validated = await asyncio.to_thread(ob.write_raw, paths, apply(ob.read_raw(paths), req))
+            except (ValueError, ValidationError) as e:
+                raise HTTPException(400, _form_message(e)) from None
+        return {"saved": True, "restart_needed": live(validated)}
+
+    @app.get("/api/settings/schedule")
+    async def get_schedule():
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        s = (await asyncio.to_thread(on_disk)).schedule
+        return {
+            "revision": _revision(),
+            "writable": paths.writable(),
+            "check_every": duration_text(s.check_every),
+            "check_docker": s.check_docker,
+            "auto_security_updates": s.auto_security_updates,
+        }
+
+    @app.put("/api/settings/schedule")
+    async def put_schedule(req: ScheduleIn):
+        def live(new: AppConfig) -> list[str]:
+            cfg.schedule = new.schedule
+            sched = getattr(app.state, "scheduler", None)
+            if sched is None:
+                return []
+            sched.check_docker = new.schedule.check_docker
+            sched.auto_security = new.schedule.auto_security_updates
+            if sched.interval != new.schedule.check_every:
+                sched.interval = new.schedule.check_every
+                if sched._task is not None:  # the running loop keeps its old sleep; start it again
+                    sched._task.cancel()
+                    sched._task = None
+                sched.next_run = None
+                if sched.interval:
+                    sched.start()
+            return []
+
+        return await _save_section(req, apply_schedule, live)
+
+    @app.get("/api/settings/security")
+    async def get_security():
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        s = (await asyncio.to_thread(on_disk)).security
+        return {
+            "revision": _revision(),
+            "writable": paths.writable(),
+            "scan_images": s.scan_images,
+            "min_severity": s.min_severity,
+            "ignore_unfixed": s.ignore_unfixed,
+        }
+
+    @app.put("/api/settings/security")
+    async def put_security(req: SecurityIn):
+        def live(new: AppConfig) -> list[str]:
+            was = cfg.security.scan_images
+            cfg.security = new.security
+            vulns = getattr(app.state, "vulns", None)
+            if vulns is not None:  # the scanner reads these on every scan
+                vulns.scanner.min_severity = new.security.min_severity
+                vulns.scanner.ignore_unfixed = new.security.ignore_unfixed
+            return ["Image scanning"] if new.security.scan_images != was else []
+
+        return await _save_section(req, apply_security, live)
+
+    @app.get("/api/settings/updates")
+    async def get_updates():
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        c = await asyncio.to_thread(on_disk)
+        return {
+            "revision": _revision(),
+            "writable": paths.writable(),
+            "max_parallel": c.max_parallel,
+            "snapshot_before_upgrade": c.snapshot_before_upgrade,
+            "snapshot_keep": c.snapshot_keep,
+            "community_scripts_update": c.community_scripts_update,
+        }
+
+    @app.put("/api/settings/updates")
+    async def put_updates(req: UpdatesIn):
+        def live(new: AppConfig) -> list[str]:
+            was = cfg.max_parallel
+            cfg.snapshot_before_upgrade = new.snapshot_before_upgrade
+            cfg.snapshot_keep = new.snapshot_keep
+            cfg.community_scripts_update = new.community_scripts_update
+            cfg.max_parallel = new.max_parallel
+            jobs = getattr(app.state, "jobs", None)
+            if jobs is not None:
+                jobs.snapshot_keep = new.snapshot_keep
+                jobs.community_scripts_update = new.community_scripts_update
+            return ["Parallel jobs"] if new.max_parallel != was else []
+
+        return await _save_section(req, apply_updates, live)
 
     @app.post("/api/settings/services/test")
     async def test_source(req: SourceTest):

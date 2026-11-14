@@ -163,3 +163,62 @@ def test_file_reference(tmp_path):
         }
     )
     assert cfg.dockhand.token == "from-file"
+
+
+def test_schedule_save_applies_live_and_keeps_other_keys(app_client):
+    c, path = app_client
+    cur = c.get("/api/settings/schedule").json()
+    assert cur["check_every"] == "" and cur["check_docker"] is True
+    r = c.put("/api/settings/schedule", json={**cur, "check_every": "6h", "auto_security_updates": True})
+    assert r.status_code == 200 and r.json()["restart_needed"] == []
+    saved = yaml.safe_load(path.read_text())
+    assert saved["schedule"]["check_every"] == "6h" and saved["schedule"]["auto_security_updates"] is True
+    assert saved["max_parallel"] == 2
+    sched = c.app.state.scheduler
+    assert sched.interval == 21600 and sched.auto_security is True and sched._task is not None
+    cur = c.get("/api/settings/schedule").json()
+    assert cur["check_every"] == "6h"
+    c.put("/api/settings/schedule", json={**cur, "check_every": ""})
+    assert sched.interval is None and sched._task is None
+
+
+def test_schedule_rejects_bad_interval(app_client):
+    c, path = app_client
+    cur = c.get("/api/settings/schedule").json()
+    before = path.read_text()
+    assert c.put("/api/settings/schedule", json={**cur, "check_every": "1m"}).status_code == 400
+    assert c.put("/api/settings/schedule", json={**cur, "check_every": "soon"}).status_code == 400
+    assert path.read_text() == before
+
+
+def test_security_save_updates_scanner(app_client):
+    c, path = app_client
+    cur = c.get("/api/settings/security").json()
+    r = c.put("/api/settings/security", json={**cur, "min_severity": "CRITICAL", "ignore_unfixed": False})
+    assert r.status_code == 200 and r.json()["restart_needed"] == []
+    assert yaml.safe_load(path.read_text())["security"]["min_severity"] == "CRITICAL"
+    assert c.app.state.vulns.scanner.min_severity == "CRITICAL"
+    cur = c.get("/api/settings/security").json()
+    r = c.put("/api/settings/security", json={**cur, "scan_images": False})
+    assert r.json()["restart_needed"] == ["Image scanning"]
+    assert c.put("/api/settings/security", json={**cur, "min_severity": "bogus"}).status_code == 422
+
+
+def test_updates_save_and_restart_note(app_client):
+    c, path = app_client
+    cur = c.get("/api/settings/updates").json()
+    assert cur["max_parallel"] == 2
+    r = c.put("/api/settings/updates", json={**cur, "snapshot_keep": 5, "community_scripts_update": False})
+    assert r.status_code == 200 and r.json()["restart_needed"] == []
+    assert c.app.state.jobs.snapshot_keep == 5 and c.app.state.jobs.community_scripts_update is False
+    cur = c.get("/api/settings/updates").json()
+    r = c.put("/api/settings/updates", json={**cur, "max_parallel": 6})
+    assert r.json()["restart_needed"] == ["Parallel jobs"]
+    assert c.put("/api/settings/updates", json={**cur, "snapshot_keep": 0}).status_code == 422
+
+
+def test_section_stale_revision_conflicts(app_client):
+    c, _ = app_client
+    cur = c.get("/api/settings/updates").json()
+    assert c.put("/api/settings/updates", json={**cur, "snapshot_keep": 4}).status_code == 200
+    assert c.put("/api/settings/updates", json={**cur, "snapshot_keep": 5}).status_code == 409

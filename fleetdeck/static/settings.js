@@ -149,5 +149,74 @@ window.FleetdeckSettings = (() => {
     );
   }
 
-  return { mountServices, mountSecrets };
+  // Plain sections (no secrets): one form per section, saved with its revision.
+  const SECTIONS = {
+    schedule: {
+      title: "Schedule",
+      intro: "When the dashboard checks your machines on its own.",
+      fields: [
+        { key: "check_every", type: "text", label: "Check every", placeholder: "6h", help: "For example 30m, 6h or 1d (at least 5 minutes). Blank: only when you click Check." },
+        { key: "check_docker", type: "bool", label: "Include Docker containers in scheduled checks" },
+        { key: "auto_security_updates", type: "bool", label: "Install security updates automatically after each check", help: "apt only, hosts first, never reboots." },
+      ],
+    },
+    security: {
+      title: "Security",
+      intro: "Vulnerability scans of Docker images with Trivy. They run in the dashboard, never on your machines.",
+      fields: [
+        { key: "scan_images", type: "bool", label: "Scan Docker images" },
+        { key: "min_severity", type: "select", label: "Show findings at or above", options: ["UNKNOWN", "LOW", "MEDIUM", "HIGH", "CRITICAL"] },
+        { key: "ignore_unfixed", type: "bool", label: "Ignore vulnerabilities that have no fix yet" },
+      ],
+    },
+    updates: {
+      title: "Updates",
+      intro: "How upgrades run.",
+      fields: [
+        { key: "max_parallel", type: "number", label: "Machines updated at the same time", min: 1, max: 64 },
+        { key: "snapshot_before_upgrade", type: "bool", label: "Snapshot Proxmox and Incus guests before upgrading", help: "The default of the checkbox in the Update dialog." },
+        { key: "snapshot_keep", type: "number", label: "Snapshots to keep per guest", min: 1, max: 100 },
+        { key: "community_scripts_update", type: "bool", label: "Update community-scripts containers with their own update", help: "Runs the latest upstream script as root." },
+      ],
+    },
+  };
+
+  async function mountSection(root, api, name) {
+    const sec = SECTIONS[name];
+    const data = await api(`/api/settings/${name}`);
+    const state = {};
+    const rows = sec.fields.map((f) => {
+      state[f.key] = data[f.key];
+      if (f.type === "bool") {
+        const input = h("input", { type: "checkbox" });
+        input.checked = !!data[f.key];
+        input.onchange = () => { state[f.key] = input.checked; };
+        return h("div", {}, check(f.label, input), f.help ? h("span", { class: "muted small" }, f.help) : null);
+      }
+      let input;
+      if (f.type === "select") {
+        input = h("select", {}, f.options.map((o) => h("option", { value: o }, o)));
+        input.value = data[f.key];
+      } else {
+        input = h("input", { type: f.type === "number" ? "number" : "text", value: data[f.key] ?? "", min: f.min, max: f.max, placeholder: f.placeholder || "", autocomplete: "off", spellcheck: "false" });
+      }
+      input.oninput = input.onchange = () => { state[f.key] = f.type === "number" ? Number(input.value) : input.value; };
+      return field(f.label, input, f.help);
+    });
+    const status = h("span", { class: "muted", "aria-live": "polite" });
+    const save = h("button", { class: "primary", type: "button", disabled: !data.writable }, `Save ${sec.title.toLowerCase()}`);
+    save.onclick = async () => {
+      status.textContent = "Saving ...";
+      try {
+        const r = await api(`/api/settings/${name}`, { method: "PUT", body: JSON.stringify({ revision: data.revision, ...state }) });
+        status.textContent = r.restart_needed.length ? `Saved. ${r.restart_needed.join(", ")} apply after a restart.` : "Saved. Applies now.";
+        const note = status.textContent;
+        await mountSection(root, api, name);
+        root.querySelector("[aria-live]").textContent = note;
+      } catch (e) { status.textContent = e.message; }
+    };
+    root.replaceChildren(h("h2", {}, sec.title), h("p", { class: "muted" }, sec.intro), ...rows, h("div", { class: "row" }, save, status));
+  }
+
+  return { mountServices, mountSecrets, mountSection };
 })();
