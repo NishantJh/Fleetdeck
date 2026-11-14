@@ -259,3 +259,15 @@ def test_services_tab_keeps_form_and_blocks_autofill():
     js = (Path(__file__).parent.parent / "fleetdeck" / "static" / "services.js").read_text()
     assert "data-form-slot" in js  # Add link form survives polling re-renders
     assert 'type="search"' in js and "readonly" in js and 'autocomplete="off"' in js
+
+
+def test_route_read_on_another_machines_caddy_links_this_machines_service():
+    app = service(
+        image="unknown/app:1",
+        ports=[PortMapping(host_ip="0.0.0.0", host_port=8080, container_port=80)],
+    )
+    here = StacksResult(stacks=[Stack(name="stack", services=[app])], checked_at=NOW)
+    proxy = StacksResult(routes=[ProxyRoute(host="app.lan", tls=True, upstream="pi.lan:8080")], checked_at=NOW)
+    targets = {"ssh:pi": target(), "ssh:proxy": target()}
+    services = build_services(targets, {"ssh:pi": here, "ssh:proxy": proxy}, ServicesConfig(), set()).services
+    assert services[0].links[0].url == "https://app.lan/"
