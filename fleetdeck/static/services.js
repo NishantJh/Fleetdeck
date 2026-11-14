@@ -131,7 +131,18 @@ function serviceCard(service) {
       : `<button class="svc-act" data-hide-service="${esc(service.id)}">Hide</button>`;
   // Editing tools only exist in edit mode: a normal card is just the icon, name, description and LED.
   const editing = !!state.serviceEditing;
-  const foot = editing ? `<div class="svc-foot"><span class="svc-actions">${move}${action}</span></div>` : "";
+  const urlOpen = editing && state.serviceUrlFor === service.id;
+  const link = editing
+    ? `<button class="svc-act" data-set-service-url="${esc(service.id)}" title="Set the URL this card opens (stored in Fleetdeck, not on the machine)">Link</button>`
+    : "";
+  const foot = editing
+    ? `<div class="svc-foot"><span class="svc-actions">${move}${link}${action}</span></div>${urlOpen ? `<form class="svc-url-form" data-service-url-form data-service-id="${esc(service.id)}">
+        <input name="url" type="url" maxlength="2048" value="${esc(service.configured_url || "")}" placeholder="${esc(primary?.url || "https://…")}" aria-label="URL for ${esc(service.name)}">
+        <button class="small primary" type="submit">Save</button>
+        ${service.configured_url ? `<button class="small" type="button" data-clear-service-url="${esc(service.id)}">Clear</button>` : ""}
+        <button class="small" type="button" data-cancel-service-url>Cancel</button>
+      </form>` : ""}`
+    : "";
   return `<article class="svc${service.hidden ? " is-hidden-service" : ""}${down ? " is-stopped" : ""}${editing ? " is-editing" : ""}" data-service-id="${esc(service.id)}">
     ${main}${chips || ports ? `<div class="svc-chips">${chips}${ports}</div>` : ""}${foot}
   </article>`;
@@ -299,6 +310,16 @@ document.addEventListener("change", (event) => {
 });
 
 document.addEventListener("submit", (event) => {
+  if (event.target.matches("[data-service-url-form]")) {
+    event.preventDefault();
+    const data = Object.fromEntries(new FormData(event.target));
+    const id = event.target.dataset.serviceId;
+    state.serviceUrlFor = null;
+    return serviceCall("/api/services/url", {
+      method: "POST",
+      body: JSON.stringify({ service_id: id, url: (data.url || "").trim() }),
+    });
+  }
   if (!event.target.matches("[data-add-link-form]")) return;
   event.preventDefault();
   const data = Object.fromEntries(new FormData(event.target));
@@ -307,7 +328,7 @@ document.addEventListener("submit", (event) => {
 });
 
 document.addEventListener("click", (event) => {
-  const act = event.target.closest("[data-add-link],[data-add-link-cancel],[data-remove-link],[data-scan-sources],[data-toggle-dense],[data-service-cat],[data-toggle-svc-group],[data-toggle-service-edit]");
+  const act = event.target.closest("[data-add-link],[data-add-link-cancel],[data-remove-link],[data-scan-sources],[data-toggle-dense],[data-service-cat],[data-toggle-svc-group],[data-toggle-service-edit],[data-set-service-url],[data-clear-service-url],[data-cancel-service-url]");
   if (act) {
     const d = act.dataset;
     if (d.addLink !== undefined || d.addLinkCancel !== undefined) {
@@ -330,7 +351,23 @@ document.addEventListener("click", (event) => {
     }
     if (d.toggleServiceEdit !== undefined) {
       state.serviceEditing = !state.serviceEditing;
+      state.serviceUrlFor = null;
       return renderServices();
+    }
+    if (d.setServiceUrl !== undefined) {
+      state.serviceUrlFor = state.serviceUrlFor === d.setServiceUrl ? null : d.setServiceUrl;
+      return renderServices();
+    }
+    if (d.cancelServiceUrl !== undefined) {
+      state.serviceUrlFor = null;
+      return renderServices();
+    }
+    if (d.clearServiceUrl !== undefined) {
+      state.serviceUrlFor = null;
+      return serviceCall("/api/services/url", {
+        method: "POST",
+        body: JSON.stringify({ service_id: d.clearServiceUrl, url: "" }),
+      });
     }
     if (d.toggleSvcGroup !== undefined) {
       const set = collapsedGroups();

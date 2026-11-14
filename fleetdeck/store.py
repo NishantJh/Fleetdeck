@@ -48,6 +48,7 @@ class Store:
             "CREATE TABLE IF NOT EXISTS service_categories (service_id TEXT PRIMARY KEY, category TEXT NOT NULL)"
         )
         self.db.execute("CREATE TABLE IF NOT EXISTS service_links (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS service_urls (service_id TEXT PRIMARY KEY, url TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS monitor_only (target_id TEXT PRIMARY KEY)")
         self.db.execute("CREATE TABLE IF NOT EXISTS backup_places (target_id TEXT PRIMARY KEY, path TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS docker_settings (target_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
@@ -166,6 +167,16 @@ class Store:
 
     def delete_service_link(self, link_id: str) -> None:
         self.db.execute("DELETE FROM service_links WHERE id = ?", (link_id,))
+
+    def load_service_urls(self) -> dict[str, str]:
+        """URLs set per service in the Services tab's edit mode (service id -> URL)."""
+        return dict(self.db.execute("SELECT service_id, url FROM service_urls"))
+
+    def save_service_url(self, service_id: str, url: str) -> None:
+        self.db.execute("INSERT OR REPLACE INTO service_urls (service_id, url) VALUES (?, ?)", (service_id, url))
+
+    def delete_service_url(self, service_id: str) -> None:
+        self.db.execute("DELETE FROM service_urls WHERE service_id = ?", (service_id,))
 
     def load_monitor_only(self) -> set[str]:
         return {tid for (tid,) in self.db.execute("SELECT target_id FROM monitor_only")}

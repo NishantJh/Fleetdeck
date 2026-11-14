@@ -280,6 +280,7 @@ def test_services_tab_has_homepage_style_cards_and_collapsible_groups():
     assert "svc-badge" not in js  # no "listed only" / duplicate update badges on the card
     assert "svc-go" not in js and "ARROW" not in js  # no dead arrow
     assert "data-toggle-service-edit" in js and "is-editing" in js  # group picker/hide only in edit mode
+    assert "configured_url" in js and "data-service-url-form" in js  # set a card's URL in edit mode
     assert "data-toggle-svc-group" in js and "collapsedServiceGroups" in js
     assert ".svc-group.is-collapsed .svc-grid" in css and ".svc-collapse" in css
 
@@ -476,6 +477,22 @@ def test_an_unraid_webui_link_does_not_beat_a_proxy_url():
         "https://jellyfin.internal.lan/",
         "http://nas.lan:18096/web",
         "http://nas.lan:18096",
+    ]
+
+
+def test_a_url_set_in_edit_mode_wins_over_config_and_discovery():
+    app = service(ports=[PortMapping(host_port=8080, container_port=80)])
+    result = stacks(app)
+    cfg = ServicesConfig(urls={"app": "https://from-config.lan"})
+    card_id = "ssh:pi|stack|app"
+    entry = build_services(
+        {"ssh:pi": target()}, {"ssh:pi": result}, cfg, set(), urls={card_id: "https://from-edit-mode.lan"}
+    ).services[0]
+    assert entry.configured_url == "https://from-edit-mode.lan"
+    assert [link.url for link in entry.links] == [
+        "https://from-edit-mode.lan",
+        "https://from-config.lan",
+        "http://pi.lan:8080",
     ]
 
 
