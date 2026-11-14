@@ -275,8 +275,11 @@ def test_services_tab_has_homepage_style_cards_and_collapsible_groups():
     root = Path(__file__).parent.parent / "fleetdeck" / "static"
     js = (root / "services.js").read_text(encoding="utf-8")
     css = (root / "style.css").read_text(encoding="utf-8")
-    assert "svc-state" in js and "serviceState(" in js  # RUNNING / STOPPED tag
-    assert "service.description" in js and "linkHost(" in js  # description, else the address it opens
+    assert "svc-state" in js and "serviceState(" in js  # STOPPED / UPDATE tag only
+    assert "service.description" in js and "linkHost(" not in js  # no machine:port or link host subtitle
+    assert "svc-badge" not in js  # no "listed only" / duplicate update badges on the card
+    assert "svc-go" not in js and "ARROW" not in js  # no dead arrow
+    assert "data-toggle-service-edit" in js and "is-editing" in js  # group picker/hide only in edit mode
     assert "data-toggle-svc-group" in js and "collapsedServiceGroups" in js
     assert ".svc-group.is-collapsed .svc-grid" in css and ".svc-collapse" in css
 
@@ -458,6 +461,22 @@ def test_a_bad_configured_url_is_ignored_and_discovery_still_works():
         set(),
     ).services[0]
     assert [link.kind for link in entry.links] == ["port"]
+
+
+def test_an_unraid_webui_link_does_not_beat_a_proxy_url():
+    # net.unraid.docker.webui is a direct address, not an explicit choice: the proxy URL stays the main link.
+    app = service(
+        name="jellyfin",
+        webui_url="http://nas.lan:18096/web",
+        ports=[PortMapping(host_port=18096, container_port=8096)],
+        proxy=[ProxyRoute(kind="traefik", host="jellyfin.internal.lan")],
+    )
+    links = service_links(app, "nas.lan")
+    assert [link.url for link in links] == [
+        "https://jellyfin.internal.lan/",
+        "http://nas.lan:18096/web",
+        "http://nas.lan:18096",
+    ]
 
 
 def test_category_override_moves_a_card_and_can_be_reset():

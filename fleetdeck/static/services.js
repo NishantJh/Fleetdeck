@@ -58,11 +58,11 @@ function tileHue(name) {
   return h; // a class, not an inline style: the page's CSP forbids style attributes
 }
 
-const ARROW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17 17 7M8 7h9v9"/></svg>';
 const CHEVRON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>';
 
 function isDown(service) {
-  return !!service.state && !["running", "restarting"].includes(service.state) && !service.link_only;
+  // Services-only machines report a state too, so they get the same LED.
+  return !!service.state && !["running", "restarting"].includes(service.state);
 }
 
 const PORT_LINK_KINDS = new Set(["port", "host", "macvlan"]);
@@ -78,35 +78,26 @@ function collapsedGroups() {
   return collapsedServiceGroups;
 }
 
-function linkHost(url) {
-  try {
-    return new URL(url).host;
-  } catch {
-    return "";
-  }
-}
-
 function serviceState(service, down) {
-  if (service.link_only && !service.manual) return ["Listed only", "muted"];
+  // Only states worth showing: a running service is the normal case and the dot already says so.
   if (down) return ["Stopped", "bad"];
   if (service.update) return ["Update", "acc"];
-  return ["Running", "ok"];
+  return null;
 }
 
 function serviceCard(service) {
   const links = service.links || [];
   const primary = links[0];
   const letter = (service.name || "?").slice(0, 1).toUpperCase();
-  const port = primary ? (primary.url.match(/:(\d+)(?:\/|$)/) || [])[1] : "";
-  const where = [service.machine, port ? `:${port}` : ""].filter(Boolean).join(" ");
   const down = isDown(service);
-  const status = service.link_only ? "" : `<span class="svc-status ${down ? "down" : "up"}" title="${esc(service.state || "")}"></span>`;
-  const [stateText, stateClass] = serviceState(service, down);
-  const state = `<span class="svc-state ${stateClass}" title="${esc(service.state || "")}">${stateText}</span>`;
-  const badges = [
-    service.update ? `<span class="svc-badge update" title="A newer image is available"><span>Update</span></span>` : "",
-    service.link_only && !service.manual && service.machine ? `<span class="svc-badge" title="This is a services-only machine: its containers are listed for quick links, but never updated, checked or backed up here.">listed only</span>` : "",
-  ].join("");
+  // The LED carries the state: green when running, red otherwise. Manual/static cards have no state, so no LED.
+  const status = service.state
+    ? `<span class="svc-status ${down ? "down" : "up"}" title="${esc(service.state)}"></span>`
+    : "";
+  const stateInfo = serviceState(service, down);
+  const state = stateInfo
+    ? `<span class="svc-state ${stateInfo[1]}" title="${esc(service.state || "")}">${stateInfo[0]}</span>`
+    : "";
   const secondary = links.slice(1);
   const extraPorts = secondary.filter((link) => PORT_LINK_KINDS.has(link.kind));
   const chips = secondary
@@ -120,10 +111,11 @@ function serviceCard(service) {
     : "";
   const iconLoaded = !!service.icon && loadedIcons.has(service.icon);
   const icon = `<span class="svc-icon hue-${tileHue(service.name)}${iconLoaded ? " has-img" : ""}" aria-hidden="true">${service.icon ? `<img src="/api/icons/${encodeURIComponent(service.icon)}" alt="" loading="lazy" data-svc-icon data-icon-slug="${esc(service.icon)}">` : ""}<span class="svc-letter">${esc(letter)}</span>${status}</span>`;
-  // Under the name: a description if there is one, otherwise the address the card actually opens.
-  const subtitle = service.description || (primary ? linkHost(primary.url) : "") || where || (service.link_only ? "listed only" : "");
-  const heading = primary ? `${service.name} — ${primary.url}` : `${service.name}${where ? ` — ${where}` : ""}`;
-  const inner = `${icon}<span class="svc-text"><span class="svc-name">${esc(service.name)}</span><span class="svc-sub"><span class="svc-where">${esc(subtitle)}</span>${badges}</span></span><span class="svc-aside">${state}<span class="svc-go">${ARROW}</span></span>`;
+  // A description only when one is configured (fleetdeck.description / services.descriptions); no machine or port.
+  const sub = service.description ? `<span class="svc-sub"><span class="svc-where">${esc(service.description)}</span></span>` : "";
+  const listed = service.link_only && !service.manual ? " · listed only (never updated, checked or backed up here)" : "";
+  const heading = primary ? `${service.name} — ${primary.url}${listed}` : `${service.name}${listed}`;
+  const inner = `${icon}<span class="svc-text"><span class="svc-name">${esc(service.name)}</span>${sub}</span>${state ? `<span class="svc-aside">${state}</span>` : ""}`;
   const main = primary
     ? `<a class="svc-main" href="${esc(primary.url)}" target="_blank" rel="noopener noreferrer" title="${esc(heading)}">${inner}</a>`
     : `<div class="svc-main no-link" title="Add a fleetdeck.url label or a services.links entry">${inner}</div>`;
@@ -137,8 +129,11 @@ function serviceCard(service) {
     : service.hidden
       ? `<button class="svc-act" data-unhide-service="${esc(service.id)}">Unhide</button>`
       : `<button class="svc-act" data-hide-service="${esc(service.id)}">Hide</button>`;
-  return `<article class="svc${service.hidden ? " is-hidden-service" : ""}${down ? " is-stopped" : ""}" data-service-id="${esc(service.id)}">
-    ${main}${chips || ports ? `<div class="svc-chips">${chips}${ports}</div>` : ""}<div class="svc-foot"><span class="svc-actions">${move}${action}</span></div>
+  // Editing tools only exist in edit mode: a normal card is just the icon, name, description and LED.
+  const editing = !!state.serviceEditing;
+  const foot = editing ? `<div class="svc-foot"><span class="svc-actions">${move}${action}</span></div>` : "";
+  return `<article class="svc${service.hidden ? " is-hidden-service" : ""}${down ? " is-stopped" : ""}${editing ? " is-editing" : ""}" data-service-id="${esc(service.id)}">
+    ${main}${chips || ports ? `<div class="svc-chips">${chips}${ports}</div>` : ""}${foot}
   </article>`;
 }
 
@@ -220,6 +215,7 @@ function renderServices() {
     </div>
     <div class="services-toolbar">${chips}<span class="svc-tools">
       ${query ? `<button class="small" data-clear-service-search>Clear search</button>` : ""}
+      <button class="small${state.serviceEditing ? " primary" : ""}" data-toggle-service-edit aria-pressed="${!!state.serviceEditing}" title="Show the group picker and the hide/remove buttons on each card">${state.serviceEditing ? "Done editing" : "Edit"}</button>
       <button class="small" data-add-link title="Add one clickable card for an address, such as a router. Nothing is discovered or monitored.">Add service link</button>
       <a class="button small" href="/settings#services" title="Add another machine, such as a NAS, so its containers are discovered automatically (list only).">Add machine</a>
       ${sources.length ? `<button class="small" data-scan-sources title="Read the container list of ${sources.length} other machine(s). Read-only.">Scan other machines</button>` : ""}
@@ -311,7 +307,7 @@ document.addEventListener("submit", (event) => {
 });
 
 document.addEventListener("click", (event) => {
-  const act = event.target.closest("[data-add-link],[data-add-link-cancel],[data-remove-link],[data-scan-sources],[data-toggle-dense],[data-service-cat],[data-toggle-svc-group]");
+  const act = event.target.closest("[data-add-link],[data-add-link-cancel],[data-remove-link],[data-scan-sources],[data-toggle-dense],[data-service-cat],[data-toggle-svc-group],[data-toggle-service-edit]");
   if (act) {
     const d = act.dataset;
     if (d.addLink !== undefined || d.addLinkCancel !== undefined) {
@@ -330,6 +326,10 @@ document.addEventListener("click", (event) => {
     }
     if (d.serviceCat !== undefined) {
       state.serviceCat = d.serviceCat;
+      return renderServices();
+    }
+    if (d.toggleServiceEdit !== undefined) {
+      state.serviceEditing = !state.serviceEditing;
       return renderServices();
     }
     if (d.toggleSvcGroup !== undefined) {

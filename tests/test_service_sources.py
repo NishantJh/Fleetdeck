@@ -43,7 +43,7 @@ def test_inspect_parses_unraid_webui_label_with_mapped_port():
     result = parse_inspect(inspect_output(JELLY), "nas.lan")
     svc = result.standalone[0]
     assert svc.name == "jellyfin" and svc.status == "running"
-    assert svc.explicit_urls == ["http://nas.lan:18096/web"]
+    assert svc.webui_url == "http://nas.lan:18096/web" and svc.explicit_urls == []
     assert svc.ports[0].host_port == 18096
 
 
@@ -55,7 +55,8 @@ def test_inspect_survives_garbage_and_missing_docker():
 
 def test_unraid_label_with_bad_scheme_is_dropped():
     bad = {**JELLY, "Config": {**JELLY["Config"], "Labels": {"net.unraid.docker.webui": "javascript:alert(1)"}}}
-    assert parse_inspect(inspect_output(bad), "nas").standalone[0].explicit_urls == []
+    stored = parse_inspect(inspect_output(bad), "nas").standalone[0]
+    assert stored.webui_url == "" and stored.explicit_urls == []
 
 
 def test_api_parse():

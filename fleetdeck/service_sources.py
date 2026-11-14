@@ -55,12 +55,11 @@ def _unraid_url(template: str, address: str, ports: list[PortMapping]) -> str | 
 def _finish(item: dict, labels: dict[str, str], ports: list[PortMapping], address: str) -> dict:
     parsed = _parse_labels({k: v for k, v in labels.items() if isinstance(v, str)})
     webui = labels.get("net.unraid.docker.webui")
-    urls = parsed.urls
-    if isinstance(webui, str) and (url := _unraid_url(webui, address, ports)) and url not in urls:
-        urls = [url, *urls]
+    url = _unraid_url(webui, address, ports) if isinstance(webui, str) else None
     return {
         "proxy": parsed.proxy,
-        "explicit_urls": urls[:5],
+        "explicit_urls": parsed.urls[:5],
+        "webui_url": url or "",
         "ui": parsed.ui,
         "category": parsed.category,
         "description": parsed.description,

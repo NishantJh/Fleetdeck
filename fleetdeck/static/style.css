@@ -1,9 +1,9 @@
 /* Design tokens. Light by default, dark via OS preference or the header toggle (data-theme). */
 :root {
-  --bg: #f5f6fa; --panel: #fff; --panel-2: #f8f9fc; --text: #0f172a; --text-2: #334155; --muted: #5b6678;
+  --bg: #f5f6fa; --panel: #fff; --panel-2: #f8f9fc; --text: #0f172a; --text-2: #334155; --muted: #475569;
   --border: #e4e8ef; --border-strong: #d3d9e3;
   --accent: #4f46e5; --accent-hover: #4338ca; --accent-text: #fff; --accent-soft: color-mix(in srgb, var(--accent) 9%, var(--panel));
-  --ok: #047857; --warn: #b45309; --reboot: #8a6500; --bad: #dc2626;
+  --ok: #047857; --warn: #b45309; --reboot: #8a6500; --bad: #b91c1c;
   --chip: #eef1f6; --mono: ui-monospace, SFMono-Regular, "Cascadia Code", Menlo, Consolas, monospace;
   --radius: 12px; --radius-sm: 8px;
   --shadow-xs: 0 1px 2px rgba(15, 23, 42, .06);
@@ -12,7 +12,7 @@
   color-scheme: light;
 }
 :root[data-theme="dark"] {
-  --bg: #0b0f19; --panel: #121826; --panel-2: #0f1420; --text: #e6eaf2; --text-2: #c3cad8; --muted: #9aa5b8;
+  --bg: #0b0f19; --panel: #121826; --panel-2: #0f1420; --text: #e6eaf2; --text-2: #c3cad8; --muted: #b3bfd2;
   --border: #222a3b; --border-strong: #303b52;
   --accent: #8b93fa; --accent-hover: #a5abfb; --accent-text: #0b0f19; --ok: #34d399; --warn: #fbbf24; --reboot: #fde047; --bad: #f87171;
   --chip: #1c2436; --shadow-xs: 0 1px 2px rgba(0, 0, 0, .3); --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 16px rgba(0, 0, 0, .2);
@@ -20,7 +20,7 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #0b0f19; --panel: #121826; --panel-2: #0f1420; --text: #e6eaf2; --text-2: #c3cad8; --muted: #9aa5b8;
+    --bg: #0b0f19; --panel: #121826; --panel-2: #0f1420; --text: #e6eaf2; --text-2: #c3cad8; --muted: #b3bfd2;
     --border: #222a3b; --border-strong: #303b52;
     --accent: #8b93fa; --accent-hover: #a5abfb; --accent-text: #0b0f19; --ok: #34d399; --warn: #fbbf24; --reboot: #fde047; --bad: #f87171;
     --chip: #1c2436; --shadow-xs: 0 1px 2px rgba(0, 0, 0, .3); --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 4px 16px rgba(0, 0, 0, .2);
@@ -1439,10 +1439,10 @@ main:has(> #services:not([hidden])) { max-width: 1560px; }
 .service-add { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 16px; padding: 12px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); }
 .service-add input { flex: 1 1 180px; min-width: 0; }
 .service-source-error { margin: 0 0 12px; color: var(--warn); font-size: 12.5px; }
-.svc-board { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 620px), 1fr)); gap: 18px; align-items: start; }
-.svc-group { background: color-mix(in srgb, var(--panel) 35%, transparent); backdrop-filter: blur(18px) saturate(1.3);
-  border: 1px solid var(--glass-edge); border-radius: 18px; padding: 14px 14px 16px; box-shadow: var(--shadow-xs); }
-.svc-group h2 { display: flex; align-items: center; gap: 8px; margin: 0 2px 12px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text); }
+.svc-board { display: flex; flex-direction: column; gap: 12px; }
+.svc-group { background: color-mix(in srgb, var(--panel) 72%, transparent); backdrop-filter: blur(18px) saturate(1.3);
+  border: 1px solid var(--glass-edge); border-radius: 18px; padding: 12px 14px 14px; box-shadow: var(--shadow-xs); }
+.svc-group h2 { display: flex; align-items: center; gap: 8px; margin: 0 2px 10px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text); }
 .svc-collapse { display: grid; place-items: center; width: 20px; height: 20px; padding: 0; margin-left: -4px; border: 0; background: none;
   color: var(--muted); cursor: pointer; border-radius: 5px; transition: color .12s, background .12s; }
 .svc-collapse:hover, .svc-collapse:focus-visible { color: var(--text); background: var(--chip); }
@@ -1451,21 +1451,21 @@ main:has(> #services:not([hidden])) { max-width: 1560px; }
 .svc-group.is-collapsed .svc-grid { display: none; }
 .svc-count { font-size: 11.5px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--muted); background: var(--chip); border-radius: 999px; padding: 1px 8px; }
 .svc-count.down { color: var(--bad); background: color-mix(in srgb, var(--bad) 12%, transparent); }
-.svc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
-#services { --glass: color-mix(in srgb, var(--panel) 62%, transparent); --glass-hover: color-mix(in srgb, var(--panel) 80%, transparent);
-  --glass-edge: color-mix(in srgb, var(--text) 12%, transparent); --glass-card-edge: color-mix(in srgb, var(--text) 20%, transparent);
+.svc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+#services { --glass: color-mix(in srgb, var(--panel) 92%, transparent); --glass-hover: color-mix(in srgb, var(--panel) 98%, transparent);
+  --glass-edge: color-mix(in srgb, var(--text) 16%, transparent); --glass-card-edge: color-mix(in srgb, var(--text) 26%, transparent);
   --glass-shine: inset 0 1px 0 color-mix(in srgb, #fff 9%, transparent); }
 .svc { position: relative; display: flex; flex-direction: column; background: var(--glass); backdrop-filter: blur(10px) saturate(1.4);
-  border: 1px solid var(--glass-card-edge); border-radius: 14px; box-shadow: var(--glass-shine), var(--shadow-xs);
+  border: 1px solid var(--glass-card-edge); border-radius: 12px; box-shadow: var(--glass-shine), var(--shadow-xs);
   transition: transform .14s, box-shadow .14s, border-color .14s; }
-.svc:hover, .svc:focus-within { transform: translateY(-2px); background: var(--glass-hover); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow: 0 6px 20px color-mix(in srgb, var(--accent) 14%, transparent); }
-.svc-main { display: flex; align-items: flex-start; gap: 12px; padding: 12px; color: inherit; text-decoration: none; min-width: 0; border-radius: 14px; }
+.svc:hover, .svc:focus-within { transform: translateY(-1px); background: var(--glass-hover); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); box-shadow: 0 4px 14px color-mix(in srgb, var(--accent) 12%, transparent); }
+.svc-main { display: flex; align-items: center; gap: 10px; padding: 9px 10px; color: inherit; text-decoration: none; min-width: 0; border-radius: 12px; }
 a.svc-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .svc-main.no-link { opacity: .75; }
-.svc-icon { position: relative; flex: 0 0 42px; width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center;
-  background: linear-gradient(135deg, hsl(var(--h) 65% 52%), hsl(calc(var(--h) + 38) 65% 42%)); --h: 220; color: #fff; font-weight: 700; font-size: 17px; }
+.svc-icon { position: relative; flex: 0 0 36px; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+  background: linear-gradient(135deg, hsl(var(--h) 65% 52%), hsl(calc(var(--h) + 38) 65% 42%)); --h: 220; color: #fff; font-weight: 700; font-size: 15px; }
 .svc-icon.has-img { background: color-mix(in srgb, var(--panel-2) 70%, transparent); box-shadow: inset 0 0 0 1px var(--glass-edge); }
-.svc-icon img { position: absolute; inset: 6px; width: 30px; height: 30px; object-fit: contain; }
+.svc-icon img { position: absolute; inset: 5px; width: 26px; height: 26px; object-fit: contain; }
 .svc-icon.has-img .svc-letter { visibility: hidden; }
 .svc-icon:not(.has-img) img { opacity: 0; }
 .svc-icon.hue-0 { --h: 0; } .svc-icon.hue-1 { --h: 30; } .svc-icon.hue-2 { --h: 60; } .svc-icon.hue-3 { --h: 90; }
@@ -1476,23 +1476,16 @@ a.svc-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2p
 .svc-status.down { color: color-mix(in srgb, var(--bad) 60%, transparent); }
 .svc-status.up { background: var(--ok); }
 .svc-status.down { background: var(--bad); }
-.svc-text { display: flex; flex-direction: column; min-width: 0; flex: 1; padding-top: 1px; }
-.svc-name { font-weight: 650; font-size: 14.5px; color: var(--text); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: capitalize; }
-.svc-sub { display: flex; align-items: center; gap: 5px; font-size: 11.5px; line-height: 1.45; color: var(--text-2); white-space: nowrap; overflow: hidden; }
+.svc-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.svc-name { font-weight: 650; font-size: 13.5px; color: var(--text); line-height: 1.3; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: capitalize; }
+.svc-sub { display: flex; align-items: center; gap: 5px; margin-top: 1px; font-size: 11px; line-height: 1.35; color: var(--text-2); white-space: nowrap; overflow: hidden; }
 .svc-where { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.svc-aside { display: flex; flex-direction: column; align-items: flex-end; justify-content: space-between; gap: 6px; flex: none; align-self: stretch; }
-.svc-state { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 1px 6px; border-radius: 999px;
+.svc-aside { display: flex; align-items: center; gap: 5px; flex: none; }
+.svc-state { font-size: 9px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; padding: 1px 6px; border-radius: 999px;
   background: var(--chip); color: var(--text-2); line-height: 15px; white-space: nowrap; }
-.svc-state.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
 .svc-state.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 13%, transparent); }
 .svc-state.acc { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
-.svc-state.muted { color: var(--muted); }
-.svc-badge { flex: none; font-size: 10.5px; font-weight: 600; padding: 0 6px; border-radius: 999px; background: var(--chip); color: var(--text-2); line-height: 16px; }
-.svc-badge.update { background: color-mix(in srgb, var(--accent) 22%, transparent); color: var(--accent); }
-.svc-go { flex: none; width: 16px; height: 16px; color: var(--muted); opacity: 0; transform: translate(-3px, 3px); transition: opacity .14s, transform .14s; }
-.svc-go svg { width: 16px; height: 16px; display: block; }
-.svc:hover .svc-go { opacity: 1; transform: none; color: var(--accent); }
-.svc-chips { display: flex; gap: 4px; flex-wrap: wrap; padding: 0 10px 8px 66px; margin-top: -4px; }
+.svc-chips { display: flex; gap: 4px; flex-wrap: wrap; padding: 0 9px 7px 55px; margin-top: -2px; }
 .svc-chip { font-size: 11px; text-decoration: none; padding: 0 7px; border-radius: 999px; background: var(--chip); color: var(--text-2); line-height: 18px; }
 .svc-ports { position: relative; }
 .svc-ports > summary { list-style: none; cursor: pointer; user-select: none; white-space: nowrap; flex: none; }
@@ -1503,37 +1496,28 @@ a.svc-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2p
   box-shadow: var(--shadow); }
 .svc-port-list a { padding: 4px 7px; border-radius: 5px; color: var(--text-2); font-size: 11px; text-decoration: none; white-space: nowrap; }
 .svc-port-list a:hover, .svc-port-list a:focus-visible { background: var(--chip); color: var(--text); }
-.svc-foot { display: flex; align-items: center; justify-content: flex-end; min-height: 22px; padding: 0 8px 5px; margin-top: -4px; }
-.svc-actions { display: flex; align-items: center; gap: 3px; margin-left: auto; opacity: 0; transition: opacity .12s; }
-.svc:hover .svc-actions, .svc:focus-within .svc-actions { opacity: 1; }
+.svc-foot { display: flex; align-items: center; justify-content: flex-end; min-height: 15px; padding: 0 6px 3px; margin-top: -2px; }
+.svc-actions { display: flex; align-items: center; gap: 3px; margin-left: auto; flex-wrap: wrap; }
 .svc-act { height: 20px; padding: 0 7px; font-size: 10.5px; border-radius: 6px; }
 .svc-move { height: 20px; max-width: 104px; padding: 0 3px; font-size: 10.5px; border-radius: 6px; border: 1px solid var(--border); background: var(--chip); color: var(--text-2); }
 .svc.is-stopped .svc-icon img, .svc.is-stopped .svc-letter { filter: grayscale(.9); opacity: .6; }
 .svc.is-stopped .svc-name { color: var(--muted); }
+.svc.is-editing { border-color: color-mix(in srgb, var(--accent) 32%, var(--glass-card-edge)); }
 .svc.is-hidden-service { opacity: .6; border-style: dashed; }
-@media (hover: none) {
-  /* No hover on touch: keep the group picker and the hide/remove action reachable. */
-  .svc-actions { flex-wrap: wrap; opacity: 1; }
-}
 @media (max-width: 700px) {
   .svc-hero { padding-top: 4px; }
   .svc-search { height: 46px; }
   .services-toolbar .service-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin: 0 -16px; padding: 0 16px; }
   .chip-btn { white-space: nowrap; }
   .svc-tools { margin-left: 0; }
-  .svc-board { gap: 12px; }
+  .svc-board { gap: 10px; }
   .svc-group { padding: 10px; border-radius: 16px; }
   .svc-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
-  .svc-main { gap: 9px; padding: 8px; }
-  .svc-icon { flex-basis: 34px; width: 34px; height: 34px; border-radius: 10px; }
-  .svc-icon img { inset: 5px; width: 24px; height: 24px; }
+  .svc-main { gap: 8px; padding: 8px; }
+  .svc-icon { flex-basis: 32px; width: 32px; height: 32px; border-radius: 9px; }
+  .svc-icon img { inset: 4px; width: 24px; height: 24px; }
   .svc-state { display: none; } /* the dot on the icon keeps the status visible on narrow cards */
-  .svc-chips { padding-left: 52px; }
-  /* Badges shrink to a dot-sized arrow so the machine name stays readable. */
-  .svc-badge.update { padding: 0; width: 16px; text-align: center; }
-  .svc-badge.update span { display: none; }
-  .svc-badge.update::before { content: "↑"; }
-  .svc-badge { font-size: 10px; padding: 0 5px; }
+  .svc-chips { padding-left: 48px; }
 }
 
 /* Settings forms */
