@@ -537,12 +537,21 @@ def _routes_for(
     if not foreign:
         keys |= {"localhost", "127.0.0.1", "::1", "host.docker.internal"}
     ips = {key for network in service.networks if network.ip and (key := _host_key(network.ip))}
+    # A macvlan/ipvlan IP is a real LAN address, so a proxy on another machine can reach it too.
+    lan_ips = {
+        key
+        for network in service.networks
+        if network.driver in ("macvlan", "ipvlan") and network.ip and (key := _host_key(network.ip))
+    }
     container_ports = {p.container_port for p in service.ports} | set(service.exposed_ports)
     host_ports = {p.host_port for p in service.ports if p.host_port}
     # A port published on one specific interface: the proxy may forward to that address, not the default one.
     published_on = {key for p in service.ports if p.host_port and (key := _host_key(p.host_ip))}
     # A host-network container listens on the machine itself, so its container ports are host ports too.
     listen_ports = host_ports | (container_ports if service.network_mode == "host" else set())
+    # Unraid's webui label names the port even when the container publishes nothing (host networking).
+    if service.webui_url and (webui_port := urlsplit(service.webui_url).port):
+        listen_ports.add(webui_port)
     names = {name.strip().lower() for name in (service.name, service.container_name) if name}
     out: list[ProxyRoute] = []
     for route in routes:
@@ -551,8 +560,9 @@ def _routes_for(
             continue
         host, port = upstream
         key = _host_key(host)
-        # A route to this container's own IP is for this container, whatever port it names.
-        by_ip = not foreign and key in ips
+        # A route to this container's own IP is for this container, whatever port it names. A macvlan/ipvlan IP
+        # also works from another machine's proxy; a bridge/overlay IP only from the machine's own proxy.
+        by_ip = key in lan_ips or (not foreign and key in ips)
         by_name = not foreign and key in names and (not container_ports or port in container_ports)
         by_host = bool(key) and (key in keys or key in published_on) and port in listen_ports
         if by_ip or by_name or by_host:
