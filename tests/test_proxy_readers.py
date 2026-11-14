@@ -1,7 +1,8 @@
 import subprocess
+from datetime import UTC, datetime
 
 from fleetdeck.config import ServicesConfig
-from fleetdeck.models import PortMapping, ProxyRoute, Stack, StacksResult
+from fleetdeck.models import PortMapping, ProxyRoute, Stack, StackService, StacksResult, Target
 from fleetdeck.proxy_readers import (
     PROXY_SCAN_SH,
     parse_nginx,
@@ -9,7 +10,7 @@ from fleetdeck.proxy_readers import (
     parse_traefik_file,
     routes_from_lines,
 )
-from tests.test_services import NOW, build_services, service, target
+from fleetdeck.services import build_services
 
 NGINX = """
 upstream backend {
@@ -50,6 +51,16 @@ server {
   }
 }
 """
+
+NOW = datetime.now(UTC)
+
+
+def service(**changes):
+    return StackService(**{"name": "app", "image": "example/app:latest", "status": "running", **changes})
+
+
+def target(name, address):
+    return Target(id=f"ssh:{name}", name=name, platform="ssh", source="hosts", kind="host", address=address)
 
 
 def lines(text):
