@@ -58,10 +58,12 @@ function renderServices() {
   if (!servicesEnabled()) {
     el.hidden = true;
     return;
-  }  const all = state.services.services || [];
+  }
+  const all = state.services.services || [];
   const shown = all.filter(serviceMatches);
   const hidden = all.filter((service) => service.hidden).length;
   const support = all.filter((service) => !service.ui && !service.hidden).length;
+  const query = (state.serviceQuery || "").trim();
   const groups = {};
   for (const service of shown) (groups[service.category] ||= []).push(service);
   const order = SERVICE_CATEGORY_ORDER.concat(Object.keys(groups).filter((name) => !SERVICE_CATEGORY_ORDER.includes(name)));
@@ -69,10 +71,15 @@ function renderServices() {
       <h2>${esc(name)} <span class="muted">${groups[name].length}</span></h2>
       <div class="service-grid">${groups[name].map(serviceCard).join("")}</div>
     </section>`).join("");
-  const empty = `<div class="empty"><h3>No services yet</h3><p class="muted">Run a container check to discover services, or add <code>services.links</code> in the config.</p></div>`;
+  const empty = query
+    ? `<div class="empty"><h3>No services match “${esc(query)}”</h3><p class="muted">Clear the search to show all services.</p><button class="small" data-clear-service-search>Clear search</button></div>`
+    : support
+      ? `<div class="empty"><h3>No services with a UI found</h3><p class="muted">${support} support container${support === 1 ? " is" : "s are"} hidden. Show them if one has a UI, or add a <code>fleetdeck.url</code> label.</p><button class="small" data-toggle-support-services>Show support containers (${support})</button></div>`
+      : `<div class="empty"><h3>No services yet</h3><p class="muted">Run a container check to discover services, or add <code>services.links</code> in the config.</p></div>`;
   const checked = state.services.checked_at ? `Last scan ${ago(state.services.checked_at)}` : "No Docker scan yet";
   const markup = `<div class="services-toolbar">
       <input id="service-search" type="search" placeholder="Search services" value="${esc(state.serviceQuery || "")}" aria-label="Search services">
+      ${query ? `<button class="small" data-clear-service-search>Clear search</button>` : ""}
       <span class="muted">${esc(checked)}</span>
       <button class="small" data-refresh-services title="Read the last Docker scan again; run Check container updates to refresh it">Reload</button>
       ${hidden ? `<button class="small" data-toggle-hidden-services aria-pressed="${state.showHiddenServices}">${state.showHiddenServices ? "Hide hidden" : `Show hidden (${hidden})`}</button>` : ""}
@@ -103,8 +110,14 @@ document.addEventListener("input", (event) => {
 });
 
 document.addEventListener("click", (event) => {
-  const el = event.target.closest("[data-hide-service],[data-unhide-service],[data-toggle-hidden-services],[data-toggle-support-services],[data-refresh-services]");
+  const el = event.target.closest("[data-hide-service],[data-unhide-service],[data-toggle-hidden-services],[data-toggle-support-services],[data-refresh-services],[data-clear-service-search]");
   if (!el) return;
+  if (el.dataset.clearServiceSearch !== undefined) {
+    state.serviceQuery = "";
+    render();
+    $("#service-search")?.focus();
+    return;
+  }
   if (el.dataset.hideService) return setServiceHidden(el.dataset.hideService, true);
   if (el.dataset.unhideService) return setServiceHidden(el.dataset.unhideService, false);
   if (el.dataset.toggleHiddenServices !== undefined) {
