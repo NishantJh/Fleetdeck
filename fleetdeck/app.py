@@ -272,10 +272,12 @@ def create_app(
     app.state.dockhand = dockhand
     app.state.demo_dockhand = demo_dockhand
     app.state.setup_token = setup_token
+    app.state.store = store
 
     # The login page's cookie; HTTP Basic (scripts, curl -u) keeps working alongside it.
     sessions = Sessions(cfg.auth, session_secret(store)) if cfg.auth is not None else None
     throttle = LoginThrottle()
+    app.state.throttle = throttle
     guard = make_guard(cfg.auth, throttle, setup_token, locked, sessions)
     app.middleware("http")(guard)
     add_login_routes(app, cfg.auth, guard, throttle, sessions, STATIC / "login.html")

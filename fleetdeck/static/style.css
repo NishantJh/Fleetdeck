@@ -1477,3 +1477,6 @@ button.danger-text { color: var(--bad); }
 #settings-services .dlg-field input:not([type="checkbox"]) { width: 100%; }
 #settings-services .check-row { flex-direction: row; justify-content: flex-start; text-align: left; margin: 8px 0; }
 #settings-services > .dlg-field { margin-top: 14px; }
+
+.warn-box { border: 1px solid var(--warn, var(--bad)); border-radius: 8px; padding: 10px 12px; margin: 8px 0; }
+.warn-box ul { margin: 6px 0 10px 18px; padding: 0; }
