@@ -145,6 +145,49 @@ class NetworkIn(GuardedIn):
     known_hosts: str = Field("", max_length=4096)
 
 
+class BackupIn(BaseModel):
+    """Where a machine's backups are (see HostBackupConfig). Nothing in it is a secret."""
+
+    type: Literal["path", "restic", "borg"]
+    path: str = Field("", max_length=1024)
+    repository: str = Field("", max_length=2048)
+    env_file: str = Field("", max_length=1024)
+    max_age_hours: int = Field(48, ge=1, le=100000)
+    include: list[str] = Field(default_factory=list, max_length=50)
+
+
+class TunnelIn(BaseModel):
+    """An existing tunnel's settings. A blank private key keeps the saved one."""
+
+    endpoint: str = Field(min_length=1, max_length=253)
+    port: int = Field(51821, ge=1, le=65535)
+    target_port: int = Field(22, ge=1, le=65535)
+    local_port: int = Field(ge=1024, le=65535)
+    address: str = Field(min_length=1, max_length=64)
+    peer_address: str = Field(min_length=1, max_length=64)
+    peer_public_key: str = Field(min_length=1, max_length=128)
+    private_key: str | None = Field(None, max_length=128, repr=False)
+
+
+class MachineIn(BaseModel):
+    """The per-machine options of one configured machine. Which fields count depends on ``kind``:
+    proxmox and incus take the lists, ``update_commands`` and ``backup_max_age_hours``; a host takes
+    ``monitor_only_host``, ``update_command`` and ``tunnel``; all three take ``backup``."""
+
+    revision: str
+    kind: Literal["proxmox", "incus", "host"]
+    name: str = Field(min_length=1, max_length=80)
+    exclude: list[str] = Field(default_factory=list, max_length=500)
+    protect: list[str] = Field(default_factory=list, max_length=500)  # proxmox only
+    monitor_only: list[str] = Field(default_factory=list, max_length=500)
+    update_commands: dict[str, str] = Field(default_factory=dict, max_length=200)
+    backup_max_age_hours: int = Field(48, ge=0, le=100000)
+    monitor_only_host: bool = False
+    update_command: str = Field("", max_length=1000)
+    backup: BackupIn | None = None
+    tunnel: TunnelIn | None = None
+
+
 SECRET_REF = re.compile(r"\$\{SECRET:([^}]+)\}")
 # Types whose url is itself the credential.
 URL_SECRET = {"discord", "webhook"}
@@ -223,6 +266,105 @@ def apply_console(raw: dict, req: ConsoleIn) -> dict:
         exclude=_clean_list(req.exclude, "Excluded machines"),
     )
     data["console"] = con
+    return data
+
+
+def _vmids(items: list[str], what: str) -> list[int]:
+    out: list[int] = []
+    for item in _clean_list(items, what):
+        if not item.isdigit():
+            raise FormError(f"{what}: {item!r} is not a VMID (a number such as 105)")
+        if int(item) not in out:
+            out.append(int(item))
+    return out
+
+
+def _set(d: dict, key: str, value) -> None:
+    if value in (None, "", [], {}):
+        d.pop(key, None)
+    else:
+        d[key] = value
+
+
+def machine_view(kind: str, m) -> dict:
+    """What the form shows for one machine. Secrets are only reported as set."""
+    ssh = m if kind == "host" else m.ssh
+    out: dict = {"kind": kind, "name": m.name, "can_backup": ssh is not None}
+    out["backup"] = ssh.backup.model_dump(exclude_none=True) if ssh is not None and ssh.backup else None
+    if kind == "host":
+        out.update(monitor_only_host=m.monitor_only, update_command=m.update_command or "", tunnel=None)
+        if m.tunnel:
+            t = m.tunnel.model_dump(exclude={"private_key"})
+            t["private_key_set"] = bool(m.tunnel.private_key)
+            out["tunnel"] = t
+        return out
+    out.update(
+        exclude=[str(x) for x in m.exclude],
+        monitor_only=[str(x) for x in m.monitor_only],
+        update_commands=dict(m.update_commands),
+        backup_max_age_hours=m.backup_max_age_hours,
+    )
+    if kind == "proxmox":
+        out["protect"] = [str(x) for x in m.protect]
+    return out
+
+
+def apply_machine(raw: dict, req: MachineIn, put: Callable[[str, str], str]) -> dict:
+    data = deepcopy(raw)
+    found = ob.find(data, req.name)
+    if found is None or found[0] != req.kind:
+        raise FormError(f"There is no {req.kind} machine called {req.name!r}")
+    entry = found[1]
+    if req.kind == "proxmox":
+        _set(entry, "exclude", _vmids(req.exclude, "Hidden guests"))
+        _set(entry, "protect", _vmids(req.protect, "Protected guests"))
+        _set(entry, "monitor_only", _vmids(req.monitor_only, "Monitor-only guests"))
+    elif req.kind == "incus":
+        _set(entry, "exclude", _clean_list(req.exclude, "Hidden instances"))
+        _set(entry, "monitor_only", _clean_list(req.monitor_only, "Monitor-only instances"))
+    if req.kind != "host":
+        cmds = {k.strip(): v for k, v in req.update_commands.items() if k.strip() and v.strip()}
+        _set(entry, "update_commands", cmds)  # one-line and length are checked by the model
+        entry["backup_max_age_hours"] = req.backup_max_age_hours
+    else:
+        if req.monitor_only_host:
+            entry["monitor_only"] = True
+        else:
+            entry.pop("monitor_only", None)
+        _set(entry, "update_command", req.update_command.strip())
+        if req.tunnel is not None:
+            t = entry.get("tunnel")
+            if not isinstance(t, dict):
+                raise FormError("This machine has no tunnel; add one on the Machines page")
+            t.update(
+                endpoint=req.tunnel.endpoint.strip(),
+                port=req.tunnel.port,
+                target_port=req.tunnel.target_port,
+                local_port=req.tunnel.local_port,
+                address=req.tunnel.address.strip(),
+                peer_address=req.tunnel.peer_address.strip(),
+                peer_public_key=req.tunnel.peer_public_key.strip(),
+            )
+            entry["host"], entry["port"] = "127.0.0.1", req.tunnel.local_port  # SSH goes through the local end
+            if req.tunnel.private_key and req.tunnel.private_key.strip():
+                t["private_key"] = put(
+                    secret_name("hosts", req.name, "tunnel", "private_key"), req.tunnel.private_key.strip()
+                )
+    # The node's own SSH login carries its backup place for proxmox and incus; a host carries it directly.
+    holder = entry if req.kind == "host" else entry.get("ssh")
+    if req.backup is not None:
+        if not isinstance(holder, dict):
+            raise FormError("This machine has no SSH login, so there is nowhere to read its backups from")
+        b = req.backup
+        block = {"type": b.type, "max_age_hours": b.max_age_hours}
+        for key in ("path",) if b.type == "path" else ("repository", "env_file"):
+            if value := getattr(b, key).strip():
+                block[key] = value
+        if inc := _clean_list(b.include, "Extra folders"):
+            block["include"] = inc
+        holder["backup"] = block
+    elif isinstance(holder, dict):
+        holder.pop("backup", None)
     return data
 
 
@@ -721,6 +863,78 @@ def add_settings_routes(
         if notifier is not None:
             notifier.targets = validated.notify
         return {"saved": True}
+
+    def _find_cfg(c: AppConfig, kind: str, name: str):
+        group = {"proxmox": c.proxmox, "incus": c.incus, "host": c.hosts}[kind]
+        return next((m for m in group if m.name == name), None)
+
+    @app.get("/api/settings/machines")
+    async def get_machines():
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        c = await asyncio.to_thread(on_disk)
+        jobs = getattr(app.state, "jobs", None)
+        return {
+            "revision": _revision(),
+            "writable": paths.writable(),
+            "machines": [
+                *(machine_view("proxmox", m) for m in c.proxmox),
+                *(machine_view("incus", m) for m in c.incus),
+                *(machine_view("host", m) for m in c.hosts),
+            ],
+            # Options set on the dashboard itself (kept in the state database) still apply on top of these.
+            "dashboard_set": {
+                "monitor_only": len(getattr(jobs, "monitor_only_ids", ()) or ()),
+                "update_commands": len(getattr(jobs, "update_commands", None) or {}),
+                "backup_places": len(getattr(jobs, "backup_places", None) or {}),
+            },
+        }
+
+    @app.put("/api/settings/machines")
+    async def put_machine(req: MachineIn):
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        editable()
+        async with lock:
+            if req.revision != _revision():
+                raise HTTPException(409, "The configuration changed; reload the page before saving")
+            written: dict[str, str | None] = {}
+
+            def put(name: str, value: str) -> str:
+                if name not in written:
+                    try:
+                        written[name] = secrets().get(name)
+                    except SecretError:
+                        written[name] = None
+                try:
+                    secrets().set(name, value)
+                except SecretError:
+                    raise FormError(SECRET_PROBLEM) from None
+                return f"${{SECRET:{name}}}"
+
+            try:
+                data = apply_machine(ob.read_raw(paths), req, put)
+                validated = await asyncio.to_thread(ob.write_raw, paths, data)
+            except (ValueError, ValidationError) as e:
+                _rollback(written)
+                raise HTTPException(400, _form_message(e)) from None
+        # Providers hold these very objects: update them in place so the next check uses the new options.
+        old, new = _find_cfg(cfg, req.kind, req.name), _find_cfg(validated, req.kind, req.name)
+        restart: list[str] = []
+        if old is not None and new is not None:
+            fields = {
+                "proxmox": ("exclude", "protect", "monitor_only", "update_commands", "backup_max_age_hours"),
+                "incus": ("exclude", "monitor_only", "update_commands", "backup_max_age_hours"),
+                "host": ("monitor_only", "update_command"),
+            }[req.kind]
+            for f in fields:
+                setattr(old, f, getattr(new, f))
+            holder_old, holder_new = (old, new) if req.kind == "host" else (old.ssh, new.ssh)
+            if holder_old is not None and holder_new is not None:
+                holder_old.backup = holder_new.backup
+            if req.kind == "host" and old.tunnel != new.tunnel:
+                restart = ["Tunnel"]  # the tunnel is dialled at start
+        return {"saved": True, "restart_needed": restart}
 
     def _audit(row: dict) -> None:
         store = getattr(app.state, "store", None)

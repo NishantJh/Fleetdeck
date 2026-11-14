@@ -457,6 +457,8 @@ async function render() {
         box.hidden = false;
         if (!box.childElementCount) window.FleetdeckSettings.mountGuarded(box, api, name).catch((e) => notice(e.message));
       }
+      $("#settings-machines").hidden = false;
+      if (!$("#settings-machines").childElementCount) window.FleetdeckSettings.mountMachines($("#settings-machines"), api).catch((e) => notice(e.message));
       $("#settings-notify").hidden = false;
       if (!$("#settings-notify").childElementCount) window.FleetdeckSettings.mountNotify($("#settings-notify"), api).catch((e) => notice(e.message));
       if (!$("#settings-services").childElementCount) window.FleetdeckSettings.mountServices($("#settings-services"), api).catch((e) => notice(e.message));
