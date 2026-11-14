@@ -383,5 +383,116 @@ window.FleetdeckSettings = (() => {
       field("Your password (asked again for this section)", password), warnBox, h("div", { class: "row" }, save, status));
   }
 
-  return { mountServices, mountSecrets, mountSection, mountNotify, mountGuarded };
+  // Per-machine options: one card per configured machine, saved one at a time. Tunnel keys are never shown.
+  const lines = (v) => (v || []).join("\n");
+  const split = (v) => v.split("\n").map((x) => x.trim()).filter(Boolean);
+
+  function machineCard(m, data, api, reload) {
+    const st = { ...m, tunnel: m.tunnel ? { ...m.tunnel, private_key: "" } : null, backup: m.backup ? { include: [], ...m.backup } : null };
+    const status = h("span", { class: "muted small", "aria-live": "polite" });
+    const body = h("div", { class: "form-grid" });
+    const box = (key, label, help, rows = 3, fmt = (v) => v) => {
+      const input = h("textarea", { rows, spellcheck: "false" });
+      input.value = lines(st[key]);
+      input.oninput = () => { st[key] = split(input.value); };
+      return field(label, input, help);
+    };
+    const txt = (obj, key, label, help, type = "text") => {
+      const input = h("input", { type, value: obj[key] ?? "", autocomplete: "off", spellcheck: "false" });
+      input.oninput = () => { obj[key] = type === "number" ? Number(input.value) : input.value; };
+      return field(label, input, help);
+    };
+    const cmds = h("textarea", { rows: 3, spellcheck: "false", placeholder: "105 = omv-upgrade" });
+    cmds.value = Object.entries(st.update_commands || {}).map(([k, v]) => `${k} = ${v}`).join("\n");
+    cmds.oninput = () => {
+      st.update_commands = {};
+      for (const line of cmds.value.split("\n")) {
+        const i = line.indexOf("=");
+        if (i > 0) st.update_commands[line.slice(0, i).trim()] = line.slice(i + 1).trim();
+      }
+    };
+    const kind = m.kind;
+    const guestWord = kind === "proxmox" ? "guest VMIDs" : "instance names";
+    if (kind !== "host") {
+      body.append(
+        box("exclude", `Hide ${guestWord}`, "One per line. Hidden from the dashboard."),
+        ...(kind === "proxmox" ? [box("protect", "Protect guests", "One VMID per line. Shown but never updated, e.g. the LXC the dashboard runs in. Reboots and snapshots are blocked too.")] : []),
+        box("monitor_only", `Monitor only (${guestWord})`, "Checked and reported, never updated. Reboots and snapshots stay allowed."),
+        field("Update commands", cmds, `One per line: ${kind === "proxmox" ? "VMID, guest or node name" : "instance name or this entry's name"} = command run as root instead of the OS upgrade.`),
+        txt(st, "backup_max_age_hours", "Flag backups older than (hours)", "0 turns backup tracking off.", "number"),
+      );
+    } else {
+      const mon = h("input", { type: "checkbox" });
+      mon.checked = !!st.monitor_only_host;
+      mon.onchange = () => { st.monitor_only_host = mon.checked; };
+      body.append(check("Monitor only (never update from the dashboard)", mon),
+        txt(st, "update_command", "Update command", "Runs as root instead of the OS upgrade, e.g. omv-upgrade. Blank: the built-in upgrade."));
+    }
+    // Where this machine's own backups are (Last backup column and the Back up button).
+    const backup = h("div", { class: "form-grid" });
+    const drawBackup = () => {
+      const b = st.backup;
+      const on = h("input", { type: "checkbox" });
+      on.checked = !!b;
+      on.onchange = () => { st.backup = on.checked ? { type: "path", path: "", repository: "", env_file: "", max_age_hours: 48, include: [] } : null; drawBackup(); };
+      const kids = [check(st.can_backup ? "Track this machine's backups" : "Track backups (needs an SSH login for this machine first)", on)];
+      if (b) {
+        const type = h("select", {}, [["path", "A folder or backup file"], ["restic", "restic repository"], ["borg", "borg repository"]].map(([k, v]) => h("option", { value: k }, v)));
+        type.value = b.type;
+        type.onchange = () => { b.type = type.value; drawBackup(); };
+        kids.push(field("Kind", type));
+        if (b.type === "path") kids.push(txt(b, "path", "Folder or file (full path on the machine)"));
+        else kids.push(txt(b, "repository", "Repository", "As restic -r or borg take it."), txt(b, "env_file", "Settings file on the machine (optional)", "VAR=value lines such as RESTIC_PASSWORD_FILE, so the password stays on the machine."));
+        kids.push(txt(b, "max_age_hours", "Flag once older than (hours)", "", "number"));
+        const inc = h("textarea", { rows: 2, spellcheck: "false" });
+        inc.value = lines(b.include);
+        inc.oninput = () => { b.include = split(inc.value); };
+        kids.push(field("Extra folders for the Back up button", inc, "One full path per line, saved next to /etc."));
+      }
+      backup.replaceChildren(...kids);
+    };
+    drawBackup();
+    if (!st.can_backup) backup.querySelector("input").disabled = true;
+    const parts = [body, h("h4", {}, "Backups"), backup];
+    if (st.tunnel) {
+      const t = st.tunnel;
+      const key = h("input", { type: "password", autocomplete: "off", placeholder: t.private_key_set ? "configured, leave blank to keep" : "" });
+      key.oninput = () => { t.private_key = key.value; };
+      parts.push(h("h4", {}, "WireGuard tunnel"),
+        h("p", { class: "muted small" }, "Changes apply after a restart. To add or remove a tunnel, use the Machines page."),
+        h("div", { class: "form-grid" },
+          txt(t, "endpoint", "Machine's public address"), txt(t, "port", "WireGuard UDP port", "", "number"),
+          txt(t, "target_port", "Its SSH port", "", "number"), txt(t, "local_port", "Local port on this dashboard", "", "number"),
+          txt(t, "address", "Dashboard's tunnel address"), txt(t, "peer_address", "Machine's tunnel address"),
+          txt(t, "peer_public_key", "Machine's public key"), field("Dashboard's private key", key, "Stored encrypted; never shown.")));
+    }
+    const save = h("button", { class: "primary", type: "button", disabled: !data.writable }, `Save ${m.name}`);
+    save.onclick = async () => {
+      status.textContent = "Saving ...";
+      try {
+        const payload = { ...st, revision: data.revision };
+        if (payload.tunnel) delete payload.tunnel.private_key_set;
+        const r = await api("/api/settings/machines", { method: "PUT", body: JSON.stringify(payload) });
+        await reload(r.restart_needed.length ? `Saved ${m.name}. ${r.restart_needed.join(", ")} apply after a restart.` : `Saved ${m.name}. Applies on the next check.`);
+      } catch (e) { status.textContent = e.message; }
+    };
+    return h("details", { class: "source-card" }, h("summary", {}, h("strong", {}, m.name), ` (${{ proxmox: "Proxmox", incus: "Incus", host: "Linux host" }[kind]})`),
+      ...parts, h("div", { class: "row" }, save, status));
+  }
+
+  async function mountMachines(root, api, note) {
+    const data = await api("/api/settings/machines");
+    const reload = (msg) => mountMachines(root, api, msg);
+    const d = data.dashboard_set;
+    const set = [d.monitor_only && `${d.monitor_only} monitor-only`, d.update_commands && `${d.update_commands} update command(s)`, d.backup_places && `${d.backup_places} backup place(s)`].filter(Boolean);
+    root.replaceChildren(
+      h("h2", {}, "Machines"),
+      h("p", { class: "muted" }, "Options for each connected machine: what to hide, protect or only monitor, custom update commands, backup tracking and tunnels. Add and connect machines on the Machines page."),
+      ...(set.length ? [h("p", { class: "muted small" }, `Also set from the dashboard (kept in its database, still honoured): ${set.join(", ")}.`)] : []),
+      ...(data.machines.length ? data.machines.map((m) => machineCard(m, data, api, reload)) : [h("p", { class: "muted" }, "No machines yet.")]),
+      h("p", { class: "muted", "aria-live": "polite", role: "status" }, note || ""),
+    );
+  }
+
+  return { mountServices, mountSecrets, mountSection, mountNotify, mountGuarded, mountMachines };
 })();

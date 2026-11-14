@@ -444,3 +444,194 @@ def test_network_blank_removes_keys(app_client):
     cur = _guarded(c, "network", public_url="")
     assert c.put("/api/settings/network", json=cur).status_code == 200
     assert "public_url" not in yaml.safe_load(path.read_text())
+
+
+# --- per-machine options ---------------------------------------------------------------------------------------
+
+TUNNEL = {
+    "endpoint": "vps.example.com",
+    "port": 51821,
+    "target_port": 22,
+    "private_key": "${SECRET:hosts.vps.tunnel.private_key}",
+    "peer_public_key": "cGVlcg==",
+    "address": "10.99.1.1",
+    "peer_address": "10.99.1.2",
+    "local_port": 22001,
+}
+
+
+@pytest.fixture
+def machine_client(tmp_path):
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "state_file": "state.db",
+                "auth": {"username": "me", "password_hash": hash_password("pw")},
+                "proxmox": [
+                    {
+                        "name": "pve",
+                        "api_url": "https://10.0.0.2:8006",
+                        "token_id": "homelab@pve!x",
+                        "token_secret": "${SECRET:proxmox.pve.token_secret}",
+                        "ssh": {"host": "10.0.0.2", "insecure_skip_host_key_check": True},
+                    }
+                ],
+                "incus": [{"name": "inc", "socket": "/nonexistent.sock", "monitor_only": ["old"]}],
+                "hosts": [
+                    {"name": "pi", "host": "10.0.0.5", "insecure_skip_host_key_check": True},
+                    {
+                        "name": "vps",
+                        "host": "127.0.0.1",
+                        "port": 22001,
+                        "tunnel": TUNNEL,
+                        "insecure_skip_host_key_check": True,
+                    },
+                ],
+            }
+        )
+    )
+    import os
+
+    os.environ["FLEETDECK_SECRET_KEY"] = "test-key"
+    from fleetdeck.secrets_store import SecretStore
+
+    store = SecretStore(str(tmp_path / "state.db"), tmp_path / "keys")
+    store.set("proxmox.pve.token_secret", "tok-secret-1")
+    store.set("hosts.vps.tunnel.private_key", "wg-private-1")
+    app = create_app(load_config(str(path)), config_file=str(path))
+    with TestClient(app, client=("192.168.1.5", 50000)) as c:
+        c.auth = ("me", "pw")
+        yield c, path, app
+    os.environ.pop("FLEETDECK_SECRET_KEY", None)
+
+
+def machine(c, name):
+    data = c.get("/api/settings/machines").json()
+    return data["revision"], next(m for m in data["machines"] if m["name"] == name)
+
+
+def put_machine(c, rev, m, **kw):
+    return c.put("/api/settings/machines", json={"revision": rev, **m, **kw})
+
+
+def test_machines_get_hides_secrets(machine_client):
+    c, _, _ = machine_client
+    text = c.get("/api/settings/machines").text
+    for secret in ("tok-secret-1", "wg-private-1", 'private_key":"$', "SECRET:"):
+        assert secret not in text
+    _, vps = machine(c, "vps")
+    assert vps["tunnel"]["private_key_set"] is True and "private_key" not in vps["tunnel"]
+    _, inc = machine(c, "inc")
+    assert inc["monitor_only"] == ["old"]
+
+
+def test_proxmox_options_saved_and_applied_live(machine_client):
+    c, path, app = machine_client
+    rev, m = machine(c, "pve")
+    r = put_machine(
+        c,
+        rev,
+        m,
+        exclude=["200", "201"],
+        protect=["100"],
+        monitor_only=["105"],
+        update_commands={"105": "omv-upgrade", "pve": "apt-get -y dist-upgrade"},
+        backup_max_age_hours=24,
+    )
+    assert r.status_code == 200, r.text
+    saved = yaml.safe_load(path.read_text())["proxmox"][0]
+    assert saved["exclude"] == [200, 201] and saved["protect"] == [100] and saved["monitor_only"] == [105]
+    assert saved["update_commands"]["105"] == "omv-upgrade" and saved["backup_max_age_hours"] == 24
+    assert saved["token_secret"] == "${SECRET:proxmox.pve.token_secret}"  # untouched
+    # The provider holds the config object itself, so the next check uses the new options without a restart.
+    provider = next(
+        p for p in app.state.inventory.providers if getattr(p, "cfg", None) is not None and p.cfg.name == "pve"
+    )
+    assert provider.cfg.protect == [100] and provider.cfg.exclude == [200, 201]
+
+
+def test_proxmox_rejects_bad_vmid_and_multiline_command(machine_client):
+    c, _, _ = machine_client
+    rev, m = machine(c, "pve")
+    assert put_machine(c, rev, m, protect=["web"]).status_code == 400
+    r = put_machine(c, rev, m, update_commands={"105": "a\nb"})
+    assert r.status_code == 400
+
+
+def test_incus_options_and_clearing(machine_client):
+    c, path, _ = machine_client
+    rev, m = machine(c, "inc")
+    r = put_machine(c, rev, m, exclude=["test/web"], monitor_only=[], update_commands={"web": "apk upgrade"})
+    assert r.status_code == 200, r.text
+    saved = yaml.safe_load(path.read_text())["incus"][0]
+    assert saved["exclude"] == ["test/web"] and "monitor_only" not in saved
+    assert saved["update_commands"] == {"web": "apk upgrade"}
+
+
+def test_host_options_and_backup_block(machine_client):
+    c, path, _ = machine_client
+    rev, m = machine(c, "pi")
+    b = {"type": "restic", "repository": "/mnt/restic", "env_file": "/etc/restic.env", "max_age_hours": 30}
+    r = put_machine(c, rev, m, monitor_only_host=True, update_command="omv-upgrade", backup=b)
+    assert r.status_code == 200, r.text
+    saved = yaml.safe_load(path.read_text())["hosts"][0]
+    assert saved["monitor_only"] is True and saved["update_command"] == "omv-upgrade"
+    assert saved["backup"] == {
+        "type": "restic",
+        "max_age_hours": 30,
+        "repository": "/mnt/restic",
+        "env_file": "/etc/restic.env",
+    }
+    rev, m = machine(c, "pi")
+    assert m["backup"]["repository"] == "/mnt/restic"
+    assert put_machine(c, rev, m, backup=None).status_code == 200
+    assert "backup" not in yaml.safe_load(path.read_text())["hosts"][0]
+
+
+def test_backup_needs_full_path_and_ssh_login(machine_client):
+    c, _, _ = machine_client
+    rev, m = machine(c, "pi")
+    r = put_machine(c, rev, m, backup={"type": "path", "path": "relative/dir"})
+    assert r.status_code == 400
+    rev, m = machine(c, "inc")  # no ssh: block to attach the backup to
+    r = put_machine(c, rev, m, backup={"type": "path", "path": "/srv/backups"})
+    assert r.status_code == 400
+
+
+def test_proxmox_backup_goes_on_its_ssh_login(machine_client):
+    c, path, _ = machine_client
+    rev, m = machine(c, "pve")
+    r = put_machine(c, rev, m, backup={"type": "path", "path": "/mnt/pbs"})
+    assert r.status_code == 200, r.text
+    assert yaml.safe_load(path.read_text())["proxmox"][0]["ssh"]["backup"]["path"] == "/mnt/pbs"
+
+
+def test_tunnel_edit_keeps_or_replaces_private_key(machine_client):
+    c, path, _ = machine_client
+    from fleetdeck.secrets_store import SecretStore
+
+    rev, m = machine(c, "vps")
+    t = {**m["tunnel"], "target_port": 2222, "local_port": 22005, "private_key": ""}
+    t.pop("private_key_set")
+    r = put_machine(c, rev, m, tunnel=t)
+    assert r.status_code == 200, r.text
+    assert r.json()["restart_needed"] == ["Tunnel"]
+    saved = yaml.safe_load(path.read_text())["hosts"][1]
+    assert saved["tunnel"]["private_key"] == "${SECRET:hosts.vps.tunnel.private_key}"
+    assert saved["tunnel"]["target_port"] == 2222 and saved["port"] == 22005 and saved["host"] == "127.0.0.1"
+    rev, m = machine(c, "vps")
+    t = {**m["tunnel"], "private_key": "wg-private-2"}
+    t.pop("private_key_set")
+    assert put_machine(c, rev, m, tunnel=t).status_code == 200
+    store = SecretStore(str(path.parent / "state.db"), path.parent / "keys")
+    assert store.get("hosts.vps.tunnel.private_key") == "wg-private-2"
+    assert "wg-private-2" not in path.read_text()
+
+
+def test_machine_unknown_kind_mismatch_and_stale_revision(machine_client):
+    c, _, _ = machine_client
+    rev, m = machine(c, "pi")
+    assert put_machine(c, rev, {**m, "name": "nope"}).status_code == 400
+    assert put_machine(c, rev, {**m, "kind": "incus"}).status_code == 400
+    assert put_machine(c, "stale", m).status_code == 409
