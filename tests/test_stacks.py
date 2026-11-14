@@ -499,3 +499,13 @@ def test_parse_scan_reads_caddy_routes():
     ]
     res = parse_scan(_scan(*out))
     assert [(r.host, r.upstream) for r in res.routes] == [("app.lan", "172.18.0.5:80")]
+
+
+def test_scan_reads_the_local_image_platform():
+    from fleetdeck.models import ExecResult
+    from fleetdeck.stacks import US, parse_scan
+
+    row = US.join(["__C__", "p", "web", "/w", "", "caddy:2", "sha256:aa", "running", "c" * 64, "bridge", "/p-web-1"])
+    img = US.join(["__I__", "caddy:2", "sha256:aa", "", "linux/arm64/v8"])
+    res = parse_scan(ExecResult(rc=0, stdout=f"{row}\n{img}\n", stderr=""))
+    assert res.stacks[0].services[0].platform == "linux/arm64/v8"

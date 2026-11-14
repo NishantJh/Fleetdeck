@@ -80,7 +80,8 @@ for img in $(docker inspect --format '{{.Config.Image}}' $ids 2>/dev/null | sort
   # while containers report the ID of their platform's manifest, which is listed in there.
   known=$(docker image inspect "$img" 2>/dev/null | grep -oE 'sha256:[0-9a-f]{64}' | sort -u | tr '
 ' ',')
-  echo "__I__${US}${img}${US}${id}${US}${known%,}"
+  plat=$(docker image inspect --format '{{.Os}}/{{.Architecture}}{{with .Variant}}/{{.}}{{end}}' "$img" 2>/dev/null)
+  echo "__I__${US}${img}${US}${id}${US}${known%,}${US}${plat}"
   echo "__R__${US}${img}${US}$(docker image inspect --format '{{join .RepoDigests ","}}' "$img" 2>/dev/null)"
 done
 # The driver decides whether a container IP is a LAN address (macvlan/ipvlan) or only internal (bridge/overlay).
@@ -342,6 +343,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
     local: dict[str, str] = {}  # image reference -> ID of what that tag points at now
     known: dict[str, set[str]] = {}  # image reference -> every digest that belongs to that tag's image
     digests: dict[str, list[str]] = {}  # image reference -> its registry digests
+    platforms: dict[str, str] = {}  # image reference -> os/arch[/variant] of the local image
     rows: list[list[str]] = []
     ports: dict[str, list[PortMapping]] = {}
     exposed: dict[str, list[int]] = {}
@@ -360,9 +362,11 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
             compose = line.split("=", 1)[1]
         elif line.startswith("__I__" + US):
             parts = line.split(US)
-            if len(parts) in (3, 4):
+            if len(parts) in (3, 4, 5):
                 local[parts[1]] = parts[2]
-                known[parts[1]] = {x for x in (parts[3] if len(parts) == 4 else "").split(",") if x}
+                known[parts[1]] = {x for x in (parts[3] if len(parts) > 3 else "").split(",") if x}
+                if len(parts) == 5 and re.fullmatch(r"[a-z0-9]{1,16}/[a-z0-9_]{1,16}(/[a-z0-9]{1,8})?", parts[4]):
+                    platforms[parts[1]] = parts[4]
         elif line.startswith("__R__" + US):
             parts = line.split(US)
             if len(parts) == 3:
@@ -419,6 +423,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
             outdated=outdated,
             image_id=image_id,
             tag_id=now,
+            platform=platforms.get(image, ""),
             repo_digests=digests.get(image, []),
             container_id=cid,
             container_name=container_name,

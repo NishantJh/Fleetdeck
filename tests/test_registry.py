@@ -184,7 +184,7 @@ class FakeRegistry:
     def __init__(self, verdicts):
         self.verdicts, self.asked = verdicts, []
 
-    async def check(self, image, digests):
+    async def check(self, image, digests, image_id="", platform=""):
         self.asked.append(image)
         return self.verdicts[image]
 
@@ -290,3 +290,65 @@ async def test_local_index_digest_matches_when_head_returns_a_platform_manifest(
     assert (await c.check("traefik:3", [f"traefik@{index}"])).status == "current"
     assert (await c.check("traefik:3", [f"traefik@{platform}"])).status == "current"
     assert (await c.check("traefik:3", [f"traefik@sha256:{'3' * 64}"])).status == "update"
+
+
+CFG, OLD_CFG = "sha256:" + "c" * 64, "sha256:" + "d" * 64
+AMD, ARM = "sha256:" + "a" * 64, "sha256:" + "b" * 64
+
+
+def _index_handler(config_for_amd):
+    def handler(request):
+        path = request.url.path
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"Docker-Content-Digest": D1})
+        if path.endswith(AMD):
+            return httpx.Response(200, json={"config": {"digest": config_for_amd}})
+        return httpx.Response(
+            200,
+            json={
+                "manifests": [
+                    {"digest": ARM, "platform": {"os": "linux", "architecture": "arm64"}},
+                    {"digest": AMD, "platform": {"os": "linux", "architecture": "amd64"}},
+                    {"digest": D2, "platform": {"os": "unknown", "architecture": "unknown"}},
+                ]
+            },
+        )
+
+    return handler
+
+
+async def test_image_id_equal_to_the_platform_config_digest_is_current():
+    # Classic store: the local ID is the platform image's config digest, RepoDigests holds neither digest.
+    c = _client(_index_handler(CFG))
+    v = await c.check("caddy:2", [f"caddy@sha256:{'9' * 64}"], CFG, "linux/amd64")
+    assert v.status == "current"
+
+
+async def test_image_id_that_differs_from_the_platform_image_is_an_update():
+    c = _client(_index_handler(CFG))
+    v = await c.check("caddy:2", [f"caddy@sha256:{'9' * 64}"], OLD_CFG, "linux/amd64")
+    assert v.status == "update"
+
+
+async def test_local_id_equal_to_the_platform_manifest_digest_is_current():
+    # containerd store: the image ID is the platform manifest digest.
+    c = _client(_index_handler(CFG))
+    assert (await c.check("caddy:2", [f"caddy@sha256:{'9' * 64}"], AMD, "linux/amd64")).status == "current"
+
+
+async def test_unknown_platform_never_says_update_and_falls_back_to_pulling():
+    c = _client(_index_handler(CFG))
+    v = await c.check("caddy:2", [f"caddy@sha256:{'9' * 64}"], OLD_CFG, "linux/riscv64")
+    assert v.status == "unknown"
+    assert v.can_pull_instead
+
+
+async def test_single_manifest_is_compared_by_config_digest():
+    def handler(request):
+        if request.method == "HEAD":
+            return httpx.Response(200, headers={"Docker-Content-Digest": D1})
+        return httpx.Response(200, headers={"Docker-Content-Digest": D1}, json={"config": {"digest": CFG}})
+
+    c = _client(handler)
+    assert (await c.check("ghcr.io/a/b:1", [f"ghcr.io/a/b@{D2}"], CFG, "linux/amd64")).status == "current"
+    assert (await c.check("ghcr.io/a/b:2", [f"ghcr.io/a/b@{D2}"], OLD_CFG, "linux/amd64")).status == "update"
