@@ -55,6 +55,7 @@ state.containerFilters = Object.create(null);
 state.showHidden = !!remember.get("showHidden");
 state.showHiddenServices = !!remember.get("showHiddenServices");
 state.showSupportServices = !!remember.get("showSupportServices");
+state.serviceDense = !!remember.get("serviceDense");
 const savedScopeView = remember.get("dashboardScopeView");
 state.view = ["all", "machines", "containers", "services"].includes(savedScopeView) ? savedScopeView : remember.get("dashboardView") === "containers" ? "containers" : "all";
 // Hidden machines stay out of the counts, Check all and Update selected, even while shown.

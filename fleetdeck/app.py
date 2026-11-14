@@ -20,7 +20,7 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .backup import add_backup_routes
 from .backup_runs import check_destination
-from .config import MAX_UPDATE_COMMAND, AppConfig, check_update_command, config_path, load_config
+from .config import MAX_UPDATE_COMMAND, AppConfig, StaticServiceLink, check_update_command, config_path, load_config
 from .console import Console, client_ip, network_problem
 from .console_routes import add_console_routes
 from .dockhand import DockhandReader, DockhandStatus, demo_status
@@ -35,11 +35,13 @@ from .registry import RegistryClient
 from .report import build_report
 from .scheduler import Scheduler
 from .security import LoginThrottle, Sessions, add_login_routes, make_guard, password_ok, session_secret
+from .service_sources import SourceCache, demo_source
 from .services import build_services
 from .setup_routes import add_setup_routes
 from .store import Store
 from .tunnels import TunnelManager
 from .tunnels import manager as tunnel_manager
+from .urls import safe_url
 from .vulnscan import Scanner, StackVulns, VulnScans
 
 log = logging.getLogger("fleetdeck")
@@ -588,14 +590,65 @@ def create_app(
             task.add_done_callback(background.discard)
         return {"update_command": command}
 
+    # Services-only sources (a NAS): kept apart from the inventory, so no check, update or backup can reach them.
+    sources = SourceCache(cfg.services.sources)
+    if cfg.demo and not cfg.has_real_targets and not cfg.services.sources:
+        demo_source(sources)
+    added: dict[str, StaticServiceLink] = {}
+    if store is not None:
+        for link_id, data in store.load_service_links().items():
+            try:
+                added[link_id] = StaticServiceLink.model_validate_json(data)
+            except ValueError:
+                continue
+
     def services_view():
-        targets = {tid: target for tid, (target, _) in inventory.targets.items()}
-        return build_services(targets, jobs.stacks, cfg.services, jobs.hidden_services)
+        targets = {tid: target for tid, (target, _) in inventory.targets.items()} | sources.targets
+        stacks = {**jobs.stacks, **sources.stacks}
+        return build_services(
+            targets,
+            stacks,
+            cfg.services,
+            jobs.hidden_services,
+            added=added,
+            checks=jobs.checks,
+            sources=sources.status_models(),
+        )
 
     @app.get("/api/services")
     async def list_services(response: Response):
         """Read-only catalogue from the last Docker scan plus manual links; no machine is contacted."""
         response.headers["Cache-Control"] = "no-store"
+        return services_view()
+
+    @app.post("/api/services/scan")
+    async def scan_services(force: bool = False):
+        """Read the containers of the services-only sources (read-only listing). Rate limited per source."""
+        await sources.scan(force=force)
+        return services_view()
+
+    @app.post("/api/services/links")
+    async def add_service_link(req: StaticServiceLink):
+        """Add a link card by hand (a router, a NAS page). Only stored here; nothing contacts the address."""
+        if safe_url(req.url) is None:
+            raise HTTPException(400, "that is not a usable http(s) address")
+        if len(added) >= 200:
+            raise HTTPException(400, "too many added links")
+        link_id = secrets.token_hex(6)
+        link = req.model_copy(update={"url": safe_url(req.url), "name": req.name.strip()})
+        added[link_id] = link
+        if store is not None:
+            store.save_service_link(link_id, link.model_dump_json())
+        return services_view()
+
+    @app.delete("/api/services/links/{link_id}")
+    async def remove_service_link(link_id: str):
+        if link_id not in added:
+            raise HTTPException(404, "unknown link")
+        del added[link_id]
+        jobs.set_hidden_services([f"manual|{link_id}"], False)
+        if store is not None:
+            store.delete_service_link(link_id)
         return services_view()
 
     @app.post("/api/services/hidden")
