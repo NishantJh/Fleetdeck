@@ -199,6 +199,5 @@ def test_routes_match_services_across_machines_by_address_and_port():
     view = build_services(
         targets, {"ssh:proxy": proxy_machine, "ssh:app": app_machine}, ServicesConfig(), set()
     ).services
-    hosts = {urlsplit(link.url).hostname for entry in view for link in entry.links}
-    assert "app.example.com" in hosts
-    assert not hosts & {"wrong-port.example.com", "local-name.example.com"}
+    hosts = sorted({urlsplit(link.url).hostname for entry in view for link in entry.links})
+    assert [h for h in hosts if h != "192.168.1.20"] == ["app.example.com"]
