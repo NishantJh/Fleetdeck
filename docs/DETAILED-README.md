@@ -456,9 +456,9 @@ the value becomes the card's main link (beating proxy discovery and `services.ur
 automatic link. All three choices are kept in the dashboard's state database, so they survive rescans and restarts and
 never edit the machine, its labels or `config.yaml`.
 
-When a service publishes several ports, the card shows the primary link and a single **N ports** menu instead of one
-chip per port, so a media server does not make its card several rows taller than the others. Its tooltip says how many
-are in addition to the primary link.
+Extra links (for example a second proxy route) and published ports are not shown as text on the card; they live behind
+a small **⋮** menu in its bottom-right corner, so a media server with four ports is not several rows taller than the
+others. They are never needed for the main link, only as alternates.
 
 The view never changes a machine. It is built from cached scan results; **Reload** reads them again, and **Check
 container updates** refreshes the underlying scan. Standalone containers are included for the catalogue, but never

@@ -65,8 +65,6 @@ function isDown(service) {
   return !!service.state && !["running", "restarting"].includes(service.state);
 }
 
-const PORT_LINK_KINDS = new Set(["port", "host", "macvlan"]);
-
 // Groups the user collapsed, kept across reloads (homepage-style collapsible sections).
 const COLLAPSED_GROUPS_KEY = "collapsedServiceGroups";
 let collapsedServiceGroups = null;
@@ -99,15 +97,11 @@ function serviceCard(service) {
     ? `<span class="svc-state ${stateInfo[1]}" title="${esc(service.state || "")}">${stateInfo[0]}</span>`
     : "";
   const secondary = links.slice(1);
-  const extraPorts = secondary.filter((link) => PORT_LINK_KINDS.has(link.kind));
-  const chips = secondary
-    .filter((link) => !PORT_LINK_KINDS.has(link.kind))
-    .map((link) => `<a class="svc-chip" href="${esc(link.url)}" target="_blank" rel="noopener noreferrer" title="${esc(link.url)}">${esc(link.label || link.kind)}</a>`)
-    .join("");
-  // One compact disclosure instead of a chip per published port: a media server with four ports no longer makes
-  // its card several rows taller than the others.
-  const ports = extraPorts.length
-    ? `<details class="svc-ports" title="${extraPorts.length} more published port${extraPorts.length === 1 ? "" : "s"}"><summary class="svc-chip">${extraPorts.length} port${extraPorts.length === 1 ? "" : "s"}</summary><div class="svc-port-list">${extraPorts.map((link) => `<a href="${esc(link.url)}" target="_blank" rel="noopener noreferrer" title="${esc(link.url)}">${esc(link.label || link.kind)}</a>`).join("")}</div></details>`
+  // Secondary links (another proxy route, published ports) live behind one icon, so the card has no chip text.
+  const extras = secondary.length
+    ? `<details class="svc-more" title="${secondary.length} more link${secondary.length === 1 ? "" : "s"}"><summary aria-label="More links for ${esc(service.name)}">⋮</summary><div class="svc-more-list">${secondary
+        .map((link) => `<a href="${esc(link.url)}" target="_blank" rel="noopener noreferrer" title="${esc(link.url)}">${esc(link.label || link.kind)}</a>`)
+        .join("")}</div></details>`
     : "";
   const iconLoaded = !!service.icon && loadedIcons.has(service.icon);
   const icon = `<span class="svc-icon hue-${tileHue(service.name)}${iconLoaded ? " has-img" : ""}" aria-hidden="true">${service.icon ? `<img src="/api/icons/${encodeURIComponent(service.icon)}" alt="" loading="lazy" data-svc-icon data-icon-slug="${esc(service.icon)}">` : ""}<span class="svc-letter">${esc(letter)}</span>${status}</span>`;
@@ -143,8 +137,8 @@ function serviceCard(service) {
         <button class="small" type="button" data-cancel-service-url>Cancel</button>
       </form>` : ""}`
     : "";
-  return `<article class="svc${service.hidden ? " is-hidden-service" : ""}${down ? " is-stopped" : ""}${editing ? " is-editing" : ""}" data-service-id="${esc(service.id)}">
-    ${main}${chips || ports ? `<div class="svc-chips">${chips}${ports}</div>` : ""}${foot}
+  return `<article class="svc${service.hidden ? " is-hidden-service" : ""}${down ? " is-stopped" : ""}${editing ? " is-editing" : ""}${secondary.length ? " has-more" : ""}" data-service-id="${esc(service.id)}">
+    ${main}${extras}${foot}
   </article>`;
 }
 
