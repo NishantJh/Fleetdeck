@@ -1485,17 +1485,18 @@ a.svc-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2p
   background: var(--chip); color: var(--text-2); line-height: 15px; white-space: nowrap; }
 .svc-state.bad { color: var(--bad); background: color-mix(in srgb, var(--bad) 13%, transparent); }
 .svc-state.acc { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
-.svc-chips { display: flex; gap: 4px; flex-wrap: wrap; padding: 0 9px 7px 55px; margin-top: -2px; }
-.svc-chip { font-size: 11px; text-decoration: none; padding: 0 7px; border-radius: 999px; background: var(--chip); color: var(--text-2); line-height: 18px; }
-.svc-ports { position: relative; }
-.svc-ports > summary { list-style: none; cursor: pointer; user-select: none; white-space: nowrap; flex: none; }
-.svc-ports > summary::-webkit-details-marker { display: none; }
-.svc-ports[open] > summary { background: var(--accent); color: #fff; }
-.svc-port-list { position: absolute; z-index: 20; right: 0; bottom: calc(100% + 5px); display: flex; flex-direction: column;
-  min-width: 130px; padding: 4px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--panel);
-  box-shadow: var(--shadow); }
-.svc-port-list a { padding: 4px 7px; border-radius: 5px; color: var(--text-2); font-size: 11px; text-decoration: none; white-space: nowrap; }
-.svc-port-list a:hover, .svc-port-list a:focus-visible { background: var(--chip); color: var(--text); }
+/* Secondary links and published ports: one tiny icon instead of chip rows, so the card stays one line tall. */
+.svc-more { position: absolute; right: 4px; bottom: 4px; z-index: 6; }
+.svc-more > summary { list-style: none; cursor: pointer; width: 18px; height: 18px; display: grid; place-items: center;
+  border-radius: 5px; color: var(--muted); font-size: 15px; line-height: 1; }
+.svc-more > summary::-webkit-details-marker { display: none; }
+.svc-more > summary:hover, .svc-more[open] > summary { background: var(--chip); color: var(--text); }
+.svc-more-list { position: absolute; right: 0; bottom: calc(100% + 4px); display: flex; flex-direction: column; min-width: 140px;
+  padding: 4px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow); }
+.svc-more-list a { padding: 4px 7px; border-radius: 5px; color: var(--text-2); font-size: 11px; text-decoration: none; white-space: nowrap; }
+.svc-more-list a:hover, .svc-more-list a:focus-visible { background: var(--chip); color: var(--text); }
+.svc.has-more .svc-main { padding-right: 24px; }
+.svc.is-editing .svc-more { display: none; } /* the footer tools take the bottom of the card while editing */
 .svc-foot { display: flex; align-items: center; justify-content: flex-end; min-height: 15px; padding: 0 6px 3px; margin-top: -2px; }
 .svc-url-form { display: flex; align-items: center; gap: 4px; padding: 0 9px 8px; }
 .svc-url-form input { flex: 1; min-width: 0; height: 26px; padding: 0 7px; font-size: 11.5px; }
@@ -1520,7 +1521,6 @@ a.svc-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2p
   .svc-icon { flex-basis: 32px; width: 32px; height: 32px; border-radius: 9px; }
   .svc-icon img { inset: 4px; width: 24px; height: 24px; }
   .svc-state { display: none; } /* the dot on the icon keeps the status visible on narrow cards */
-  .svc-chips { padding-left: 48px; }
 }
 
 /* Settings forms */

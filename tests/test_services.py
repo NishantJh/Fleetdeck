@@ -265,7 +265,7 @@ def test_services_tab_groups_extra_ports_and_remembers_loaded_icons():
     from pathlib import Path
 
     js = (Path(__file__).parent.parent / "fleetdeck" / "static" / "services.js").read_text(encoding="utf-8")
-    assert "svc-ports" in js and "port${extraPorts.length === 1" in js  # one disclosure, not a chip per port
+    assert "svc-more" in js and "svc-ports" not in js and "svc-chip" not in js  # extras behind one icon
     assert "loadedIcons" in js and "data-icon-slug" in js  # no letter -> icon flicker on every poll
 
 
