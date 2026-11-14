@@ -149,6 +149,14 @@ class PveNodeExecutor:
         )
 
 
+def _vm_needs_blocker_check(vm: dict, cfg) -> bool:
+    """A running, unprotected VM that discover() will check for guest-agent problems."""
+    vmid = int(vm["vmid"])
+    return (
+        vm.get("status") == "running" and vmid not in cfg.exclude and not vm.get("template") and vmid not in cfg.protect
+    )
+
+
 class ProxmoxProvider:
     """Discovers nodes, LXCs and VMs through the Proxmox VE API.
 
@@ -327,9 +335,7 @@ class ProxmoxProvider:
         snapshots: dict[str, PveSnapshots] = {}
         power: dict[str, ProxmoxGuestPower] = {}
         backup_runs: dict[str, BackupRun] = {}
-        node_ips = await self._node_ips()
-        nodes = await self._get("/nodes")
-        can_power = await self._can_power()
+        node_ips, nodes, can_power = await asyncio.gather(self._node_ips(), self._get("/nodes"), self._can_power())
         backups = None
         if self.cfg.backup_max_age_hours:
             online = [n["node"] for n in nodes if n.get("status") == "online"]
@@ -415,7 +421,24 @@ class ProxmoxProvider:
                     snapshots[t.id] = PveSnapshots(self.client, nname, "lxc", vmid)
                 found.append((t, PctExecutor(ssh, vmid) if ssh else None))  # type: ignore[arg-type]
 
-            for vm in await self._get(f"/nodes/{nname}/qemu"):
+            vms = await self._get(f"/nodes/{nname}/qemu")
+            # One config read per running VM, all at once (a few at a time) instead of one after another.
+            gate = asyncio.Semaphore(8)
+
+            async def blocker(vmid: int, node: str = nname, gate: asyncio.Semaphore = gate) -> str | None:
+                async with gate:
+                    return await self._vm_blocker(node, vmid)
+
+            blockers = dict(
+                zip(
+                    (int(v["vmid"]) for v in vms if _vm_needs_blocker_check(v, self.cfg)),
+                    await asyncio.gather(
+                        *(blocker(int(v["vmid"])) for v in vms if _vm_needs_blocker_check(v, self.cfg))
+                    ),
+                    strict=True,
+                )
+            )
+            for vm in vms:
                 vmid = int(vm["vmid"])
                 if vmid in self.cfg.exclude or vm.get("template"):
                     continue
@@ -427,7 +450,7 @@ class ProxmoxProvider:
                     if running:
                         protected_here.append(vm.get("name") or f"vm{vmid}")
                 elif running:
-                    note = await self._vm_blocker(nname, vmid)
+                    note = blockers[vmid]
                     updatable = note is None
                 t = Target(
                     id=f"{prefix}:vm:{vmid}",
