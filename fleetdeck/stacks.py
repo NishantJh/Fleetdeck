@@ -17,6 +17,7 @@ the dashboard's sudo rule already gives root, so machines set up earlier need no
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import re
 import shlex
@@ -46,6 +47,11 @@ if ! docker_version=$(docker info --format '{{.ServerVersion}}' 2>/dev/null); th
 fi
 echo "__DOCKER__=yes"
 printf '__DOCKER_VERSION__=%s\n' "$docker_version"
+# The machine's own reachable address, for published-port links (never a container-only name).
+host_name=$(hostname 2>/dev/null | head -n 1 | cut -c1-253)
+host_ip=$(ip route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i=="src") {print $(i+1); exit}}')
+[ -n "$host_ip" ] || host_ip=$(hostname -I 2>/dev/null | awk '{print $1}')
+printf '__H__%s%s%s%s%s\n' "$US" "$host_name" "$US" "$host_ip"
 if docker compose version >/dev/null 2>&1; then echo "__COMPOSE__=v2"
 elif command -v docker-compose >/dev/null 2>&1; then echo "__COMPOSE__=v1"
 else echo "__COMPOSE__=none"; fi
@@ -351,6 +357,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
     drivers: dict[str, str] = {}
     labels: dict[str, dict[str, str]] = {}
     caddyfile: dict[str, list[str]] = {}
+    host_name, host_address = "", ""
     for line in res.stdout.splitlines():
         if line.startswith("__DOCKER__="):
             docker = line.split("=", 1)[1]
@@ -360,6 +367,20 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
                 docker_version = value
         elif line.startswith("__COMPOSE__="):
             compose = line.split("=", 1)[1]
+        elif line.startswith("__H__" + US):
+            parts = line.split(US, 3)
+            if len(parts) == 3:
+                host_name = parts[1].strip()[:253]
+                try:
+                    address = ipaddress.ip_address(parts[2].strip())
+                except ValueError:
+                    pass
+                else:
+                    unusable = (
+                        address.is_loopback or address.is_link_local or address.is_unspecified or address.is_multicast
+                    )
+                    if not unusable:
+                        host_address = str(address)
         elif line.startswith("__I__" + US):
             parts = line.split(US)
             if len(parts) in (3, 4, 5):
@@ -476,6 +497,8 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
         stacks=sorted(stacks.values(), key=lambda s: s.name),
         standalone=standalone,
         routes=unique[:200],
+        host_name=host_name,
+        host_address=host_address,
         checked_at=datetime.now(UTC),
         error=error,
     )

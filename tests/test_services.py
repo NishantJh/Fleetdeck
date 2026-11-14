@@ -203,3 +203,51 @@ def test_caddy_route_for_another_service_is_not_attached():
     )
     services = build_services({"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set()).services
     assert services[0].links == []
+
+
+def test_infrastructure_sidecars_are_support_containers():
+    assert classify(service(image="tailscale/tailscale:latest", name="tailscale"))[0] is False
+    assert classify(service(image="ghcr.io/tailscale/gerbil:latest", name="gerbil"))[0] is False
+    assert classify(service(image="alpine", name="tailscaled"))[0] is False
+
+
+def test_scan_host_address_is_used_for_port_links():
+    app = service(ports=[PortMapping(host_port=8080, container_port=80)])
+    target_without_address = Target(id="ssh:pi", name="pi", platform="ssh", source="hosts", kind="host", address=None)
+    result = StacksResult(
+        stacks=[Stack(name="stack", services=[app])],
+        host_address="192.168.1.50",
+        checked_at=NOW,
+    )
+    services = build_services({"ssh:pi": target_without_address}, {"ssh:pi": result}, ServicesConfig(), set()).services
+    assert services[0].links[0].url == "http://192.168.1.50:8080"
+
+
+def test_no_address_means_no_guessed_port_link():
+    app = service(ports=[PortMapping(host_port=8080, container_port=80)])
+    target_without_address = Target(id="ssh:pi", name="pi", platform="ssh", source="hosts", kind="host", address=None)
+    result = StacksResult(
+        stacks=[Stack(name="stack", services=[app])],
+        checked_at=NOW,
+    )
+    services = build_services({"ssh:pi": target_without_address}, {"ssh:pi": result}, ServicesConfig(), set()).services
+    assert services[0].links == []
+
+
+def test_configured_address_wins_over_the_scan_address():
+    app = service(ports=[PortMapping(host_port=8080, container_port=80)])
+    result = StacksResult(
+        stacks=[Stack(name="stack", services=[app])],
+        host_address="192.168.1.50",
+        checked_at=NOW,
+    )
+    config = ServicesConfig(addresses={"ssh:pi": "pi.lan"})
+    services = build_services({"ssh:pi": target(address=None)}, {"ssh:pi": result}, config, set()).services
+    assert services[0].links[0].url == "http://pi.lan:8080"
+
+
+def test_a_ui_suffix_overrides_the_support_image_denylist():
+    assert classify(service(image="caddy:2", name="caddy-ui"))[0] is True
+    assert classify(service(image="caddy:2", name="caddy"))[0] is False
+    explicit_off = service(image="caddy:2", name="caddy-ui", ui=False)
+    assert classify(explicit_off)[0] is False

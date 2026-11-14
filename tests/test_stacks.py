@@ -509,3 +509,10 @@ def test_scan_reads_the_local_image_platform():
     img = US.join(["__I__", "caddy:2", "sha256:aa", "", "linux/arm64/v8"])
     res = parse_scan(ExecResult(rc=0, stdout=f"{row}\n{img}\n", stderr=""))
     assert res.stacks[0].services[0].platform == "linux/arm64/v8"
+
+
+def test_parse_scan_reads_the_machines_own_address():
+    res = parse_scan(_scan(US.join(["__H__", "pi4", "192.168.1.50"])))
+    assert (res.host_name, res.host_address) == ("pi4", "192.168.1.50")
+    res = parse_scan(_scan(US.join(["__H__", "pi4", "127.0.0.1"])))
+    assert res.host_address == ""

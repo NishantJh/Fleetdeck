@@ -426,6 +426,7 @@ function render() {
   $("#groups").hidden = state.view === "services";
   $("#containers").hidden = state.view !== "containers";
   $("#services").hidden = state.view !== "services";
+  $("#activity").hidden = state.view === "services";
   if (typeof renderServices === "function") renderServices();
   html("#updates-legend", updatesLegend());
   $("#updates-legend").hidden = state.view === "services";

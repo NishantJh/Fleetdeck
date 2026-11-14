@@ -7,6 +7,7 @@ overlay container IPs are never shown.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from datetime import UTC, datetime
 from hashlib import sha1
@@ -62,7 +63,6 @@ IMAGE_CATEGORIES = {
     "traefik": "Network",
     "caddy": "Network",
     "wireguard": "Network",
-    "tailscale": "Network",
     "syncthing": "Storage & backup",
     "minio": "Storage & backup",
     "duplicati": "Storage & backup",
@@ -99,10 +99,16 @@ SUPPORT = re.compile(
     r"etcd|consul|pgbouncer|"
     r"prometheus|node-exporter|cadvisor|loki|tempo|alloy|telegraf|fluent-bit|"
     r"watchtower|diun|certbot|docker-socket-proxy|cloudflared|gluetun|garage|"
+    r"tailscale|tailscaled|gerbil|derper|headscale|autoheal|ofelia|acme|lego|"
+    r"dnsmasq|unbound|otel-collector|otelcol|vector|portainer-agent|"
     r"traefik|caddy|haproxy|nginx-proxy"
     r")(?:$|[-_/])",
     re.IGNORECASE,
 )
+
+# A name that says this is a UI overrides the support-container denylist (e.g. caddy-ui).
+UI_NAME = re.compile(r"(?:^|[-_])(ui|webui|web-ui|dashboard)(?:$|[-_])", re.IGNORECASE)
+
 UI_PORTS = {
     80,
     81,
@@ -153,7 +159,9 @@ def classify(service: StackService) -> tuple[bool, str]:
         return True, category or "Tools"
     if service.proxy or service.explicit_urls:
         return True, category or "Other"
-    if SUPPORT.search(slug):
+    if UI_NAME.search(service.name) or UI_NAME.search(service.container_name):
+        return True, category or "Tools"
+    if SUPPORT.search(slug) or SUPPORT.search(service.name) or SUPPORT.search(service.container_name):
         return False, category or "Support"
     if category:
         return True, category
@@ -221,19 +229,35 @@ def _authority_url(scheme: str, host: str, port: int) -> str:
     return f"{scheme}://{_authority(host, None if default else port)}"
 
 
-def _machine_address(target: Target, cfg: ServicesConfig) -> str | None:
+def _address_value(value: str | None) -> str | None:
+    if not value:
+        return None
+    if host := safe_host(value):
+        return host
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return None
+    if address.is_loopback or address.is_link_local or address.is_unspecified:
+        return None
+    return str(address)
+
+
+def _machine_address(target: Target, cfg: ServicesConfig, host_address: str = "") -> str | None:
     for key in (target.id, target.name):
         if value := cfg.addresses.get(key):
-            return safe_host(value) or None
-    if target.address and (host := safe_host(target.address)):
+            if host := _address_value(value):
+                return host
+    if host := _address_value(target.address):
         return host
-    return safe_host(target.name)
+    return _address_value(host_address)
 
 
 def _entry(
     target: Target,
     stack: str | None,
     service: StackService,
+    address: str | None,
     cfg: ServicesConfig,
     hidden: set[str],
     at: datetime | None,
@@ -243,7 +267,7 @@ def _entry(
     ui, category = classify(service)
     key = f"{target.id}|{stack or 'standalone'}|{service.name}"[:512]
     is_hidden = key in hidden
-    links = service_links(service, _machine_address(target, cfg)) if (ui or is_hidden) else []
+    links = service_links(service, address) if (ui or is_hidden) else []
     return ServiceEntry(
         id=key,
         target_id=target.id,
@@ -277,13 +301,11 @@ def _split_upstream(value: str) -> tuple[str, int] | None:
 def _routes_for(
     service: StackService,
     routes: list[ProxyRoute],
-    target: Target,
-    cfg: ServicesConfig,
+    address: str | None,
 ) -> list[ProxyRoute]:
     """Match Caddy routes to this service by container IP/name or by host port. Read-only."""
     if not routes:
         return []
-    address = _machine_address(target, cfg)
     ips = {network.ip for network in service.networks if network.ip}
     container_ports = {p.container_port for p in service.ports} | set(service.exposed_ports)
     host_ports = {p.host_port for p in service.ports if p.host_port}
@@ -297,7 +319,6 @@ def _routes_for(
         by_container = host in ips or host in names
         by_host = address is not None and host in (
             address,
-            target.name,
             "localhost",
             "127.0.0.1",
             "host.docker.internal",
@@ -327,18 +348,19 @@ def build_services(
         if result is None:
             continue
         latest = result.checked_at if latest is None or result.checked_at > latest else latest
+        address = _machine_address(target, cfg, result.host_address)
         for stack in result.stacks:
             for service in stack.services:
-                extra = _routes_for(service, result.routes, target, cfg)
+                extra = _routes_for(service, result.routes, address)
                 if extra:
                     service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
-                if (entry := _entry(target, stack.name, service, cfg, hidden, result.checked_at)) is not None:
+                if (entry := _entry(target, stack.name, service, address, cfg, hidden, result.checked_at)) is not None:
                     entries.append(entry)
         for service in result.standalone:
-            extra = _routes_for(service, result.routes, target, cfg)
+            extra = _routes_for(service, result.routes, address)
             if extra:
                 service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
-            if (entry := _entry(target, None, service, cfg, hidden, result.checked_at)) is not None:
+            if (entry := _entry(target, None, service, address, cfg, hidden, result.checked_at)) is not None:
                 entries.append(entry)
     for link in cfg.links:
         url = safe_url(link.url)
