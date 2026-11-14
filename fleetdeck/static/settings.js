@@ -88,6 +88,8 @@ window.FleetdeckSettings = (() => {
     const stopped = h("input", { type: "checkbox" });
     enabled.checked = data.enabled;
     stopped.checked = data.show_stopped;
+    const icons = h("input", { type: "checkbox" });
+    icons.checked = data.icons !== false;
     const addresses = h("textarea", { rows: 3, spellcheck: "false", placeholder: "machine name = address your browser uses" });
     addresses.value = Object.entries(data.addresses).map(([k, v]) => `${k} = ${v}`).join("\n");
     const cards = [];
@@ -107,7 +109,7 @@ window.FleetdeckSettings = (() => {
       }
       try {
         await api("/api/settings/services", { method: "PUT", body: JSON.stringify({
-          revision: data.revision, enabled: enabled.checked, show_stopped: stopped.checked, addresses: map,
+          revision: data.revision, enabled: enabled.checked, show_stopped: stopped.checked, icons: icons.checked, addresses: map,
           sources: cards.map((c) => c.value()) }) });
         status.textContent = "Saved. Applies now.";
         root.replaceChildren();
@@ -119,6 +121,7 @@ window.FleetdeckSettings = (() => {
       h("p", { class: "muted" }, "The Services tab lists containers and links. Add a NAS or other Docker host here to list its containers only. It is never updated, checked or backed up from here."),
       check("Show the Services tab", enabled),
       check("Show stopped containers (dimmed)", stopped),
+      check("Download app icons (once, from the dashboard-icons set; off shows letters)", icons),
       h("h3", {}, "Other machines (services only)"),
       sourcesBox,
       h("div", { class: "row" }, h("button", { type: "button", onclick: () => add(blank()) }, "Add a machine")),

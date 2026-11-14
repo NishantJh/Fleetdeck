@@ -347,6 +347,8 @@ class ServicesConfig(BaseModel):
     enabled: bool = True
     # Show stopped containers too (dimmed).
     show_stopped: bool = False
+    # Download app icons for the tiles once from the dashboard-icons set (cached in the data folder). Off: letters only.
+    icons: bool = True
     # Browser-reachable address per target id or machine name, used for published-port links.
     addresses: dict[str, str] = Field(default_factory=dict)
     # Manual cards for things Docker discovery cannot see.

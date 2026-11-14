@@ -25,6 +25,7 @@ from .console import Console, client_ip, network_problem
 from .console_routes import add_console_routes
 from .dockhand import DockhandReader, DockhandStatus, demo_status
 from .dockhand_updates import DockhandUpdateRequest, excluded, install, validate_selection
+from .icons import IconCache, valid_slug
 from .inventory import Inventory, build_providers
 from .jobs import JobManager
 from .models import CheckResult, DockerSettings, Job, JobAction, StacksResult, Target
@@ -624,6 +625,25 @@ def create_app(
         """Read-only catalogue from the last Docker scan plus manual links; no machine is contacted."""
         response.headers["Cache-Control"] = "no-store"
         return services_view()
+
+    icon_dir = (Path(cfg.state_file).parent if cfg.state_file else paths.config.parent) / "icons"
+    icons = IconCache(icon_dir, enabled=cfg.services.icons)
+
+    @app.get("/api/icons/{slug}")
+    async def service_icon(slug: str):
+        """An app icon for a service tile, cached in the data folder (see icons.py). 404: show the letter."""
+        if not valid_slug(slug):
+            raise HTTPException(404, "no icon")
+        found = await icons.get(slug)
+        if found is None:
+            raise HTTPException(404, "no icon")
+        path, media = found
+        headers = {
+            "Cache-Control": "private, max-age=604800",
+            # Opened directly, an SVG is a document: no scripts, no requests.
+            "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        }
+        return FileResponse(path, media_type=media, headers=headers)
 
     @app.post("/api/services/scan")
     async def scan_services(force: bool = False):

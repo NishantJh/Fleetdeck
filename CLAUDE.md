@@ -41,7 +41,7 @@ Updates and jobs
 - `fleetdeck/power.py`: explicit Proxmox guest start (Boot up). Needs `VM.PowerMgmt`; never forces, resumes or retries.
 - `fleetdeck/vulnscan.py`: opt-in (`security.scan_images`) Trivy scans of Docker images, run in the dashboard's container by registry digest, never on targets. Results cached by digest in the store.
 - `fleetdeck/report.py`: plain-text report of what is failing, for help requests.
-- `fleetdeck/services.py`: the read-only Services tab: turns containers, ports, proxy labels and Caddyfile routes into safe UI links. `fleetdeck/urls.py`: URL/host validation for those links. Hidden service ids live in `store.py`.
+- `fleetdeck/services.py`: the read-only Services tab: turns containers, ports, proxy labels and Caddyfile routes into safe UI links. `fleetdeck/urls.py`: URL/host validation for those links. Hidden service ids live in `store.py`. `fleetdeck/icons.py`: app icons for the tiles, fetched once from dashboard-icons (jsDelivr) into `<data>/icons/`, served at `/api/icons/<slug>` (`services.icons` turns downloads off).
 
 Backups
 - `fleetdeck/backup.py`: the dashboard's own backup (`.hlmbackup`): config, keys and history, AES-256-GCM with a scrypt

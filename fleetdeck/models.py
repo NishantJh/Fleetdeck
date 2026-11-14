@@ -281,6 +281,10 @@ class ServiceEntry(BaseModel):
     link_only: bool = False
     # Added on the dashboard's Add link form: can be removed there.
     manual: bool = False
+    # A newer image is known for this container (from the last container check).
+    update: bool = False
+    # Icon slug in the dashboard-icons set, e.g. "plex"; "" shows the letter.
+    icon: str = ""
 
 
 class SourceStatus(BaseModel):
