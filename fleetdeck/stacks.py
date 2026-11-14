@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .models import ExecResult, NetworkAddress, PortMapping, ProxyRoute, Stack, StackService, StacksResult
+from .proxy_readers import MAX_JSON, MAX_LINES, PROXY_SCAN_SH, TAG, routes_from_lines
 from .updates import _CONTAINER_ID
 from .urls import safe_host, safe_path, safe_url
 
@@ -39,6 +40,7 @@ SCAN_SCRIPT = r"""
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 export LC_ALL=C
 US=$(printf '\037')
+__PROXY_SCAN__
 if ! command -v docker >/dev/null 2>&1; then echo "__DOCKER__=none"; exit 0; fi
 if ! docker_version=$(docker info --format '{{.ServerVersion}}' 2>/dev/null); then
   echo "__DOCKER__=down"
@@ -112,6 +114,7 @@ for id in $ids; do
 done
 exit 0
 """
+SCAN_SCRIPT = SCAN_SCRIPT.replace("__PROXY_SCAN__\n", PROXY_SCAN_SH.lstrip("\n"))
 
 
 def own_container_id(mountinfo: str) -> str | None:
@@ -357,6 +360,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
     drivers: dict[str, str] = {}
     labels: dict[str, dict[str, str]] = {}
     caddyfile: dict[str, list[str]] = {}
+    proxy_files: dict[str, list[str]] = {}
     host_name, host_address = "", ""
     for line in res.stdout.splitlines():
         if line.startswith("__DOCKER__="):
@@ -416,6 +420,10 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
             parts = line.split(US, 2)
             if len(parts) == 3 and len(caddyfile.get(parts[1], [])) < 2000:
                 caddyfile.setdefault(parts[1], []).append(parts[2][:600])
+        elif line.startswith("__PF__" + US):
+            parts = line.split(US, 2)
+            if len(parts) == 3 and TAG.match(parts[1]) and len(proxy_files.get(parts[1], [])) < MAX_LINES:
+                proxy_files.setdefault(parts[1], []).append(parts[2][: MAX_JSON if parts[1][:2] == "ta" else 600])
         elif line.startswith("__C__" + US):
             parts = line.split(US)
             if len(parts) in (9, 11):
@@ -472,6 +480,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
     routes: list[ProxyRoute] = []
     for lines in caddyfile.values():
         routes.extend(_parse_caddyfile(lines))
+    routes.extend(routes_from_lines(proxy_files))
     unique: list[ProxyRoute] = []
     seen: set[tuple[str, str, bool, str]] = set()
     for route in routes:
@@ -496,7 +505,7 @@ def parse_scan(res: ExecResult, own_id: str | None = None) -> StacksResult:
         docker_version=docker_version,
         stacks=sorted(stacks.values(), key=lambda s: s.name),
         standalone=standalone,
-        routes=unique[:200],
+        routes=unique[:400],
         host_name=host_name,
         host_address=host_address,
         checked_at=datetime.now(UTC),

@@ -387,11 +387,20 @@ def _routes_for(
     service: StackService,
     routes: list[ProxyRoute],
     address: str | None,
+    *,
+    foreign: bool = False,
 ) -> list[ProxyRoute]:
-    """Match Caddy routes to this service by container IP/name or by host port. Read-only."""
+    """Match proxy routes to this service by container IP/name or by host port. Read-only.
+
+    ``foreign`` routes were read on another machine: only the machine's LAN address (published host
+    port) or a macvlan/ipvlan IP can match, never a container name or a bridge IP that repeats elsewhere."""
     if not routes:
         return []
-    ips = {network.ip for network in service.networks if network.ip}
+    ips = {
+        network.ip
+        for network in service.networks
+        if network.ip and (not foreign or network.driver in ("macvlan", "ipvlan"))
+    }
     container_ports = {p.container_port for p in service.ports} | set(service.exposed_ports)
     host_ports = {p.host_port for p in service.ports if p.host_port}
     names = {service.name, service.container_name} - {""}
@@ -401,12 +410,9 @@ def _routes_for(
         if upstream is None:
             continue
         host, port = upstream
-        by_container = host in ips or host in names
+        by_container = host in ips or (not foreign and host in names)
         by_host = address is not None and host in (
-            address,
-            "localhost",
-            "127.0.0.1",
-            "host.docker.internal",
+            (address,) if foreign else (address, "localhost", "127.0.0.1", "host.docker.internal")
         )
         if (by_container and (not container_ports or port in container_ports)) or (by_host and port in host_ports):
             if not any(r.host == route.host and r.path == route.path for r in [*service.proxy, *out]):
@@ -437,15 +443,18 @@ def build_services(
             continue
         latest = result.checked_at if latest is None or result.checked_at > latest else latest
         address = _machine_address(target, cfg, result.host_address)
+        other = [r for tid, res in stacks.items() if tid != target_id for r in res.routes]
         for stack in result.stacks:
             for service in stack.services:
                 extra = _routes_for(service, result.routes, address)
+                extra += _routes_for(service, other, address, foreign=True)
                 if extra:
                     service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
                 if (entry := _entry(target, stack.name, service, address, cfg, hidden, result.checked_at)) is not None:
                     entries.append(entry)
         for service in result.standalone:
             extra = _routes_for(service, result.routes, address)
+            extra += _routes_for(service, other, address, foreign=True)
             if extra:
                 service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
             if (entry := _entry(target, None, service, address, cfg, hidden, result.checked_at)) is not None:
