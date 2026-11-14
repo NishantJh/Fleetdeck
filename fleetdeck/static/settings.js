@@ -115,7 +115,7 @@ window.FleetdeckSettings = (() => {
       } catch (e) { status.textContent = e.message; }
     };
     root.replaceChildren(
-      h("h2", {}, "Services"),
+      h("h2", { id: "services" }, "Services"),
       h("p", { class: "muted" }, "The Services tab lists containers and links. Add a NAS or other Docker host here to list its containers only. It is never updated, checked or backed up from here."),
       check("Show the Services tab", enabled),
       check("Show stopped containers (dimmed)", stopped),

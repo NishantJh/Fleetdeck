@@ -109,7 +109,7 @@ function renderServices() {
     ? `<div class="empty"><h3>No services match “${esc(query)}”</h3><p class="muted">Clear the search to show all services.</p><button class="small" data-clear-service-search>Clear search</button></div>`
     : support
       ? `<div class="empty"><h3>No services with a UI found</h3><p class="muted">${support} support container${support === 1 ? " is" : "s are"} hidden. Show them if one has a UI, or add a <code>fleetdeck.url</code> label.</p><button class="small" data-toggle-support-services>Show support containers (${support})</button></div>`
-      : `<div class="empty"><h3>No services yet</h3><p class="muted">Run a container check to discover services, add a services-only source in the config, or use Add link.</p></div>`;
+      : `<div class="empty"><h3>No services yet</h3><p class="muted">Run a container check to discover services, add a services-only source in the config, or use Add service link or Add machine for services.</p></div>`;
   const checked = state.services.checked_at ? `Last scan ${ago(state.services.checked_at)}` : "No Docker scan yet";
   const sources = state.services.sources || [];
   const failed = sources.filter((source) => source.error);
@@ -127,13 +127,15 @@ function renderServices() {
       <input id="service-search" name="fleetdeck-service-filter" type="search" placeholder="Search services" value="${esc(state.serviceQuery || "")}" autocomplete="off" autocapitalize="off" spellcheck="false"${document.activeElement?.id === "service-search" ? "" : " readonly"} data-1p-ignore="true" data-lpignore="true" data-form-type="other" aria-label="Search services">
       ${query ? `<button class="small" data-clear-service-search>Clear search</button>` : ""}
       <span class="muted">${esc(checked)}</span>
-      <button class="small" data-add-link>Add link</button>
+      <button class="small" data-add-link title="Add one clickable card for an address, such as a router. Nothing is discovered or monitored.">Add service link</button>
+      <a class="button small" href="/settings#services" title="Add another machine, such as a NAS, so its containers are discovered automatically (list only).">Add machine for services</a>
       ${sources.length ? `<button class="small" data-scan-sources title="Read the container list of ${sources.length} other machine(s). Read-only.">Scan other machines</button>` : ""}
       <button class="small" data-refresh-services title="Read the last Docker scan again; run Check container updates to refresh it">Reload</button>
       <button class="small" data-toggle-dense aria-pressed="${!!state.serviceDense}">${state.serviceDense ? "Comfortable" : "Compact"}</button>
       ${hidden ? `<button class="small" data-toggle-hidden-services aria-pressed="${state.showHiddenServices}">${state.showHiddenServices ? "Hide hidden" : `Show hidden (${hidden})`}</button>` : ""}
       ${support ? `<button class="small" data-toggle-support-services aria-pressed="${state.showSupportServices}">${state.showSupportServices ? "Hide support containers" : `Show support containers (${support})`}</button>` : ""}
-    </div>${form}${sourceNote}${chips}${sections || empty}`;
+    </div>
+    <p class="muted services-help"><strong>Add service link</strong> adds one card by hand for an address. <strong>Add machine for services</strong> reads another machine's containers so its services are found automatically, and is list only.</p>${form}${sourceNote}${chips}${sections || empty}`;
   if (keepForm) {
     // Polling re-renders must not rebuild the Add link form: keep the node and its focus.
     const active = keepForm.contains(document.activeElement) ? document.activeElement : null;

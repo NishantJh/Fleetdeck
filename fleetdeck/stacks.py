@@ -39,6 +39,14 @@ SCAN_SCRIPT = r"""
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 export LC_ALL=C
 US=$(printf '\037')
+# Caddy installed natively (not in Docker): read its Caddyfile, size-capped and read-only.
+if [ -r /etc/caddy/Caddyfile ]; then
+  head -c 200000 /etc/caddy/Caddyfile 2>/dev/null | head -n 2000 | while IFS= read -r line; do
+    case "$line" in
+      *reverse_proxy*|*"{"*|*"}"*) printf '__CF__%s%s%s\n' "$US" native "$line" ;;
+    esac
+  done
+fi
 if ! command -v docker >/dev/null 2>&1; then echo "__DOCKER__=none"; exit 0; fi
 if ! docker_version=$(docker info --format '{{.ServerVersion}}' 2>/dev/null); then
   echo "__DOCKER__=down"

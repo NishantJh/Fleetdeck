@@ -516,3 +516,19 @@ def test_parse_scan_reads_the_machines_own_address():
     assert (res.host_name, res.host_address) == ("pi4", "192.168.1.50")
     res = parse_scan(_scan(US.join(["__H__", "pi4", "127.0.0.1"])))
     assert res.host_address == ""
+
+
+def test_parse_scan_reads_native_caddyfile_without_docker():
+    from fleetdeck.models import ExecResult
+
+    out = [
+        US.join(["__CF__", "native", "plex.lan {"]),
+        US.join(["__CF__", "native", "  reverse_proxy 192.168.1.20:32400"]),
+        US.join(["__CF__", "native", "}"]),
+        "__DOCKER__=none",
+    ]
+    res = parse_scan(ExecResult(rc=0, stdout="\n".join(out) + "\n", stderr=""))
+    assert [(r.host, r.upstream) for r in res.routes] == [("plex.lan", "192.168.1.20:32400")]
+    assert "/etc/caddy/Caddyfile" in SCAN_SCRIPT and SCAN_SCRIPT.index("/etc/caddy/Caddyfile") < SCAN_SCRIPT.index(
+        "__DOCKER__=none"
+    )
