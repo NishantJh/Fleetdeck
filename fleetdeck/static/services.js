@@ -51,8 +51,8 @@ function categoryIcon(name) {
 
 function tileHue(name) {
   let h = 0;
-  for (const ch of name || "?") h = (h * 31 + ch.charCodeAt(0)) % 360;
-  return h;
+  for (const ch of name || "?") h = (h * 31 + ch.charCodeAt(0)) % 12;
+  return h; // a class, not an inline style: the page's CSP forbids style attributes
 }
 
 function serviceCard(service) {
@@ -61,7 +61,7 @@ function serviceCard(service) {
   const letter = (service.name || "?").slice(0, 1).toUpperCase();
   const where = [service.machine, service.stack].filter(Boolean).join(" · ");
   const chips = links.slice(1).map((link) => `<a class="chip service-link" href="${esc(link.url)}" target="_blank" rel="noopener noreferrer" title="${esc(link.url)}">${esc(link.label || link.kind)}</a>`).join("");
-  const inner = `<span class="tile-icon" style="--h:${tileHue(service.name)}" aria-hidden="true">${esc(letter)}<span class="dot ${DOT[service.state] || ""}" title="${esc(service.state || "link")}"></span></span>
+  const inner = `<span class="tile-icon hue-${tileHue(service.name)}" aria-hidden="true">${esc(letter)}<span class="dot ${DOT[service.state] || ""}" title="${esc(service.state || "link")}"></span></span>
       <span class="tile-text"><span class="tile-name">${esc(service.name)}</span><span class="tile-sub muted">${esc(where || (service.link_only ? "link" : ""))}</span></span>`;
   const main = primary
     ? `<a class="tile-main" href="${esc(primary.url)}" target="_blank" rel="noopener noreferrer" title="${esc(primary.url)}">${inner}</a>`
