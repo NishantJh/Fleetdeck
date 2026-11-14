@@ -178,7 +178,7 @@ def create_app(
         if cfg.demo and cfg.dockhand
         else {}
     )
-    notifier = Notifier(cfg.notify, cfg.public_url) if cfg.notify else None
+    notifier = Notifier(cfg.notify, cfg.public_url)  # targets can change from the Settings page
     sec = cfg.security
     scanner = Scanner(paths.config.parent / "trivy", sec.ignore_unfixed, sec.min_severity)
     if cfg.demo and not cfg.has_real_targets:
@@ -237,7 +237,7 @@ def create_app(
             log.warning("No auth configured: anyone who can reach this dashboard can update your machines.")
             if not cfg.allowed_hosts:
                 log.warning("allowed_hosts is not set: without auth, web pages can reach the API via DNS rebinding.")
-        if notifier is not None and not scheduler.interval:
+        if cfg.notify and not scheduler.interval:
             log.warning("Notifications are set up but schedule.check_every isn't, so nothing will be sent.")
         # Tunnels to machines that can't be reached directly; restarted if one dies.
         wanted = {h.name: h.tunnel for h in cfg.hosts if h.tunnel}
@@ -253,8 +253,7 @@ def create_app(
         await jobs.shutdown()
         if dockhand is not None:
             await dockhand.aclose()
-        if notifier is not None:
-            await notifier.aclose()
+        await notifier.aclose()
         if registry is not None:
             await registry.aclose()
         for provider in inventory.providers:
@@ -269,6 +268,7 @@ def create_app(
     app.state.inventory = inventory
     app.state.scheduler = scheduler
     app.state.vulns = vulns
+    app.state.notifier = notifier
     app.state.dockhand = dockhand
     app.state.demo_dockhand = demo_dockhand
     app.state.setup_token = setup_token
@@ -582,7 +582,7 @@ def create_app(
         _audit(store, {**row, "command": command, "before": before})
         what = f"set to: {command}" if command else "removed (back to the built-in OS upgrade)"
         log.warning("%s changed the update command of %s from %s: %s", user, target.name, ip, what)
-        if notifier is not None and command != before:
+        if command != before:
             # Another way to run commands as root on the machine: worth telling about, like the console does.
             task = asyncio.create_task(
                 notifier.send(f"Update command changed on {target.name}", f"{user} ({ip}) {what}")
@@ -731,7 +731,7 @@ def create_app(
 
     @app.post("/api/notify/test")
     async def notify_test():
-        if notifier is None:
+        if not notifier.targets:
             raise HTTPException(400, "no notify targets configured")
         errors = await notifier.send("Fleetdeck test", "Notifications from your homelab dashboard work.")
         return {"sent": len(cfg.notify) - len(errors), "errors": errors}
@@ -778,7 +778,7 @@ def create_app(
         elif cfg.auth is None and (cfg.has_real_targets or not cfg.demo):
             log.warning("console.enabled is set but there is no `auth:` login, so the command console stays off.")
         else:
-            console = Console(cfg.console, cfg.auth, store, notifier.send if notifier else None)
+            console = Console(cfg.console, cfg.auth, store, notifier.send)
             app.state.console = console
             # Its own lockout: the login's is reset by every request that carries the right password.
             add_console_routes(app, cfg, console, inventory, LoginThrottle())

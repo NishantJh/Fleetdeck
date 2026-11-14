@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
+import re
 from collections.abc import Callable
 from copy import deepcopy
 from typing import Literal
@@ -21,7 +23,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 
 from . import onboarding as ob
-from .config import AppConfig, ScheduleConfig, ServiceSource
+from .config import AppConfig, NotifyConfig, ScheduleConfig, ServiceSource
+from .notify import Notifier
 from .secrets_migrate import find_plaintext, migrate
 from .secrets_store import SecretError, SecretStore, secret_name
 from .service_sources import scan_source
@@ -94,6 +97,27 @@ class UpdatesIn(BaseModel):
     community_scripts_update: bool = True
 
 
+class TargetIn(BaseModel):
+    """One notification target as the form sends it. Blank secrets keep the saved ones."""
+
+    type: Literal["ntfy", "gotify", "discord", "telegram", "webhook"]
+    name: str = Field("", max_length=80)
+    previous_index: int | None = Field(None, ge=0)  # position in the saved list, to find the saved secrets
+    url: str | None = Field(None, max_length=2048, repr=False)  # a secret for discord and webhook
+    token: str | None = Field(None, max_length=4096, repr=False)
+    chat_id: str = Field("", max_length=64)
+
+
+class NotifyIn(BaseModel):
+    revision: str
+    targets: list[TargetIn] = Field(default_factory=list, max_length=20)
+
+
+SECRET_REF = re.compile(r"\$\{SECRET:([^}]+)\}")
+# Types whose url is itself the credential.
+URL_SECRET = {"discord", "webhook"}
+
+
 def duration_text(seconds: int | None) -> str:
     """Seconds back to the shortest form the form accepts (21600 -> 6h)."""
     if not seconds:
@@ -137,6 +161,71 @@ def apply_updates(raw: dict, req: UpdatesIn) -> dict:
         snapshot_keep=req.snapshot_keep,
         community_scripts_update=req.community_scripts_update,
     )
+    return data
+
+
+def target_view(t: NotifyConfig) -> dict:
+    """What the form may see: secrets only as flags (a Discord or webhook address is the secret)."""
+    return {
+        "type": t.type,
+        "name": t.name or "",
+        "url": "" if t.type in URL_SECRET else (t.url or ""),
+        "url_set": bool(t.url),
+        "token_set": bool(t.token),
+        "chat_id": t.chat_id or "",
+    }
+
+
+def target_entry(
+    req: TargetIn, old: dict | None, index: int, put: Callable[[str, str], str], used: set[str] | None = None
+) -> dict:
+    """The config entry for a target: the saved one with the form's fields applied. Secrets saved for another
+    address or type are dropped, never sent to a new destination."""
+    old = deepcopy(old) if old and old.get("type") == req.type else {}
+    e = old
+    e["type"] = req.type
+    name = req.name.strip()
+    _put(e, "name", name)
+    label = name or str(index)
+    if used is not None:
+        if label.lower() in used:
+            raise FormError("Two notification targets have the same name")
+        used.add(label.lower())
+    if req.type == "telegram":
+        e.pop("url", None)
+        e["chat_id"] = req.chat_id.strip()
+        if req.token:
+            e["token"] = put(secret_name("notify", label, "token"), req.token)
+    elif req.type in URL_SECRET:
+        e.pop("token", None)
+        e.pop("chat_id", None)
+        if req.url and req.url.strip():
+            e["url"] = put(secret_name("notify", label, "url"), req.url.strip())
+    else:
+        e.pop("chat_id", None)
+        url = (req.url or "").strip()
+        if not url:
+            raise FormError("Enter the address")
+        if old.get("url") != url:
+            e.pop("token", None)
+        e["url"] = url
+        if req.token:
+            e["token"] = put(secret_name("notify", label, "token"), req.token)
+    return e
+
+
+def apply_notify(raw: dict, req: NotifyIn, put: Callable[[str, str], str]) -> dict:
+    data = deepcopy(raw)
+    saved = data.get("notify") or []
+    used: set[str] = set()
+    entries = []
+    for i, t in enumerate(req.targets):
+        old = saved[t.previous_index] if t.previous_index is not None and t.previous_index < len(saved) else None
+        entries.append(target_entry(t, old if isinstance(old, dict) else None, i, put, used))
+    if entries:
+        data["notify"] = entries
+    else:
+        data.pop("notify", None)
     return data
 
 
@@ -462,6 +551,89 @@ def add_settings_routes(
             return ["Parallel jobs"] if new.max_parallel != was else []
 
         return await _save_section(req, apply_updates, live)
+
+    @app.get("/api/settings/notify")
+    async def get_notify():
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        c = await asyncio.to_thread(on_disk)
+        return {
+            "revision": _revision(),
+            "writable": paths.writable(),
+            "targets": [target_view(t) for t in c.notify],
+        }
+
+    @app.put("/api/settings/notify")
+    async def put_notify(req: NotifyIn):
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        editable()
+        async with lock:
+            if req.revision != _revision():
+                raise HTTPException(409, "The configuration changed; reload the page before saving")
+            written: dict[str, str | None] = {}  # name -> value to restore if the save fails
+
+            def put(name: str, value: str) -> str:
+                if name not in written:
+                    try:
+                        written[name] = secrets().get(name)
+                    except SecretError:
+                        written[name] = None
+                try:
+                    secrets().set(name, value)
+                except SecretError:
+                    raise FormError(SECRET_PROBLEM) from None
+                return f"${{SECRET:{name}}}"
+
+            try:
+                old_raw = ob.read_raw(paths)
+                data = apply_notify(old_raw, req, put)
+                validated = await asyncio.to_thread(ob.write_raw, paths, data)
+            except (ValueError, ValidationError) as e:
+                _rollback(written)
+                raise HTTPException(400, _form_message(e)) from None
+            # Secrets of removed or renamed targets: delete those nothing in the config refers to any more.
+            still = set(SECRET_REF.findall(text()))
+            for name in set(SECRET_REF.findall(json.dumps(old_raw.get("notify") or []))) - still:
+                if name.startswith("notify."):
+                    try:
+                        secrets().delete(name)
+                    except (SecretError, HTTPException):
+                        log.warning("could not delete the unused secret %s", name)
+        # The notifier reads its targets on every send: apply without a restart.
+        cfg.notify = validated.notify
+        notifier = getattr(app.state, "notifier", None)
+        if notifier is not None:
+            notifier.targets = validated.notify
+        return {"saved": True}
+
+    @app.post("/api/settings/notify/test")
+    async def test_notify(req: TargetIn):
+        """Send one test message to this target as typed. Never saves anything."""
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        try:
+            saved = ob.read_raw(paths).get("notify") or []
+            old = (
+                saved[req.previous_index]
+                if req.previous_index is not None and req.previous_index < len(saved)
+                else None
+            )
+            entry = target_entry(req, old if isinstance(old, dict) else None, 0, lambda _n, v: v)
+            target = ob.validate_raw({"notify": [entry]}).notify[0]
+        except (ValueError, ValidationError) as e:
+            return {"ok": False, "error": _form_message(e)}
+        async with httpx.AsyncClient(timeout=20) as client:
+            try:
+                r = await Notifier([target], cfg.public_url, client)._send_one(
+                    target, "Fleetdeck test", "Notifications from your homelab dashboard work."
+                )
+            except Exception as e:  # httpx errors can carry the address; only fixed text goes back
+                log.info("notification test failed: %s", type(e).__name__)
+                return {"ok": False, "error": "Could not connect. Check the address and that the service is running."}
+        if r.status_code >= 400:
+            return {"ok": False, "error": f"The service answered HTTP {r.status_code}. Check the address and token."}
+        return {"ok": True}
 
     @app.post("/api/settings/services/test")
     async def test_source(req: SourceTest):
