@@ -91,13 +91,18 @@ class RegistryClient:
         self._tokens: dict[tuple[str, str, str], tuple[str, float]] = {}
         self._results: dict[tuple[str, str, str], tuple[str, float]] = {}
         self._manifests: dict[tuple[str, str, str], tuple[set[str], float]] = {}
+        self._configs: dict[tuple[str, str, str], tuple[set[str] | None, float]] = {}
         self._sem = asyncio.Semaphore(MAX_PARALLEL)
 
     async def aclose(self) -> None:
         await self.client.aclose()
 
-    async def check(self, image: str, repo_digests: list[str]) -> Verdict:
-        """Is the tag of ``image`` still what the machine has (``repo_digests``: its RepoDigests)?"""
+    async def check(self, image: str, repo_digests: list[str], image_id: str = "", platform: str = "") -> Verdict:
+        """Is the tag of ``image`` still what the machine has (``repo_digests``: its RepoDigests)?
+
+        ``image_id`` and ``platform`` (``os/arch[/variant]``) are the tag's local image ID and platform. They let a
+        digest mismatch be settled the way Watchtower and What's Up Docker do: by comparing the image itself (its
+        config digest) with the registry's manifest for this platform, which no image store can disagree about."""
         host, repo, tag, pinned = parse_ref(image)
         if pinned:
             return Verdict("unknown", "pinned", "pinned by digest: the tag is not followed")
@@ -114,7 +119,81 @@ class RegistryClient:
         # manifest digest in RepoDigests, which made every current multi-platform image look behind.
         if local & await self.platform_digests(host, repo, tag):
             return Verdict("current")
-        return Verdict("update")
+        if not image_id:
+            return Verdict("update")
+        # Still different: compare the image content. Anything unclear is "unknown", which pulls on the machine
+        # (authoritative) instead of raising a false "update available" that no update can clear.
+        try:
+            same = await self._same_image(host, repo, tag, image_id, platform)
+        except RegistryError as e:
+            return Verdict("unknown", e.reason, e.note)
+        if same is None:
+            return Verdict("unknown", "error", "could not match the registry's image to this machine's platform")
+        return Verdict("current") if same else Verdict("update")
+
+    async def _same_image(self, host: str, repo: str, tag: str, image_id: str, platform: str) -> bool | None:
+        """Does the registry's image for ``platform`` have the local ``image_id``? ``None``: cannot tell."""
+        key = (host, repo, f"{tag}|{platform}")
+        cached = self._configs.get(key)
+        if cached and time.monotonic() - cached[1] < RESULT_TTL:
+            ids = cached[0]
+        else:
+            ids = await self._platform_ids(host, repo, tag, platform)
+            self._configs[key] = (ids, time.monotonic())
+        if ids is None:
+            return None
+        return image_id in ids
+
+    async def _get_json(self, host: str, repo: str, ref: str) -> tuple[dict, str]:
+        url = f"https://{host}/v2/{repo}/manifests/{ref}"
+        headers = {"Accept": ACCEPT}
+        r = await self._request(url, headers, "GET")
+        if r.status_code == 401:
+            token = await self._token(host, repo, r.headers.get("www-authenticate", ""))
+            r = await self._request(url, {**headers, "Authorization": f"Bearer {token}"}, "GET")
+        if r.status_code != 200 or len(r.content) > 2_000_000:
+            raise RegistryError("error", f"{host} answered {r.status_code} for a manifest")
+        try:
+            data = r.json()
+        except ValueError:
+            raise RegistryError("error", f"{host} sent an unreadable manifest") from None
+        if not isinstance(data, dict):
+            raise RegistryError("error", f"{host} sent an unreadable manifest")
+        return data, r.headers.get("docker-content-digest", "")
+
+    async def _platform_ids(self, host: str, repo: str, tag: str, platform: str) -> set[str] | None:
+        """Every ID the registry's image for ``platform`` can have locally: its config digest (classic image
+        store) and its manifest digest (containerd store). ``None`` when the platform is not found."""
+        data, header = await self._get_json(host, repo, tag)
+        ids: set[str] = set()
+        manifest = data
+        manifest_digest = header if _DIGEST.match(header) else ""
+        manifests = data.get("manifests")
+        if isinstance(manifests, list):
+            want = platform.split("/")
+            chosen = None
+            for item in manifests[:100]:
+                p = item.get("platform") if isinstance(item, dict) else None
+                if not isinstance(p, dict) or not isinstance(item.get("digest"), str):
+                    continue
+                if not _DIGEST.match(item["digest"]):
+                    continue
+                if len(want) >= 2 and (p.get("os"), p.get("architecture")) == (want[0], want[1]):
+                    variant = want[2] if len(want) > 2 else ""
+                    if not variant or not p.get("variant") or p.get("variant") == variant:
+                        chosen = item["digest"]
+                        break
+            if chosen is None:
+                return None
+            manifest_digest = chosen
+            manifest, _ = await self._get_json(host, repo, chosen)
+        if manifest_digest:
+            ids.add(manifest_digest)
+        config = manifest.get("config")
+        digest = config.get("digest") if isinstance(config, dict) else None
+        if isinstance(digest, str) and _DIGEST.match(digest):
+            ids.add(digest)
+        return ids or None
 
     async def platform_digests(self, host: str, repo: str, tag: str) -> set[str]:
         """The platform manifest digests listed by a multi-platform tag; empty for a single manifest."""

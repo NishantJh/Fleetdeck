@@ -176,6 +176,7 @@ class StackService(BaseModel):
     # the container was made from, and the ID the tag points at on the machine now ("" if unknown).
     image_id: str = ""
     tag_id: str = ""
+    platform: str = ""  # os/arch[/variant] of the local image, for the registry comparison
     # The tag's registry digests (repo@sha256:...). Empty for an image built on the machine.
     repo_digests: list[str] = Field(default_factory=list)
     # What the registry digest check (registry.py) found: "current", "update" or "unknown" ("" when it did not run,

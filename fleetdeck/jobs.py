@@ -14,7 +14,17 @@ from . import detached
 from .backup_runs import DASHBOARD
 from .docker_management import external_settings
 from .inventory import Inventory
-from .models import CheckResult, DockerSettings, Job, JobAction, Stack, StacksResult, SuccessfulCheck, Target
+from .models import (
+    CheckResult,
+    DockerSettings,
+    Job,
+    JobAction,
+    Stack,
+    StackService,
+    StacksResult,
+    SuccessfulCheck,
+    Target,
+)
 from .registry import RegistryClient, Verdict
 from .snapshots import Snapshots, prune, snapshot_name, unsupported
 from .stacks import SCAN_SCRIPT, _own_id, parse_pull_failures, parse_scan, pull_script, update_script
@@ -753,11 +763,13 @@ class JobManager:
         """Image reference -> what its registry says, for the running services. Empty without a registry client."""
         if self.registry is None:
             return {}
-        seen: dict[str, list[str]] = {}
+        seen: dict[str, StackService] = {}
         for s in stacks:
             for x in s.running:
-                seen.setdefault(x.image, x.repo_digests)
-        results = await asyncio.gather(*(self.registry.check(img, d) for img, d in seen.items()))
+                seen.setdefault(x.image, x)
+        results = await asyncio.gather(
+            *(self.registry.check(img, x.repo_digests, x.tag_id, x.platform) for img, x in seen.items())
+        )
         return dict(zip(seen, results, strict=True))
 
     async def _stack_update(self, job: Job, executor, on_line) -> None:
