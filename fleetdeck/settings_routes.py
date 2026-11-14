@@ -326,7 +326,11 @@ def apply_machine(raw: dict, req: MachineIn, put: Callable[[str, str], str]) -> 
     if req.kind != "host":
         cmds = {k.strip(): v for k, v in req.update_commands.items() if k.strip() and v.strip()}
         _set(entry, "update_commands", cmds)  # one-line and length are checked by the model
-        entry["backup_max_age_hours"] = req.backup_max_age_hours
+        # 48 is the model default: don't add a line the user never set just because they saved the card.
+        if req.backup_max_age_hours != 48:
+            entry["backup_max_age_hours"] = req.backup_max_age_hours
+        else:
+            entry.pop("backup_max_age_hours", None)
     else:
         if req.monitor_only_host:
             entry["monitor_only"] = True
@@ -626,7 +630,12 @@ def add_settings_routes(
             raw = await asyncio.to_thread(ob.read_raw, paths)
         except ValueError:
             raw = {}
-        return {"plaintext": find_plaintext(raw), "available": bool(cfg.state_file), "writable": paths.writable()}
+        return {
+            "plaintext": find_plaintext(raw),
+            "available": bool(cfg.state_file),
+            "writable": paths.writable(),
+            "revision": _revision(),
+        }
 
     @app.post("/api/settings/secrets/migrate")
     async def move_secrets():
@@ -649,15 +658,20 @@ def add_settings_routes(
                 before = ob.validate_raw(raw, str(paths.config)).model_dump()
                 new, moved = migrate(raw, put)
                 if not moved:
-                    return {"moved": []}
+                    return {"moved": [], "revision": _revision()}
                 after = ob.validate_raw(new, str(paths.config)).model_dump()
                 if before != after:
-                    raise FormError("The moved secrets did not read back the same; nothing was changed")
+                    changed = ", ".join(dict.fromkeys(_changed_labels(before, after))[:8])
+                    detail = f" ({changed})" if changed else ""
+                    raise FormError(
+                        "The moved secrets did not read back the same; nothing was changed"
+                        f"{detail}. Check for duplicate machine names or secrets that share a name."
+                    )
                 await asyncio.to_thread(ob.write_raw, paths, new)
             except (ValueError, ValidationError, SecretError) as e:
                 _rollback(written)
                 raise HTTPException(400, _form_message(e)) from None
-        return {"moved": moved}
+        return {"moved": moved, "revision": _revision()}
 
     @app.get("/api/settings/services")
     async def get_services():
@@ -707,7 +721,9 @@ def add_settings_routes(
         sources = getattr(app.state, "sources", None)
         if sources is not None and not sources.fake:
             sources.reload(validated.services.sources)
-        return {"saved": True}
+        # The browser keeps one revision for every Settings form: a save here must not make the others
+        # look stale, so return the revision its next save has to use.
+        return {"saved": True, "revision": _revision()}
 
     def _revision() -> str:
         return hashlib.sha256(text().encode()).hexdigest()
@@ -725,7 +741,7 @@ def add_settings_routes(
                 validated = await asyncio.to_thread(ob.write_raw, paths, apply(ob.read_raw(paths), req))
             except (ValueError, ValidationError) as e:
                 raise HTTPException(400, _form_message(e)) from None
-        return {"saved": True, "restart_needed": live(validated)}
+        return {"saved": True, "restart_needed": live(validated), "revision": _revision()}
 
     @app.get("/api/settings/schedule")
     async def get_schedule():
@@ -870,7 +886,7 @@ def add_settings_routes(
         notifier = getattr(app.state, "notifier", None)
         if notifier is not None:
             notifier.targets = validated.notify
-        return {"saved": True}
+        return {"saved": True, "revision": _revision()}
 
     def _find_cfg(c: AppConfig, kind: str, name: str):
         group = {"proxmox": c.proxmox, "incus": c.incus, "host": c.hosts}[kind]
@@ -942,7 +958,7 @@ def add_settings_routes(
                 holder_old.backup = holder_new.backup
             if req.kind == "host" and old.tunnel != new.tunnel:
                 restart = ["Tunnel"]  # the tunnel is dialled at start
-        return {"saved": True, "restart_needed": restart}
+        return {"saved": True, "restart_needed": restart, "revision": _revision()}
 
     def _audit(row: dict) -> None:
         store = getattr(app.state, "store", None)
@@ -990,7 +1006,7 @@ def add_settings_routes(
             except (ValueError, ValidationError) as e:
                 raise HTTPException(400, _form_message(e)) from None
         _audit({"kind": kind, "user": user, "ip": client_ip(request), "warnings": warnings})
-        return {"saved": True, "warnings": [], "restart_needed": changed(validated, cfg)}
+        return {"saved": True, "warnings": [], "restart_needed": changed(validated, cfg), "revision": _revision()}
 
     def _console_changed(new: AppConfig, old: AppConfig) -> list[str]:
         return ["Console"] if new.console != old.console else []
@@ -1181,6 +1197,23 @@ def add_settings_routes(
         found = len(result.standalone) + sum(len(st.services) for st in result.stacks)
         out.update(ok=result.error is None, containers=found, error=result.error)
         return out
+
+
+def _changed_labels(before, after, path: tuple = ()) -> list[str]:
+    """Names only (never values) of the settings that differ between two resolved configs."""
+    if isinstance(before, dict) and isinstance(after, dict):
+        out: list[str] = []
+        for key in dict.fromkeys((*before, *after)):
+            out.extend(_changed_labels(before.get(key), after.get(key), (*path, key)))
+        return out
+    if isinstance(before, list) and isinstance(after, list):
+        out = []
+        for i, (old, new) in enumerate(zip(before, after, strict=False)):
+            out.extend(_changed_labels(old, new, (*path, i)))
+        if len(before) != len(after):
+            out.append(".".join(map(str, path)) or "config")
+        return out
+    return [".".join(map(str, path)) or "config"] if before != after else []
 
 
 def _form_message(e: Exception) -> str:

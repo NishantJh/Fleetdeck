@@ -79,13 +79,19 @@ function serviceCard(service) {
   const main = primary
     ? `<a class="svc-main" href="${esc(primary.url)}" target="_blank" rel="noopener noreferrer" title="${esc(primary.url)}">${inner}</a>`
     : `<div class="svc-main no-link" title="Add a fleetdeck.url label or a services.links entry">${inner}</div>`;
+  const current = service.category || "Other";
+  const choices = SERVICE_CATEGORY_ORDER.filter((name) => name !== "Support");
+  const categories = choices.includes(current) ? choices : [...choices, current];
+  const move = `<select class="svc-move" data-move-service="${esc(service.id)}" aria-label="Group for ${esc(service.name)}" title="Move this service to another group">
+    ${["", ...categories].map((name) => `<option value="${esc(name)}"${name === current ? " selected" : ""}>${esc(name || "Automatic (from the app)")}</option>`).join("")}
+  </select>`;
   const action = service.manual
     ? `<button class="svc-act" data-remove-link="${esc(service.id.split("|")[1])}">Remove</button>`
     : service.hidden
       ? `<button class="svc-act" data-unhide-service="${esc(service.id)}">Unhide</button>`
       : `<button class="svc-act" data-hide-service="${esc(service.id)}">Hide</button>`;
   return `<article class="svc${service.hidden ? " is-hidden-service" : ""}${down ? " is-stopped" : ""}" data-service-id="${esc(service.id)}">
-    ${main}${chips ? `<div class="svc-chips">${chips}</div>` : ""}<span class="svc-actions">${action}</span>
+    ${main}${chips ? `<div class="svc-chips">${chips}</div>` : ""}<span class="svc-actions">${move}${action}</span>
   </article>`;
 }
 
@@ -232,6 +238,15 @@ document.addEventListener("input", (event) => {
     input.focus();
     input.setSelectionRange(input.value.length, input.value.length);
   }
+});
+
+document.addEventListener("change", (event) => {
+  const select = event.target.closest?.("[data-move-service]");
+  if (!select) return;
+  serviceCall("/api/services/category", {
+    method: "POST",
+    body: JSON.stringify({ service_ids: [select.dataset.moveService], category: select.value }),
+  });
 });
 
 document.addEventListener("submit", (event) => {

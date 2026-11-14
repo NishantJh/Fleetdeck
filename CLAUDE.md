@@ -35,13 +35,13 @@ Updates and jobs
   start with its prefix.
 - `fleetdeck/scheduler.py`: checks every machine on a timer and sends a notification when something new needs attention.
 - `fleetdeck/stacks.py`: native Docker Compose scan and update over the machine's executor; compares container and tag image IDs. Also captures ports, networks, proxy labels, standalone containers and the machine's own address for the Services catalogue.
-- `fleetdeck/registry.py`: asks image registries for a tag's current digest (HEAD, anonymous token, no pull) and compares it with the machine's RepoDigests, including platform-manifest digests for multi-platform tags; runs in the dashboard, never on targets. Anything it can't settle is "unknown" and falls back to a pull.
+- `fleetdeck/registry.py`: asks image registries for a tag's current digest (HEAD, anonymous token, no pull) and compares it with the machine's RepoDigests, including platform-manifest digests for multi-platform tags. When the scan supplies it, the comparison is for the image the running container was made from, not only the tag, so a pulled-but-not-recreated container stays an update while a current multi-arch image is not flagged; runs in the dashboard, never on targets. Anything it can't settle is "unknown" and falls back to a pull.
 - `fleetdeck/dockhand.py`: read-only Dockhand client and cache (saved reports, optional fresh checks, scheduled-check history).
 - `fleetdeck/dockhand_updates.py`: confirmed container updates through Dockhand; revalidates everything server side.
 - `fleetdeck/power.py`: explicit Proxmox guest start (Boot up). Needs `VM.PowerMgmt`; never forces, resumes or retries.
 - `fleetdeck/vulnscan.py`: opt-in (`security.scan_images`) Trivy scans of Docker images, run in the dashboard's container by registry digest, never on targets. Results cached by digest in the store.
 - `fleetdeck/report.py`: plain-text report of what is failing, for help requests.
-- `fleetdeck/services.py`: the read-only Services tab: turns containers, ports, proxy labels and Caddyfile routes into safe UI links. `fleetdeck/urls.py`: URL/host validation for those links. Hidden service ids live in `store.py`. `fleetdeck/icons.py`: app icons for the tiles, fetched once from dashboard-icons (jsDelivr) into `<data>/icons/`, served at `/api/icons/<slug>` (`services.icons` turns downloads off).
+- `fleetdeck/services.py`: the Services tab: turns containers, ports, proxy labels and Caddyfile routes into safe UI links and applies per-service group overrides. `fleetdeck/urls.py`: URL/host validation for those links. Hidden service ids and group overrides live in `store.py` (`/api/services/hidden`, `/api/services/category`). `fleetdeck/icons.py`: app icons for the tiles, fetched once from dashboard-icons (jsDelivr) into `<data>/icons/`, served at `/api/icons/<slug>` (`services.icons` turns downloads off).
 
 Backups
 - `fleetdeck/backup.py`: the dashboard's own backup (`.hlmbackup`): config, keys and history, AES-256-GCM with a scrypt
@@ -61,7 +61,7 @@ Setup and security
   for each machine type and tunnel. `config.example.yaml` documents the options.
 - `fleetdeck/settings_routes.py`: the Settings page API: edits one section of `config.yaml` at a time (Services sources + Test button, schedule, security, updates, notifications, console, network, per-machine options (hide, protect, monitor only, update commands, backups, tunnel); console and network re-ask the password and confirm lock-out risks). `secrets_store.py`: secrets AES-GCM encrypted in `state.db`, referenced as `${SECRET:name}`; `secrets_migrate.py`: the "Move to encrypted store" button. `static/settings.js`: its forms.
 - `fleetdeck/envvars.py`: `env(name)` reads `FLEETDECK_<name>`.
-- `fleetdeck/store.py`: SQLite for check results, job history and hidden machines.
+- `fleetdeck/store.py`: SQLite for check results, job history, hidden machines, hidden services, service group overrides and manual service links.
 - `fleetdeck/console.py`, `console_routes.py`: the off-by-default Run command box (unlock, network gate, danger guard, audit log). Spec: `docs/CONSOLE.md`.
 - `fleetdeck/notify.py`: ntfy, Gotify, Discord, Telegram, generic JSON webhook.
 - `fleetdeck/models.py`: pydantic models for API payloads and results.

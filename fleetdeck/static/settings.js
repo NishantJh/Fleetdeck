@@ -21,6 +21,14 @@ window.FleetdeckSettings = (() => {
     sudo: false, password_set: false, url: "", token_set: false, verify_ssl: true, portainer_endpoint: null,
   });
 
+  // Every form on this page reads the same config.yaml. A save anywhere changes its revision, so the
+  // other forms must not keep the revision they loaded with: they would all fail with "configuration
+  // changed" until a reload. GETs seed it once; every successful save replaces it with the one returned.
+  let settingsRevision = "";
+  const useRevision = (fallback) => settingsRevision || fallback || "";
+  const seedRevision = (value) => { if (!settingsRevision && value) settingsRevision = value; };
+  const savedRevision = (value) => { if (value) settingsRevision = value; };
+
   function sourceCard(src, api, onRemove) {
     const state = { ...src, previous_name: src.name || null };
     const fields = h("div", { class: "form-grid" });
@@ -80,10 +88,12 @@ window.FleetdeckSettings = (() => {
     return card;
   }
 
-  async function mountServices(root, api) {
+  async function mountServices(root, api, note) {
     const data = await api("/api/settings/services");
+    seedRevision(data.revision);
     const sourcesBox = h("div", { class: "source-list" });
     const status = h("span", { class: "muted", "aria-live": "polite" });
+    status.textContent = note || "";
     const enabled = h("input", { type: "checkbox" });
     const stopped = h("input", { type: "checkbox" });
     enabled.checked = data.enabled;
@@ -93,12 +103,18 @@ window.FleetdeckSettings = (() => {
     const addresses = h("textarea", { rows: 3, spellcheck: "false", placeholder: "machine name = address your browser uses" });
     addresses.value = Object.entries(data.addresses).map(([k, v]) => `${k} = ${v}`).join("\n");
     const cards = [];
-    const add = (src) => {
+    const add = (src, focus = true) => {
       const card = sourceCard(src, api, (c) => { cards.splice(cards.indexOf(c), 1); c.remove(); });
       cards.push(card);
       sourcesBox.append(card);
+      if (focus) {
+        const first = card.querySelector("input");
+        if (first) first.focus();
+        card.scrollIntoView({ block: "nearest" });
+      }
+      return card;
     };
-    data.sources.forEach(add);
+    data.sources.forEach((source) => add(source, false));
     const save = h("button", { class: "primary", type: "button", disabled: !data.writable }, "Save services");
     save.onclick = async () => {
       status.textContent = "Saving ...";
@@ -108,12 +124,12 @@ window.FleetdeckSettings = (() => {
         if (i > 0) map[line.slice(0, i).trim()] = line.slice(i + 1).trim();
       }
       try {
-        await api("/api/settings/services", { method: "PUT", body: JSON.stringify({
-          revision: data.revision, enabled: enabled.checked, show_stopped: stopped.checked, icons: icons.checked, addresses: map,
+        const r = await api("/api/settings/services", { method: "PUT", body: JSON.stringify({
+          revision: useRevision(data.revision), enabled: enabled.checked, show_stopped: stopped.checked, icons: icons.checked, addresses: map,
           sources: cards.map((c) => c.value()) }) });
-        status.textContent = "Saved. Applies now.";
+        savedRevision(r.revision);
         root.replaceChildren();
-        await mountServices(root, api);
+        await mountServices(root, api, "Saved. Applies now.");
       } catch (e) { status.textContent = e.message; }
     };
     root.replaceChildren(
@@ -130,25 +146,28 @@ window.FleetdeckSettings = (() => {
     );
   }
 
-  async function mountSecrets(root, api) {
+  async function mountSecrets(root, api, note) {
     const r = await api("/api/settings/secrets");
-    root.hidden = !r.plaintext.length;
-    if (!r.plaintext.length) return;
+    seedRevision(r.revision);
+    root.hidden = !r.plaintext.length && !note;
+    if (root.hidden) return;
     const status = h("span", { class: "muted", "aria-live": "polite" });
+    status.textContent = note || "";
     const button = h("button", { type: "button", class: "primary", disabled: !r.available || !r.writable }, "Move to encrypted store");
     button.onclick = async () => {
       status.textContent = "Moving ...";
       try {
         const m = await api("/api/settings/secrets/migrate", { method: "POST", body: "{}" });
-        status.textContent = `Moved ${m.moved.length}.`;
-        await mountSecrets(root, api);
+        savedRevision(m.revision);
+        await mountSecrets(root, api, `Moved ${m.moved.length} secret(s) into the encrypted store in state.db. config.yaml now holds references only.`);
       } catch (e) { status.textContent = e.message; }
     };
     root.replaceChildren(
-      h("h2", {}, "Secrets in plain text"),
-      h("p", { class: "muted" }, `${r.plaintext.length} secret(s) are stored as plain text in config.yaml: ${r.plaintext.join(", ")}. Moving them encrypts them in the state database and leaves a reference in config.yaml. Checked first: the dashboard must read back exactly the same values, or nothing changes.`),
+      h("h2", {}, r.plaintext.length ? "Secrets in plain text" : "Encrypted secrets"),
+      ...(r.plaintext.length ? [h("p", { class: "muted" }, `${r.plaintext.length} secret(s) are stored as plain text in config.yaml: ${r.plaintext.join(", ")}. Moving them encrypts them in the state database and leaves a reference in config.yaml. Checked first: the dashboard must read back exactly the same values, or nothing changes.`)] : []),
       ...(r.available ? [] : [h("p", { class: "muted" }, "Needs FLEETDECK_STATE (the image sets it).")]),
-      h("div", { class: "row" }, button, status),
+      ...(r.writable ? [] : [h("p", { class: "muted" }, "config.yaml is read-only here, so secrets cannot be moved.")]),
+      h("div", { class: "row" }, ...(r.plaintext.length ? [button] : []), status),
     );
   }
 
@@ -187,6 +206,7 @@ window.FleetdeckSettings = (() => {
   async function mountSection(root, api, name) {
     const sec = SECTIONS[name];
     const data = await api(`/api/settings/${name}`);
+    seedRevision(data.revision);
     const state = {};
     const rows = sec.fields.map((f) => {
       state[f.key] = data[f.key];
@@ -211,7 +231,8 @@ window.FleetdeckSettings = (() => {
     save.onclick = async () => {
       status.textContent = "Saving ...";
       try {
-        const r = await api(`/api/settings/${name}`, { method: "PUT", body: JSON.stringify({ revision: data.revision, ...state }) });
+        const r = await api(`/api/settings/${name}`, { method: "PUT", body: JSON.stringify({ revision: useRevision(data.revision), ...state }) });
+        savedRevision(r.revision);
         status.textContent = r.restart_needed.length ? `Saved. ${r.restart_needed.join(", ")} apply after a restart.` : "Saved. Applies now.";
         const note = status.textContent;
         await mountSection(root, api, name);
@@ -270,10 +291,12 @@ window.FleetdeckSettings = (() => {
     return card;
   }
 
-  async function mountNotify(root, api) {
+  async function mountNotify(root, api, note) {
     const data = await api("/api/settings/notify");
+    seedRevision(data.revision);
     const box = h("div", { class: "source-list" });
     const status = h("span", { class: "muted", "aria-live": "polite" });
+    status.textContent = note || "";
     const cards = [];
     const add = (t, i) => {
       const card = targetCard(t, i, api, (c) => { cards.splice(cards.indexOf(c), 1); c.remove(); });
@@ -285,10 +308,10 @@ window.FleetdeckSettings = (() => {
     save.onclick = async () => {
       status.textContent = "Saving ...";
       try {
-        await api("/api/settings/notify", { method: "PUT", body: JSON.stringify({ revision: data.revision, targets: cards.map((c) => c.value()) }) });
+        const r = await api("/api/settings/notify", { method: "PUT", body: JSON.stringify({ revision: useRevision(data.revision), targets: cards.map((c) => c.value()) }) });
+        savedRevision(r.revision);
         root.replaceChildren();
-        await mountNotify(root, api);
-        root.querySelector("[aria-live]").textContent = "Saved. Applies now.";
+        await mountNotify(root, api, "Saved. Applies now.");
       } catch (e) { status.textContent = e.message; }
     };
     root.replaceChildren(
@@ -332,6 +355,7 @@ window.FleetdeckSettings = (() => {
   async function mountGuarded(root, api, name, note) {
     const spec = GUARDED[name];
     const data = await api(`/api/settings/${name}`);
+    seedRevision(data.revision);
     const state = {};
     const rows = spec.fields.map((f) => {
       const val = data[f.key];
@@ -361,7 +385,7 @@ window.FleetdeckSettings = (() => {
       status.textContent = "Saving ...";
       warnBox.hidden = true;
       try {
-        const r = await api(`/api/settings/${name}`, { method: "PUT", body: JSON.stringify({ revision: data.revision, password: password.value, confirm, ...state }) });
+        const r = await api(`/api/settings/${name}`, { method: "PUT", body: JSON.stringify({ revision: useRevision(data.revision), password: password.value, confirm, ...state }) });
         if (!r.saved) {
           warnBox.replaceChildren(h("strong", {}, "This could lock you out or weaken security:"), h("ul", {}, r.warnings.map((w) => h("li", {}, w))),
             h("button", { type: "button", class: "danger", onclick: () => send(true) }, "Save anyway"));
@@ -369,6 +393,7 @@ window.FleetdeckSettings = (() => {
           status.textContent = "Not saved yet.";
           return;
         }
+        savedRevision(r.revision);
         const msg = r.restart_needed.length ? `Saved. ${r.restart_needed.join(", ")} apply after a restart.` : "Saved.";
         root.replaceChildren();
         await mountGuarded(root, api, name, msg);
@@ -473,9 +498,10 @@ window.FleetdeckSettings = (() => {
     save.onclick = async () => {
       status.textContent = "Saving ...";
       try {
-        const payload = { ...st, revision: data.revision };
+        const payload = { ...st, revision: useRevision(data.revision) };
         if (payload.tunnel) delete payload.tunnel.private_key_set;
         const r = await api("/api/settings/machines", { method: "PUT", body: JSON.stringify(payload) });
+        savedRevision(r.revision);
         await reload(r.restart_needed.length ? `Saved ${m.name}. ${r.restart_needed.join(", ")} apply after a restart.` : `Saved ${m.name}. Applies on the next check.`);
       } catch (e) { status.textContent = e.message; }
     };
@@ -485,6 +511,7 @@ window.FleetdeckSettings = (() => {
 
   async function mountMachines(root, api, note) {
     const data = await api("/api/settings/machines");
+    seedRevision(data.revision);
     const reload = (msg) => mountMachines(root, api, msg);
     const d = data.dashboard_set;
     const set = [d.monitor_only && `${d.monitor_only} monitor-only`, d.update_commands && `${d.update_commands} update command(s)`, d.backup_places && `${d.backup_places} backup place(s)`].filter(Boolean);

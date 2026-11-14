@@ -10,6 +10,7 @@ from fleetdeck.config import AppConfig
 from fleetdeck.inventory import Inventory
 from fleetdeck.jobs import JobManager
 from fleetdeck.models import ExecResult, Stack, StackService, StacksResult, Target
+from fleetdeck.registry import Verdict
 from fleetdeck.stacks import (
     SCAN_SCRIPT,
     US,
@@ -235,6 +236,76 @@ async def test_check_pulls_then_reports_and_update_recreates(tmp_path):
     assert any(c.startswith("prune") for c in ex.calls)
     assert not jobs.stacks["t1"].stacks[0].update_available
     assert "== Stack is running the newest images" in up.log
+
+
+def test_a_current_verdict_clears_a_local_update_flag():
+    result = parse_scan(_scan(_row()))
+    service = result.stacks[0].services[0]
+    assert service.outdated  # the tag on the machine is ahead of the running container
+    JobManager._apply_verdicts(result, {"web:1": Verdict("current")})
+    assert not service.outdated and service.registry == "current"
+    JobManager._apply_verdicts(result, {"web:1": Verdict("update")})
+    assert service.outdated and service.registry == "update"
+
+
+class _Registry:
+    """The image registry, as the check sees it: one verdict for every tag it asks about."""
+
+    def __init__(self, status: str):
+        self.status = status
+        self.calls: list[tuple[str, list[str], str, str]] = []
+
+    async def check(self, image, repo_digests, image_id="", platform="", container_id=""):
+        self.calls.append((image, repo_digests, image_id, platform, container_id))
+        return Verdict(self.status)
+
+
+async def test_registry_verdicts_use_the_running_container_image(tmp_path):
+    jobs = _jobs(StubExecutor(tmp_path))
+    reg = _Registry("current")
+    jobs.registry = reg
+    stack = Stack(
+        name="web",
+        services=[
+            StackService(
+                name="app",
+                image="web:1",
+                status="running",
+                image_id="sha256:old",
+                tag_id="sha256:new",
+                repo_digests=["web@sha256:new"],
+                platform="linux/amd64",
+            )
+        ],
+    )
+    verdicts = await jobs._registry_verdicts([stack])
+    assert reg.calls == [("web:1", ["web@sha256:new"], "sha256:new", "linux/amd64", "sha256:old")]
+    assert verdicts[("web:1", "sha256:old")].status == "current"
+
+
+async def test_registry_current_clears_a_local_update_flag(tmp_path):
+    # A local image/tag comparison can be wrong (an odd image store); the registry is authoritative and
+    # a current verdict must also clear the badge, not only add one.
+    ex = StubExecutor(tmp_path)
+    jobs = _jobs(ex)
+    jobs.registry = _Registry("current")
+    job = await _run(jobs, "stacks")
+    assert job.status == "succeeded", job.error
+    stack = jobs.stacks["t1"].stacks[0]
+    assert not stack.update_available and stack.services[0].registry == "current"
+    assert not any(" pull --quiet" in c for c in ex.calls)
+    assert any("up to date" in line for line in job.log)
+
+
+async def test_registry_update_sets_the_badge_without_pulling(tmp_path):
+    ex = StubExecutor(tmp_path)
+    jobs = _jobs(ex)
+    jobs.registry = _Registry("update")
+    job = await _run(jobs, "stacks")
+    assert job.status == "succeeded", job.error
+    assert jobs.stacks["t1"].stacks[0].update_available
+    assert jobs.stacks["t1"].stacks[0].services[0].registry == "update"
+    assert not any(" pull --quiet" in c for c in ex.calls)
 
 
 async def test_older_compose_without_ignore_buildable_still_checks(tmp_path):

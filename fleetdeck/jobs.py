@@ -153,6 +153,8 @@ class JobManager:
         self.hidden: set[str] = set()
         # Service ids hidden from the Services tab. Read-only: this changes nothing about checks or updates.
         self.hidden_services: set[str] = set()
+        # Service id -> the group chosen on the Services tab instead of the automatic one. Read-only too.
+        self.service_categories: dict[str, str] = {}
         # Machines set to monitor-only on the dashboard (the config can set it too, see Target.monitor_only).
         self.monitor_only_ids: set[str] = set()
         # Host id -> the folder its Back up button is set to use every time.
@@ -165,6 +167,7 @@ class JobManager:
             self.docker_settings = store.load_docker_settings()
             self.hidden = store.load_hidden()
             self.hidden_services = store.load_hidden_services()
+            self.service_categories = store.load_service_categories()
             self.monitor_only_ids = store.load_monitor_only()
             self.backup_places = store.load_backup_places()
             self.update_commands = store.load_update_commands()
@@ -246,6 +249,16 @@ class JobManager:
             self.hidden_services.difference_update(service_ids)
         if self.store is not None:
             self._persist(self.store.set_hidden_services, service_ids, hidden)
+
+    def set_service_categories(self, service_ids: list[str], category: str) -> None:
+        """Move services to a group on the Services tab (blank: back to the automatic one)."""
+        if category:
+            self.service_categories.update({sid: category for sid in service_ids})
+        else:
+            for sid in service_ids:
+                self.service_categories.pop(sid, None)
+        if self.store is not None:
+            self._persist(self.store.set_service_categories, service_ids, category)
 
     def set_monitor_only(self, target_ids: list[str], on: bool) -> None:
         if on:
@@ -713,7 +726,13 @@ class JobManager:
         verdicts = await self._registry_verdicts(running)
         # Pull only where the registry could not settle it (its login or network may differ from ours).
         pull = (
-            [s for s in running if any(verdicts[x.image].can_pull_instead for x in s.running)] if verdicts else running
+            [
+                s
+                for s in running
+                if any((v := self._verdict_for(verdicts, x)) is not None and v.can_pull_instead for x in s.running)
+            ]
+            if verdicts
+            else running
         )
         failures: dict[str, str] = {}
         result = found
@@ -735,14 +754,8 @@ class JobManager:
             result = parse_scan(await executor.run(SCAN_SCRIPT), _own_id())
         else:
             job.log.append(f"== Found {len(found.stacks)} stack(s); compared with the registries (nothing pulled)")
+        self._apply_verdicts(result, verdicts)
         for s in result.stacks:
-            for x in s.services:
-                v = verdicts.get(x.image)
-                if v is None:
-                    continue
-                x.registry, x.registry_note = v.status, v.note
-                if v.status == "update" and x.status in ("running", "restarting"):
-                    x.outdated = True
             s.error = failures.get(s.name)
             if s.error:
                 job.log.append(f"! {s.name}: could not fetch images: {s.error}")
@@ -759,16 +772,43 @@ class JobManager:
             except Exception:  # noqa: BLE001 - nothing after the check may fail it
                 log.exception("after-check hook failed")
 
-    async def _registry_verdicts(self, stacks: list[Stack]) -> dict[str, Verdict]:
-        """Image reference -> what its registry says, for the running services. Empty without a registry client."""
+    @staticmethod
+    def _verdict_for(verdicts: dict, service: StackService) -> Verdict | None:
+        """The verdict for this service. Per image and container ID first (two containers can share a tag
+        but not an image); the image alone is the fallback for callers that only have one."""
+        return verdicts.get((service.image, service.image_id)) or verdicts.get(service.image)
+
+    @classmethod
+    def _apply_verdicts(cls, result: StacksResult, verdicts: dict) -> None:
+        """Put what the registry said on every service. A registry that says current clears the local
+        comparison's "update": it compared the image this container runs, not only the tag."""
+        for stack in result.stacks:
+            for service in stack.services:
+                verdict = cls._verdict_for(verdicts, service)
+                if verdict is None:
+                    continue
+                service.registry, service.registry_note = verdict.status, verdict.note
+                if verdict.status == "current":
+                    service.outdated = False
+                elif verdict.status == "update" and service.status in ("running", "restarting"):
+                    service.outdated = True
+
+    async def _registry_verdicts(self, stacks: list[Stack]) -> dict[tuple[str, str], Verdict]:
+        """(image, container image ID) -> what its registry says, for the running services.
+
+        Empty without a registry client. The ID is part of the key: two containers can share a tag but run
+        different images, and the registry answer is for the image each one was made from."""
         if self.registry is None:
             return {}
-        seen: dict[str, StackService] = {}
+        seen: dict[tuple[str, str], StackService] = {}
         for s in stacks:
             for x in s.running:
-                seen.setdefault(x.image, x)
+                seen.setdefault((x.image, x.image_id), x)
         results = await asyncio.gather(
-            *(self.registry.check(img, x.repo_digests, x.tag_id, x.platform) for img, x in seen.items())
+            *(
+                self.registry.check(image, x.repo_digests, x.tag_id, x.platform, container_id=x.image_id)
+                for (image, _), x in seen.items()
+            )
         )
         return dict(zip(seen, results, strict=True))
 
@@ -793,8 +833,13 @@ class JobManager:
         old = {s.name: s.error for s in (self.stacks.get(job.target_id) or StacksResult(checked_at=_now())).stacks}
         for s in result.stacks:
             s.error = old.get(s.name) if s.name != job.stack else None
+        # The new container and the tag agree now; ask the registry too so a re-pulled multi-platform
+        # image can't leave a stale "update available" badge behind.
+        updated = next((s for s in result.stacks if s.name == job.stack), None)
+        if updated is not None:
+            self._apply_verdicts(result, await self._registry_verdicts([updated]))
         self._set_stacks(job.target_id, result)
-        now = next((s for s in result.stacks if s.name == job.stack), None)
+        now = updated
         if now is None:
             job.log.append("! the stack is no longer there after the update")
         elif now.update_available:

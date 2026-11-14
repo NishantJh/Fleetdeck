@@ -44,6 +44,9 @@ class Store:
         self.db.execute("CREATE TABLE IF NOT EXISTS stacks (target_id TEXT PRIMARY KEY, data TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS hidden (target_id TEXT PRIMARY KEY)")
         self.db.execute("CREATE TABLE IF NOT EXISTS hidden_services (service_id TEXT PRIMARY KEY)")
+        self.db.execute(
+            "CREATE TABLE IF NOT EXISTS service_categories (service_id TEXT PRIMARY KEY, category TEXT NOT NULL)"
+        )
         self.db.execute("CREATE TABLE IF NOT EXISTS service_links (id TEXT PRIMARY KEY, data TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS monitor_only (target_id TEXT PRIMARY KEY)")
         self.db.execute("CREATE TABLE IF NOT EXISTS backup_places (target_id TEXT PRIMARY KEY, path TEXT NOT NULL)")
@@ -142,6 +145,18 @@ class Store:
         else:
             sql = "DELETE FROM hidden_services WHERE service_id = ?"
         self.db.executemany(sql, [(s,) for s in service_ids])
+
+    def load_service_categories(self) -> dict[str, str]:
+        return dict(self.db.execute("SELECT service_id, category FROM service_categories"))
+
+    def set_service_categories(self, service_ids: list[str], category: str) -> None:
+        """Move services to ``category``; a blank category drops the override (back to the automatic group)."""
+        if category:
+            sql = "INSERT OR REPLACE INTO service_categories (service_id, category) VALUES (?, ?)"
+            self.db.executemany(sql, [(sid, category) for sid in service_ids])
+        else:
+            sql = "DELETE FROM service_categories WHERE service_id = ?"
+            self.db.executemany(sql, [(sid,) for sid in service_ids])
 
     def load_service_links(self) -> dict[str, str]:
         return dict(self.db.execute("SELECT id, data FROM service_links"))

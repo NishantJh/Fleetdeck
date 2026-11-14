@@ -150,7 +150,8 @@ def add_setup_routes(
     @app.get("/machines")
     @app.get("/settings")
     async def setup_page():
-        return FileResponse(STATIC / "setup.html")
+        # The page names versioned scripts; revalidate it after an update instead of keeping a stale copy.
+        return FileResponse(STATIC / "setup.html", headers={"Cache-Control": "no-cache"})
 
     @app.get("/api/setup")
     async def setup_state():

@@ -161,7 +161,9 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   *Check for new images* asks each image's registry for the tag's current digest and compares it with what the
   machine has: no pull and nothing runs on the machine. Only images a registry can't settle (private registry,
   no network) are pulled on the machine. Multi-platform tags are compared by index **and** platform-manifest
-  digest, so a current image is never kept in a false "update available" state; **Update** on a stack pulls and runs
+  digest, and the comparison uses the image the **running container** was made from, not just the tag: a tag pulled
+  without recreating its container still shows as an update, while a current multi-platform image (Caddy and other
+  multi-arch images) is never left in a false "update available" state; **Update** on a stack pulls and runs
   `docker compose up -d --no-deps` for the services running now (their stopped `depends_on` services are not started).
   A service you stopped stays stopped, a stopped stack is not started, and a failed pull
   leaves the stack as it was. Tick *remove old images after an update* to also run `docker image prune`
@@ -446,9 +448,13 @@ The **Services** view turns the last Docker check into a launchpad: one card per
 Tools, Virtualization, Other). A card carries the service name, machine and stack, status, the image, the preferred
 link and any secondary links. Search filters by name, machine, stack, image or category.
 
-The view is read-only. It is built from cached scan results; **Reload** reads them again, and **Check container
-updates** refreshes the underlying scan. Standalone containers are included for the catalogue, but never enter the
-update/pull path.
+Each card has a small **group picker**: choose another group to move that service there, or *Automatic (from the app)*
+to put it back where its image, name or `fleetdeck.category` label says. The choice is kept in the dashboard's state
+database (like hiding), so it survives rescans and restarts and never edits the machine, its labels or `config.yaml`.
+
+The view never changes a machine. It is built from cached scan results; **Reload** reads them again, and **Check
+container updates** refreshes the underlying scan. Standalone containers are included for the catalogue, but never
+enter the update/pull path.
 
 ### Where the links come from
 
@@ -622,7 +628,10 @@ Two more forms work anywhere a `${NAME}` does: `${FILE:/run/secrets/x}` reads a 
 removed) and `${SECRET:name}` reads the encrypted store. Secrets typed on the Settings page go to that store: AES-256-GCM
 values in `state.db`, with the key in `keys/secrets.key` (or `FLEETDECK_SECRET_KEY` / `FLEETDECK_SECRET_KEY_FILE`, to keep
 it apart from the data). The dashboard backup includes the key file. Settings shows a **Move to encrypted store** button when
-`config.yaml` still holds plain-text secrets; it only changes the file if the values read back the same.
+`config.yaml` still holds plain-text secrets; it only changes the file if the values read back the same, and reports how
+many moved (the panel stays until you leave the page). The Settings forms save independently: after one saves, the
+others pick up the new file revision, so you can move secrets, add a services-only machine and change a machine
+without reloading the page between saves.
 
 A login made on the setup page is stored as a hash, so you do not need `FLEETDECK_PASSWORD` for it. Only a
 hand-written `password: ${FLEETDECK_PASSWORD}` in `config.yaml` needs that variable.

@@ -1481,13 +1481,18 @@ a.svc-main:focus-visible { outline: 2px solid var(--accent); outline-offset: -2p
 .svc:hover .svc-go { opacity: 1; transform: none; color: var(--accent); }
 .svc-chips { display: flex; gap: 4px; flex-wrap: wrap; padding: 0 10px 8px 61px; margin-top: -6px; }
 .svc-chip { font-size: 11px; text-decoration: none; padding: 0 7px; border-radius: 999px; background: var(--chip); color: var(--text-2); line-height: 18px; }
-.svc-actions { position: absolute; right: 6px; bottom: 5px; opacity: 0; transition: opacity .12s; }
+.svc-actions { position: absolute; right: 6px; bottom: 5px; display: flex; align-items: center; gap: 3px; opacity: 0; transition: opacity .12s; }
 .svc:hover .svc-actions, .svc:focus-within .svc-actions { opacity: 1; }
 .svc-act { height: 20px; padding: 0 7px; font-size: 10.5px; border-radius: 6px; }
+.svc-move { height: 20px; max-width: 104px; padding: 0 3px; font-size: 10.5px; border-radius: 6px; border: 1px solid var(--border); background: var(--chip); color: var(--text-2); }
 .svc.is-stopped .svc-icon img, .svc.is-stopped .svc-letter { filter: grayscale(.9); opacity: .6; }
 .svc.is-stopped .svc-name { color: var(--muted); }
 .svc.is-hidden-service { opacity: .6; border-style: dashed; }
-@media (hover: none) { .svc-actions { display: none; } }
+@media (hover: none) {
+  /* No hover on touch: keep the group picker and the hide/remove action reachable. */
+  .svc-actions { position: static; justify-content: flex-end; flex-wrap: wrap; padding: 0 8px 6px; opacity: 1; }
+  .svc-main { padding-bottom: 4px; }
+}
 @media (max-width: 700px) {
   .svc-hero { padding-top: 4px; }
   .svc-search { height: 46px; }
