@@ -277,6 +277,19 @@ class ServiceEntry(BaseModel):
     ui: bool = True
     hidden: bool = False
     updated_at: datetime | None = None
+    # From a services-only source (a NAS): listed for its links, never part of updates or monitoring.
+    link_only: bool = False
+    # Added on the dashboard's Add link form: can be removed there.
+    manual: bool = False
+
+
+class SourceStatus(BaseModel):
+    """The last scan of one services-only source."""
+
+    name: str
+    scanned: bool = False
+    error: str | None = None
+    checked_at: datetime | None = None
 
 
 class ServicesView(BaseModel):
@@ -287,6 +300,7 @@ class ServicesView(BaseModel):
     services: list[ServiceEntry] = Field(default_factory=list)
     hidden: int = 0
     checked_at: datetime | None = None
+    sources: list[SourceStatus] = Field(default_factory=list)
 
 
 JobAction = Literal[

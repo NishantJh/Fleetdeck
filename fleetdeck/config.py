@@ -314,6 +314,32 @@ class StaticServiceLink(BaseModel):
     machine: str = Field("", max_length=80)
 
 
+class ServiceSource(BaseModel):
+    """A machine listed in the Services tab only: never updated, checked, snapshotted or backed up from here.
+
+    ``ssh``: reads ``docker inspect`` of its containers over SSH (any user that may run docker, e.g. Unraid's root).
+    ``docker-api``: reads the Docker Engine API (``url``), or Portainer's (set ``portainer_endpoint``), with a token.
+    """
+
+    name: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9 ._-]+$")
+    type: Literal["ssh", "docker-api"] = "ssh"
+    # Browser-reachable host for port links (defaults to the ssh host or the API url's host).
+    address: str | None = Field(None, max_length=253)
+    ssh: SSHConfig | None = None
+    url: str | None = Field(None, max_length=2048)
+    token: str | None = None
+    verify_ssl: bool | str = True
+    portainer_endpoint: int | None = Field(None, ge=1)
+
+    @model_validator(mode="after")
+    def _needs(self) -> ServiceSource:
+        if self.type == "ssh" and self.ssh is None:
+            raise ValueError("a services source of type ssh needs an ssh: block")
+        if self.type == "docker-api" and not self.url:
+            raise ValueError("a services source of type docker-api needs a url")
+        return self
+
+
 class ServicesConfig(BaseModel):
     """The read-only Services tab: automatic cards from Docker plus optional manual links."""
 
@@ -324,6 +350,8 @@ class ServicesConfig(BaseModel):
     addresses: dict[str, str] = Field(default_factory=dict)
     # Manual cards for things Docker discovery cannot see.
     links: list[StaticServiceLink] = Field(default_factory=list, max_length=100)
+    # Other machines (a NAS) whose containers are listed here only. Never added for updates or monitoring.
+    sources: list[ServiceSource] = Field(default_factory=list, max_length=20)
 
 
 class NotifyConfig(BaseModel):

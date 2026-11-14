@@ -12,8 +12,18 @@ import re
 from datetime import UTC, datetime
 from hashlib import sha1
 
-from .config import ServicesConfig
-from .models import ProxyRoute, ServiceEntry, ServiceLink, ServicesView, StackService, StacksResult, Target
+from .config import ServicesConfig, StaticServiceLink
+from .models import (
+    CheckResult,
+    ProxyRoute,
+    ServiceEntry,
+    ServiceLink,
+    ServicesView,
+    SourceStatus,
+    StackService,
+    StacksResult,
+    Target,
+)
 from .urls import safe_host, safe_url
 
 CATEGORY_ORDER = [
@@ -127,6 +137,80 @@ UI_PORTS = {
     9443,
     2283,
 }
+
+
+# Helper-script (community-scripts) apps that run straight on a container, not in Docker: default web port and
+# scheme. Only used for machines whose last check named the app.
+NATIVE_APPS = {
+    "plex": (32400, "http", "/web"),
+    "jellyfin": (8096, "http", ""),
+    "emby": (8096, "http", ""),
+    "sonarr": (8989, "http", ""),
+    "radarr": (7878, "http", ""),
+    "lidarr": (8686, "http", ""),
+    "readarr": (8787, "http", ""),
+    "prowlarr": (9696, "http", ""),
+    "bazarr": (6767, "http", ""),
+    "overseerr": (5055, "http", ""),
+    "tautulli": (8181, "http", ""),
+    "homeassistant": (8123, "http", ""),
+    "home-assistant": (8123, "http", ""),
+    "pihole": (80, "http", "/admin"),
+    "adguard": (3000, "http", ""),
+    "nginxproxymanager": (81, "http", ""),
+    "uptimekuma": (3001, "http", ""),
+    "grafana": (3000, "http", ""),
+    "vaultwarden": (8000, "http", ""),
+    "paperless-ngx": (8000, "http", ""),
+    "mealie": (9000, "http", ""),
+    "syncthing": (8384, "http", ""),
+    "nextcloud": (80, "http", ""),
+    "gitea": (3000, "http", ""),
+    "forgejo": (3000, "http", ""),
+    "zigbee2mqtt": (8080, "http", ""),
+    "nodered": (1880, "http", ""),
+    "node-red": (1880, "http", ""),
+    "esphome": (6052, "http", ""),
+    "wallos": (80, "http", ""),
+    "homepage": (3000, "http", ""),
+    "netdata": (19999, "http", ""),
+    "portainer": (9443, "https", ""),
+}
+
+
+def native_entries(
+    targets: dict[str, Target], checks: dict[str, CheckResult], cfg: ServicesConfig, hidden: set[str]
+) -> list[ServiceEntry]:
+    """Cards for apps that run directly on a machine (helper-script containers), from the last OS check."""
+    out: list[ServiceEntry] = []
+    for target_id, target in targets.items():
+        check = checks.get(target_id)
+        app = (check.community_script or "").lower() if check else ""
+        spec = NATIVE_APPS.get(app) or NATIVE_APPS.get(app.replace("-", "").replace("_", ""))
+        address = _machine_address(target, cfg)
+        if not spec or not address:
+            continue
+        port, scheme, path = spec
+        link = _link(_authority_url(scheme, address, port) + path, "port", f"port {port}")
+        if link is None:
+            continue
+        key = f"{target_id}|app|{app}"[:512]
+        out.append(
+            ServiceEntry(
+                id=key,
+                target_id=target_id,
+                machine=target.name,
+                name=app.replace("-", " ").title()[:128],
+                image="installed on the machine (not Docker)",
+                state=target.status[:32],
+                category=_category_for(app) or "Other",
+                links=[link],
+                ui=True,
+                hidden=key in hidden,
+                updated_at=check.checked_at if check else None,
+            )
+        )
+    return out
 
 
 def image_slug(image: str) -> str:
@@ -281,6 +365,7 @@ def _entry(
         ui=ui,
         hidden=is_hidden,
         updated_at=at,
+        link_only=target.id.startswith("src:"),
     )
 
 
@@ -336,6 +421,9 @@ def build_services(
     hidden: set[str],
     *,
     now: datetime | None = None,
+    added: dict[str, StaticServiceLink] | None = None,
+    checks: dict[str, CheckResult] | None = None,
+    sources: list[SourceStatus] | None = None,
 ) -> ServicesView:
     """The catalogue from cached scan results plus configured manual links."""
     now = now or datetime.now(UTC)
@@ -362,11 +450,17 @@ def build_services(
                 service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
             if (entry := _entry(target, None, service, address, cfg, hidden, result.checked_at)) is not None:
                 entries.append(entry)
-    for link in cfg.links:
+    entries.extend(native_entries(targets, checks or {}, cfg, hidden))
+    manual = [(None, link) for link in cfg.links] + [(lid, link) for lid, link in (added or {}).items()]
+    for link_id, link in manual:
         url = safe_url(link.url)
         if url is None:
             continue
-        key = f"static|{_slug(link.name)}|{sha1(url.encode(), usedforsecurity=False).hexdigest()[:8]}"[:512]
+        key = (
+            f"manual|{link_id}"
+            if link_id
+            else f"static|{_slug(link.name)}|{sha1(url.encode(), usedforsecurity=False).hexdigest()[:8]}"
+        )[:512]
         entries.append(
             ServiceEntry(
                 id=key,
@@ -379,6 +473,8 @@ def build_services(
                 ui=True,
                 hidden=key in hidden,
                 updated_at=None,
+                link_only=True,
+                manual=link_id is not None,
             )
         )
     order = {name: index for index, name in enumerate(CATEGORY_ORDER)}
@@ -388,6 +484,7 @@ def build_services(
         services=entries[:2000],
         hidden=sum(1 for e in entries if e.hidden),
         checked_at=latest,
+        sources=sources or [],
     )
 
 
