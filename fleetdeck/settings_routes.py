@@ -15,6 +15,8 @@ from collections.abc import Callable
 from copy import deepcopy
 from typing import Literal
 
+import asyncssh
+import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 
@@ -26,6 +28,17 @@ from .service_sources import scan_source
 
 log = logging.getLogger(__name__)
 TEST_TIMEOUT = 45
+SECRET_PROBLEM = (
+    "The secret could not be stored encrypted. Check keys/secrets.key (or FLEETDECK_SECRET_KEY) and the state database."
+)
+
+
+class FormError(ValueError):
+    """A mistake in the form; ``text`` is written by us and safe to show."""
+
+    def __init__(self, text: str):
+        super().__init__(text)
+        self.text = text
 
 
 class SourceIn(BaseModel):
@@ -95,7 +108,7 @@ def source_entry(req: SourceIn, old: dict | None, paths: ob.Paths, put: Callable
     if req.type == "ssh":
         host = req.ssh_host.strip()
         if not host:
-            raise ValueError("Enter the machine's address")
+            raise FormError("Enter the machine's address")
         ssh = e.get("ssh") or {}
         if (ssh.get("host"), ssh.get("port", 22), ssh.get("user", "root")) != (host, req.ssh_port, req.ssh_user):
             ssh.pop("password", None)
@@ -111,7 +124,7 @@ def source_entry(req: SourceIn, old: dict | None, paths: ob.Paths, put: Callable
     else:
         url = req.url.strip()
         if not url:
-            raise ValueError("Enter the API address")
+            raise FormError("Enter the API address")
         if old.get("url") != url:
             old.pop("token", None)
         e["url"] = url
@@ -134,7 +147,7 @@ def apply_services(raw: dict, req: ServicesIn, paths: ob.Paths, put: Callable[[s
     saved = {s.get("name"): s for s in services.get("sources") or [] if isinstance(s, dict)}
     names = [s.name.strip() for s in req.sources]
     if len(set(n.lower() for n in names)) != len(names):
-        raise ValueError("Two sources have the same name")
+        raise FormError("Two sources have the same name")
     services["sources"] = [
         source_entry(s, saved.get(s.previous_name or s.name.strip()), paths, put) for s in req.sources
     ]
@@ -218,11 +231,11 @@ def add_settings_routes(
                     return {"moved": []}
                 after = ob.validate_raw(new, str(paths.config)).model_dump()
                 if before != after:
-                    raise ValueError("The moved secrets did not read back the same; nothing was changed")
+                    raise FormError("The moved secrets did not read back the same; nothing was changed")
                 await asyncio.to_thread(ob.write_raw, paths, new)
             except (ValueError, ValidationError, SecretError) as e:
                 _rollback(written)
-                raise HTTPException(400, _message(e)) from None
+                raise HTTPException(400, _form_message(e)) from None
         return {"moved": moved}
 
     @app.get("/api/settings/services")
@@ -257,8 +270,8 @@ def add_settings_routes(
                         written[name] = None
                 try:
                     secrets().set(name, value)
-                except SecretError as e:
-                    raise ValueError(str(e)) from None
+                except SecretError:
+                    raise FormError(SECRET_PROBLEM) from None
                 return f"${{SECRET:{name}}}"
 
             try:
@@ -266,7 +279,7 @@ def add_settings_routes(
                 validated = await asyncio.to_thread(ob.write_raw, paths, data)
             except (ValueError, ValidationError) as e:
                 _rollback(written)
-                raise HTTPException(400, _message(e)) from None
+                raise HTTPException(400, _form_message(e)) from None
         # Services are read on every request: apply without a restart.
         cfg.services = validated.services
         sources = getattr(app.state, "sources", None)
@@ -291,14 +304,14 @@ def add_settings_routes(
             )
             source = ob.validate_raw({"services": {"sources": [entry]}}).services.sources[0]
         except (ValueError, ValidationError) as e:
-            return {"ok": False, "error": _message(e)}
+            return {"ok": False, "error": _form_message(e)}
         out: dict = {"ok": False}
         if source.type == "ssh" and source.ssh and source.ssh.known_hosts == str(paths.known_hosts):
             ssh = source.ssh
             try:
                 key = await ob.fetch_host_key(ssh.host, ssh.port)
-            except ob.SetupError as e:
-                return {"ok": False, "error": str(e)}
+            except ob.SetupError:
+                return {"ok": False, "error": f"Can't reach SSH on {ssh.host}:{ssh.port}. Check the address and port."}
             fp = key.get_fingerprint("sha256")
             pinned = await asyncio.to_thread(ob._pinned_keys, paths, ssh.host, ssh.port)
             if not any(k.public_data == key.public_data for k in pinned):
@@ -316,15 +329,31 @@ def add_settings_routes(
             result = await asyncio.wait_for(scan_source(source), TEST_TIMEOUT)
         except TimeoutError:
             return {"ok": False, "error": f"No answer within {TEST_TIMEOUT} seconds"}
-        except Exception as e:  # asyncssh, httpx, OSError: all shown to the person, none to the log with secrets
+        except Exception as e:  # asyncssh, httpx, OSError: summarised for the person, details stay out of the reply
             log.info("services source test failed: %s", type(e).__name__)
-            return {"ok": False, "error": _message(e)}
+            return {"ok": False, "error": _failure(e)}
         found = len(result.standalone) + sum(len(st.services) for st in result.stacks)
         out.update(ok=result.error is None, containers=found, error=result.error)
         return out
 
 
-def _message(e: Exception) -> str:
+def _form_message(e: Exception) -> str:
+    """What is wrong with a submitted form, in words we wrote (or the field model's own)."""
+    if isinstance(e, FormError):
+        return e.text
+    if isinstance(e, SecretError):
+        return SECRET_PROBLEM
     if isinstance(e, ValidationError):
         return "; ".join(f"{'.'.join(map(str, x['loc']))}: {x['msg']}" for x in e.errors())
-    return (str(e) or type(e).__name__)[:300]
+    return "The settings refer to an environment variable or secret that is not set."
+
+
+def _failure(e: Exception) -> str:
+    """A short, fixed description of why a source could not be read."""
+    if isinstance(e, asyncssh.PermissionDenied):
+        return "The machine refused the login. Check the user, the SSH key or the password."
+    if isinstance(e, httpx.HTTPStatusError):
+        return f"The API answered HTTP {e.response.status_code}. Check the address, token and Portainer environment ID."
+    if isinstance(e, httpx.HTTPError | OSError | asyncssh.Error):
+        return "Could not connect. Check the address, port and that the service is running."
+    return "The check failed. See the dashboard log for details."
