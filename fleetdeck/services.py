@@ -387,8 +387,12 @@ def _routes_for(
     service: StackService,
     routes: list[ProxyRoute],
     address: str | None,
+    *,
+    foreign: bool = False,
 ) -> list[ProxyRoute]:
-    """Match Caddy routes to this service by container IP/name or by host port. Read-only."""
+    """Match Caddy routes to this service by container IP/name or by host port. Read-only.
+
+    ``foreign`` routes were read on another machine's proxy: only the machine address + published port counts."""
     if not routes:
         return []
     ips = {network.ip for network in service.networks if network.ip}
@@ -401,13 +405,9 @@ def _routes_for(
         if upstream is None:
             continue
         host, port = upstream
-        by_container = host in ips or host in names
-        by_host = address is not None and host in (
-            address,
-            "localhost",
-            "127.0.0.1",
-            "host.docker.internal",
-        )
+        by_container = not foreign and (host in ips or host in names)
+        local_names = () if foreign else ("localhost", "127.0.0.1", "host.docker.internal")
+        by_host = address is not None and host in (address, *local_names)
         if (by_container and (not container_ports or port in container_ports)) or (by_host and port in host_ports):
             if not any(r.host == route.host and r.path == route.path for r in [*service.proxy, *out]):
                 out.append(route)
@@ -431,6 +431,13 @@ def build_services(
         return ServicesView(generated_at=now, enabled=False)
     entries: list[ServiceEntry] = []
     latest: datetime | None = None
+    pooled = [(tid, route) for tid, res in stacks.items() for route in res.routes]
+
+    def routes_of(target_id: str, service: StackService, result: StacksResult, address: str | None):
+        found = _routes_for(service, result.routes, address)
+        other = [route for tid, route in pooled if tid != target_id]
+        return [*found, *_routes_for(service, other, address, foreign=True)]
+
     for target_id, target in targets.items():
         result = stacks.get(target_id)
         if result is None:
@@ -439,13 +446,13 @@ def build_services(
         address = _machine_address(target, cfg, result.host_address)
         for stack in result.stacks:
             for service in stack.services:
-                extra = _routes_for(service, result.routes, address)
+                extra = routes_of(target_id, service, result, address)
                 if extra:
                     service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
                 if (entry := _entry(target, stack.name, service, address, cfg, hidden, result.checked_at)) is not None:
                     entries.append(entry)
         for service in result.standalone:
-            extra = _routes_for(service, result.routes, address)
+            extra = routes_of(target_id, service, result, address)
             if extra:
                 service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
             if (entry := _entry(target, None, service, address, cfg, hidden, result.checked_at)) is not None:
