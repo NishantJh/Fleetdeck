@@ -163,7 +163,7 @@ window.FleetdeckSettings = (() => {
       } catch (e) { status.textContent = e.message; }
     };
     root.replaceChildren(
-      h("h2", {}, "Secrets in plain text"),
+      h("h2", {}, r.plaintext.length ? "Secrets in plain text" : "Encrypted secrets"),
       ...(r.plaintext.length ? [h("p", { class: "muted" }, `${r.plaintext.length} secret(s) are stored as plain text in config.yaml: ${r.plaintext.join(", ")}. Moving them encrypts them in the state database and leaves a reference in config.yaml. Checked first: the dashboard must read back exactly the same values, or nothing changes.`)] : []),
       ...(r.available ? [] : [h("p", { class: "muted" }, "Needs FLEETDECK_STATE (the image sets it).")]),
       h("div", { class: "row" }, ...(r.plaintext.length ? [button] : []), status),
