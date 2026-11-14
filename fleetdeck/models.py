@@ -242,6 +242,10 @@ class StacksResult(BaseModel):
     standalone: list[StackService] = Field(default_factory=list)
     # Routes read from a Caddyfile or Caddy's admin API. Matched to services by upstream; never rendered raw.
     routes: list[ProxyRoute] = Field(default_factory=list)
+    # The machine's own name and default-route address, from the scan. Used for published-port links so
+    # they do not fall back to a container-only name.
+    host_name: str = Field("", max_length=253)
+    host_address: str = Field("", max_length=64)
     checked_at: datetime
     error: str | None = None
 
