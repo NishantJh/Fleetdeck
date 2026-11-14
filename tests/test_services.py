@@ -251,3 +251,11 @@ def test_a_ui_suffix_overrides_the_support_image_denylist():
     assert classify(service(image="caddy:2", name="caddy"))[0] is False
     explicit_off = service(image="caddy:2", name="caddy-ui", ui=False)
     assert classify(explicit_off)[0] is False
+
+
+def test_services_tab_keeps_form_and_blocks_autofill():
+    from pathlib import Path
+
+    js = (Path(__file__).parent.parent / "fleetdeck" / "static" / "services.js").read_text()
+    assert "data-form-slot" in js  # Add link form survives polling re-renders
+    assert 'type="search"' in js and "readonly" in js and 'autocomplete="off"' in js

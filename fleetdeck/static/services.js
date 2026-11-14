@@ -114,7 +114,8 @@ function renderServices() {
   const sources = state.services.sources || [];
   const failed = sources.filter((source) => source.error);
   const sourceNote = failed.length ? `<p class="muted service-source-error">${failed.map((source) => `${esc(source.name)}: ${esc(source.error)}`).join(" · ")}</p>` : "";
-  const form = state.serviceAdding ? `<form class="service-add" data-add-link-form>
+  const keepForm = state.serviceAdding ? el.querySelector("form[data-add-link-form]") : null;
+  const form = state.serviceAdding ? `<form class="service-add" data-add-link-form autocomplete="off">
       <input name="name" placeholder="Name" required maxlength="80" aria-label="Name">
       <input name="url" type="url" placeholder="https://router.lan or http://192.168.1.1:8080" required maxlength="2048" aria-label="Address">
       <input name="category" placeholder="Group (e.g. Network)" maxlength="40" list="service-groups" aria-label="Group">
@@ -123,7 +124,7 @@ function renderServices() {
       <button class="small primary" type="submit">Add</button><button class="small" type="button" data-add-link-cancel>Cancel</button>
     </form>` : "";
   const markup = `<div class="services-toolbar">
-      <input id="service-search" name="fleetdeck-service-filter" type="search" placeholder="Search services" value="${esc(state.serviceQuery || "")}" autocomplete="off" autocapitalize="off" spellcheck="false" data-1p-ignore="true" data-lpignore="true" aria-label="Search services">
+      <input id="service-search" name="fleetdeck-service-filter" type="search" placeholder="Search services" value="${esc(state.serviceQuery || "")}" autocomplete="off" autocapitalize="off" spellcheck="false"${document.activeElement?.id === "service-search" ? "" : " readonly"} data-1p-ignore="true" data-lpignore="true" data-form-type="other" aria-label="Search services">
       ${query ? `<button class="small" data-clear-service-search>Clear search</button>` : ""}
       <span class="muted">${esc(checked)}</span>
       <button class="small" data-add-link>Add link</button>
@@ -133,7 +134,22 @@ function renderServices() {
       ${hidden ? `<button class="small" data-toggle-hidden-services aria-pressed="${state.showHiddenServices}">${state.showHiddenServices ? "Hide hidden" : `Show hidden (${hidden})`}</button>` : ""}
       ${support ? `<button class="small" data-toggle-support-services aria-pressed="${state.showSupportServices}">${state.showSupportServices ? "Hide support containers" : `Show support containers (${support})`}</button>` : ""}
     </div>${form}${sourceNote}${chips}${sections || empty}`;
-  if (el.innerHTML !== markup) el.innerHTML = markup;
+  if (keepForm) {
+    // Polling re-renders must not rebuild the Add link form: keep the node and its focus.
+    const active = keepForm.contains(document.activeElement) ? document.activeElement : null;
+    const start = active?.selectionStart;
+    const end = active?.selectionEnd;
+    el.innerHTML = markup.replace(/<form class="service-add"[\s\S]*?<\/form>/, "<div data-form-slot></div>");
+    el.querySelector("[data-form-slot]").replaceWith(keepForm);
+    if (active) {
+      active.focus();
+      try { active.setSelectionRange(start, end); } catch { /* input type without a selection */ }
+    }
+  } else if (el.innerHTML !== markup) {
+    el.innerHTML = markup;
+  }
+  const searchInput = $("#service-search");
+  if (searchInput) searchInput.addEventListener("focus", () => searchInput.removeAttribute("readonly"), { once: true });
   if (!serviceSearchReady) {
     serviceSearchReady = true;
     state.serviceQuery = "";
