@@ -10,6 +10,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
@@ -566,7 +567,23 @@ class AppConfig(BaseModel):
         return self
 
 
-_VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_VAR = re.compile(r"\$\{(?:(SECRET|FILE):([^}\n]{1,300})|([A-Za-z_][A-Za-z0-9_]*))\}")
+
+# Looks up ${SECRET:name} (the encrypted store); set by ``configure_secrets``.
+_secret_lookup: Callable[[str], str | None] | None = None
+
+
+def configure_secrets(lookup: Callable[[str], str | None] | None) -> None:
+    global _secret_lookup
+    _secret_lookup = lookup
+
+
+def _file_value(path: str) -> str | None:
+    """${FILE:/run/secrets/x}: the file's text without its trailing newline (Docker secrets)."""
+    try:
+        return Path(path).read_text().rstrip("\r\n")
+    except OSError:
+        return None
 
 
 def _expand(value, missing: set[str]):
@@ -574,7 +591,17 @@ def _expand(value, missing: set[str]):
     if isinstance(value, str):
 
         def sub(m: re.Match) -> str:
-            name = m[1]
+            if m[1]:
+                try:
+                    found = _secret_lookup(m[2]) if m[1] == "SECRET" and _secret_lookup else None
+                    found = _file_value(m[2]) if m[1] == "FILE" else found
+                except Exception:
+                    found = None
+                if found is None:
+                    missing.add(f"{m[1]}:{m[2]}")
+                    return m[0]
+                return found
+            name = m[3]
             if name not in os.environ:
                 missing.add(name)
                 return m[0]
@@ -614,7 +641,7 @@ def validate_raw(data: dict | None, origin: str = "config") -> AppConfig:
     missing: set[str] = set()
     data = _expand(data or {}, missing)
     if missing:
-        raise ValueError(f"{origin}: environment variable(s) not set: {', '.join(sorted(missing))}")
+        raise ValueError(f"{origin}: environment variable(s) or secret(s) not set: {', '.join(sorted(missing))}")
     return AppConfig.model_validate(data)
 
 
@@ -628,7 +655,9 @@ def load_config(path: str | None = None) -> AppConfig:
         )
     if problem := unreadable(str(p)):
         raise ValueError(problem)
-    cfg = validate_raw(yaml.safe_load(p.read_text()), str(p))
+    raw = yaml.safe_load(p.read_text())
+    _use_secret_store(raw, p)
+    cfg = validate_raw(raw, str(p))
     if env("DEMO") == "1":
         cfg.demo = True
     if env("CONSOLE") == "1":
@@ -661,6 +690,19 @@ def load_config(path: str | None = None) -> AppConfig:
     for problem in dict.fromkeys(filter(None, map(unreadable, files))):
         log.error("%s", problem)
     return cfg
+
+
+def _use_secret_store(raw: object, config: Path) -> None:
+    """Point ${SECRET:name} at the state database beside this config (its path is read before anything is expanded)."""
+    from .secrets_store import SecretStore
+
+    state = env("STATE") or (raw.get("state_file") if isinstance(raw, dict) else None)
+    if not isinstance(state, str) or not state:
+        configure_secrets(None)
+        return
+    path = Path(state)
+    store = SecretStore(path if path.is_absolute() else config.parent / path, config.parent / "keys")
+    configure_secrets(store.get)
 
 
 def _ssh_configs(cfg: AppConfig) -> list[SSHConfig]:

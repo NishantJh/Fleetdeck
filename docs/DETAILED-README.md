@@ -618,6 +618,12 @@ NTFY_TOKEN=your-token-here
 If a `${NAME}` is not set, the dashboard does not start, and the log names the missing variable. Common
 ones are `PVE_TOKEN_SECRET` (a Proxmox API token), `NTFY_TOKEN`, `GOTIFY_APP_TOKEN`, `DISCORD_WEBHOOK_URL`,
 `TELEGRAM_BOT_TOKEN` and `BACKUP_PASSWORD`. The names are your choice; `config.example.yaml` shows the form.
+Two more forms work anywhere a `${NAME}` does: `${FILE:/run/secrets/x}` reads a file (Docker secrets, trailing newline
+removed) and `${SECRET:name}` reads the encrypted store. Secrets typed on the Settings page go to that store: AES-256-GCM
+values in `state.db`, with the key in `keys/secrets.key` (or `FLEETDECK_SECRET_KEY` / `FLEETDECK_SECRET_KEY_FILE`, to keep
+it apart from the data). The dashboard backup includes the key file. Settings shows a **Move to encrypted store** button when
+`config.yaml` still holds plain-text secrets; it only changes the file if the values read back the same.
+
 A login made on the setup page is stored as a hash, so you do not need `FLEETDECK_PASSWORD` for it. Only a
 hand-written `password: ${FLEETDECK_PASSWORD}` in `config.yaml` needs that variable.
 
