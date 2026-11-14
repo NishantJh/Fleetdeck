@@ -268,6 +268,7 @@ def create_app(
     app.state.jobs = jobs
     app.state.inventory = inventory
     app.state.scheduler = scheduler
+    app.state.vulns = vulns
     app.state.dockhand = dockhand
     app.state.demo_dockhand = demo_dockhand
     app.state.setup_token = setup_token
