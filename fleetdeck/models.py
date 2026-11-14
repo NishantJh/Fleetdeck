@@ -284,6 +284,8 @@ class ServiceEntry(BaseModel):
     category: str = "Other"
     # One line under the name (fleetdeck.description or services.descriptions); empty: machine/stack.
     description: str = ""
+    # A URL set from the Services tab's edit mode (stored in the dashboard's database); empty: automatic.
+    configured_url: str = ""
     links: list[ServiceLink] = Field(default_factory=list)
     # Looks like something with a web UI (proxy route, explicit URL, known app, or a web port).
     ui: bool = True

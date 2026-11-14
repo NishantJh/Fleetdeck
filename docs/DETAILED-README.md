@@ -448,11 +448,13 @@ The **Services** view turns the last Docker check into a launchpad: one card per
 Tools, Virtualization, Other). A card carries the service name, machine and stack, status, the image, the preferred
 link and any secondary links. Search filters by name, machine, stack, image or category.
 
-Each card has a small **group picker**: choose another group to move that service there, or *Automatic (from the app)*
-to put it back where its image, name or `fleetdeck.category` label says. Choosing **Support** hides it with the support
-containers; moving a support container to a normal group shows it, with its links, without turning on *Show support
-containers*. The choice is kept in the dashboard's state database (like hiding), so it survives rescans and restarts
-and never edits the machine, its labels or `config.yaml`.
+**Edit** in the Services toolbar reveals a group picker, **Link**, and **Hide/Unhide/Remove** on every card. The group
+picker moves that service to another group, or *Automatic (from the app)* puts it back where its image, name or
+`fleetdeck.category` label says. Choosing **Support** hides it with the support containers; moving a support container
+to a normal group shows it, with its links, without turning on *Show support containers*. **Link** opens a URL field:
+the value becomes the card's main link (beating proxy discovery and `services.urls`), and **Clear** returns to the
+automatic link. All three choices are kept in the dashboard's state database, so they survive rescans and restarts and
+never edit the machine, its labels or `config.yaml`.
 
 When a service publishes several ports, the card shows the primary link and a single **N ports** menu instead of one
 chip per port, so a media server does not make its card several rows taller than the others. Its tooltip says how many
@@ -466,8 +468,9 @@ enter the update/pull path.
 
 In order:
 
-1. `services.urls` in the config, or a `fleetdeck.url=https://app.example` label on the service. This is the
-   homepage-style explicit `href`: it always wins, so no proxy discovery can point the card somewhere else.
+1. A URL set on the card in **Edit** mode, `services.urls` in the config, or a `fleetdeck.url=https://app.example`
+   label on the service. This is the homepage-style explicit `href`: it always wins, so no proxy discovery can point
+   the card somewhere else.
 2. A proxy route: Caddy Docker Proxy (`caddy=app.example`), Traefik (`traefik.http.routers.<name>.rule=Host(...)`)
    or nginx-proxy (`VIRTUAL_HOST=app.example`).
 3. Routes read from Caddy's **live admin config** (`http://127.0.0.1:2019/config/`, in the container or on the
@@ -532,7 +535,9 @@ services:
 
 `services.urls` is the deterministic way to point a discovered card at a URL: the first URL becomes the card's
 main link and the rest are chips, ahead of anything the scan found. Keys match the card id
-(`target|stack|service`), the container name or the compose service name, case-insensitively.
+(`target|stack|service`), the container name or the compose service name, case-insensitively. You can also set one
+from the UI: **Edit** → **Link** on a card stores a single URL for it in the state database (no config edit, no
+machine change), and **Clear** returns to the automatic link.
 
 `services.addresses` is the reliable way to give a machine a browser-reachable name. The scan also reports the
 machine's default-route address; a provider's SSH/API address is used when set. There is deliberately no fallback to

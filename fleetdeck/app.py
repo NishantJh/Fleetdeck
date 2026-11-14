@@ -114,6 +114,11 @@ class MoveServicesRequest(BaseModel):
     category: str = Field("", max_length=40)  # blank: back to the automatic group
 
 
+class SetServiceUrlRequest(BaseModel):
+    service_id: str = Field(min_length=1, max_length=512)
+    url: str = Field("", max_length=2048)  # blank clears the card's own URL
+
+
 SERVICE_ID = re.compile(r"^[A-Za-z0-9:._/@|\-]{1,512}$")
 SERVICE_CATEGORY = re.compile(r"^[A-Za-z0-9 &_-]{1,40}$")
 
@@ -625,6 +630,7 @@ def create_app(
             checks=jobs.checks,
             sources=sources.status_models(),
             categories=jobs.service_categories,
+            urls=jobs.service_urls,
         )
 
     @app.get("/api/services")
@@ -712,6 +718,23 @@ def create_app(
             if unknown:
                 raise HTTPException(404, f"unknown service: {', '.join(unknown[:5])}")
         jobs.set_service_categories(ids, category)
+        return services_view()
+
+    @app.post("/api/services/url")
+    async def set_service_url(req: SetServiceUrlRequest):
+        """Set the URL a card opens (an empty url clears it). Stored here; the machine is untouched."""
+        sid = req.service_id.strip()
+        if not SERVICE_ID.fullmatch(sid):
+            raise HTTPException(400, "invalid service id")
+        if sid not in {entry.id for entry in services_view().services}:
+            raise HTTPException(404, "unknown service")
+        url = req.url.strip()
+        if url:
+            clean = safe_url(url)
+            if clean is None:
+                raise HTTPException(400, "that is not a usable http(s) address")
+            url = clean
+        jobs.set_service_url(sid, url)
         return services_view()
 
     @app.post("/api/hidden")

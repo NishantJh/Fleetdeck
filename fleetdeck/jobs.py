@@ -155,6 +155,8 @@ class JobManager:
         self.hidden_services: set[str] = set()
         # Service id -> the group chosen on the Services tab instead of the automatic one. Read-only too.
         self.service_categories: dict[str, str] = {}
+        # Service id -> the URL set on the card in edit mode (stored here, not on the machine).
+        self.service_urls: dict[str, str] = {}
         # Machines set to monitor-only on the dashboard (the config can set it too, see Target.monitor_only).
         self.monitor_only_ids: set[str] = set()
         # Host id -> the folder its Back up button is set to use every time.
@@ -168,6 +170,7 @@ class JobManager:
             self.hidden = store.load_hidden()
             self.hidden_services = store.load_hidden_services()
             self.service_categories = store.load_service_categories()
+            self.service_urls = store.load_service_urls()
             self.monitor_only_ids = store.load_monitor_only()
             self.backup_places = store.load_backup_places()
             self.update_commands = store.load_update_commands()
@@ -259,6 +262,18 @@ class JobManager:
                 self.service_categories.pop(sid, None)
         if self.store is not None:
             self._persist(self.store.set_service_categories, service_ids, category)
+
+    def set_service_url(self, service_id: str, url: str) -> None:
+        """Set (or clear, with "") the URL a card opens. Stored here only; no machine changes."""
+        if url:
+            self.service_urls[service_id] = url
+        else:
+            self.service_urls.pop(service_id, None)
+        if self.store is not None:
+            if url:
+                self._persist(self.store.save_service_url, service_id, url)
+            else:
+                self._persist(self.store.delete_service_url, service_id)
 
     def set_monitor_only(self, target_ids: list[str], on: bool) -> None:
         if on:

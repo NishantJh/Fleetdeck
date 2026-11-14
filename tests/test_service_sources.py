@@ -151,3 +151,26 @@ def test_add_and_remove_manual_link(tmp_path):
         assert all(s["name"] != "Router" for s in gone["services"])
         assert client.delete("/api/services/links/nope").status_code == 404
         assert client.post("/api/services/scan").status_code == 200  # demo source never connects
+
+
+def test_set_and_clear_a_card_url_from_edit_mode(tmp_path):
+    cfg = AppConfig(demo=True, state_file=str(tmp_path / "s.db"))
+    with TestClient(create_app(cfg)) as client:
+        services = client.get("/api/services").json()["services"]
+        card = next(s for s in services if s["id"].startswith("src:") and s["links"])
+        bad = client.post("/api/services/url", json={"service_id": card["id"], "url": "javascript:alert(1)"})
+        assert bad.status_code == 400
+        view = client.post(
+            "/api/services/url", json={"service_id": card["id"], "url": "https://nas.internal.lan"}
+        ).json()
+        updated = next(s for s in view["services"] if s["id"] == card["id"])
+        assert updated["configured_url"] == "https://nas.internal.lan"
+        assert updated["links"][0]["url"] == "https://nas.internal.lan"
+    with TestClient(create_app(cfg)) as client:  # survives a restart
+        services = client.get("/api/services").json()["services"]
+        updated = next(s for s in services if s["id"] == card["id"])
+        assert updated["configured_url"] == "https://nas.internal.lan"
+        view = client.post("/api/services/url", json={"service_id": card["id"], "url": ""}).json()
+        updated = next(s for s in view["services"] if s["id"] == card["id"])
+        assert updated["configured_url"] == ""
+        assert updated["links"][0]["url"] != "https://nas.internal.lan"

@@ -186,6 +186,7 @@ def native_entries(
     cfg: ServicesConfig,
     hidden: set[str],
     stacks: dict[str, StacksResult] | None = None,
+    urls: dict[str, str] | None = None,
 ) -> list[ServiceEntry]:
     """Cards for apps that run directly on a machine (helper-script containers), from the last OS check."""
     out: list[ServiceEntry] = []
@@ -218,7 +219,8 @@ def native_entries(
                 *_routes_for(listening, other, addresses, foreign=True),
             ]
         links: list[ServiceLink] = []
-        for url in _override_urls(cfg, keys):
+        configured = (urls or {}).get(keys[0], "")
+        for url in ([configured] if configured else []) + _override_urls(cfg, keys):
             if (link := _link(url, "explicit", "Configured")) and all(x.url != link.url for x in links):
                 links.append(link)
         links.extend(_proxy_links(routes, links))
@@ -227,7 +229,7 @@ def native_entries(
                 links.append(link)
         if not links:
             continue
-        key = f"{target_id}|app|{app}"[:512]
+        key = keys[0][:512]
         out.append(
             ServiceEntry(
                 id=key,
@@ -239,6 +241,7 @@ def native_entries(
                 state=target.status[:32],
                 category=_category_for(app) or "Other",
                 description=str(_lookup(cfg.descriptions, keys) or "")[:160],
+                configured_url=configured,
                 links=links[:5],
                 ui=True,
                 hidden=key in hidden,
@@ -469,6 +472,7 @@ def _entry(
     hidden: set[str],
     at: datetime | None,
     categories: dict[str, str] | None = None,
+    urls: dict[str, str] | None = None,
 ) -> ServiceEntry | None:
     if service.status not in ("running", "restarting") and not cfg.show_stopped:
         return None
@@ -482,7 +486,9 @@ def _entry(
         category, ui = chosen, chosen != "Support"
     elif not ui:
         category = service.category or "Support"
-    links = service_links(service, address, _override_urls(cfg, keys)) if (ui or is_hidden or chosen) else []
+    configured = (urls or {}).get(key, "")
+    overrides = ([configured] if configured else []) + _override_urls(cfg, keys)
+    links = service_links(service, address, overrides) if (ui or is_hidden or chosen) else []
     return ServiceEntry(
         id=key,
         target_id=target.id,
@@ -493,6 +499,7 @@ def _entry(
         state=service.status[:32],
         category=category,
         description=(str(_lookup(cfg.descriptions, keys) or "") or service.description)[:160],
+        configured_url=configured,
         links=links,
         ui=ui,
         hidden=is_hidden,
@@ -572,11 +579,13 @@ def build_services(
     checks: dict[str, CheckResult] | None = None,
     sources: list[SourceStatus] | None = None,
     categories: dict[str, str] | None = None,
+    urls: dict[str, str] | None = None,
 ) -> ServicesView:
     """The catalogue from cached scan results plus configured manual links.
 
     ``categories`` moves individual cards to a group the user chose on the Services tab. It is kept in the
-    dashboard's database, so it survives rescans and restarts without editing labels or config.yaml."""
+    dashboard's database, so it survives rescans and restarts without editing labels or config.yaml.
+    ``urls`` are URLs set on a card in edit mode, keyed by card id (also stored in the database)."""
     now = now or datetime.now(UTC)
     if not cfg.enabled:
         return ServicesView(generated_at=now, enabled=False)
@@ -603,7 +612,9 @@ def build_services(
                 if extra:
                     service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
                 if (
-                    entry := _entry(target, stack.name, service, address, cfg, hidden, result.checked_at, categories)
+                    entry := _entry(
+                        target, stack.name, service, address, cfg, hidden, result.checked_at, categories, urls
+                    )
                 ) is not None:
                     entries.append(entry)
         for service in result.standalone:
@@ -611,10 +622,10 @@ def build_services(
             if extra:
                 service = service.model_copy(update={"proxy": [*service.proxy, *extra]})
             if (
-                entry := _entry(target, None, service, address, cfg, hidden, result.checked_at, categories)
+                entry := _entry(target, None, service, address, cfg, hidden, result.checked_at, categories, urls)
             ) is not None:
                 entries.append(entry)
-    entries.extend(native_entries(targets, checks or {}, cfg, hidden, stacks))
+    entries.extend(native_entries(targets, checks or {}, cfg, hidden, stacks, urls))
     manual = [(None, link) for link in cfg.links] + [(lid, link) for lid, link in (added or {}).items()]
     for link_id, link in manual:
         url = safe_url(link.url)
