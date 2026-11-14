@@ -7,8 +7,8 @@
 
 A self-hosted dashboard to update Proxmox, Incus, LXC, Docker and Linux servers from one place. Built for
 homelabs: it covers Proxmox VE hosts, LXCs and VMs, Incus, Docker Compose stacks, and plain Debian or Ubuntu
-machines such as a Raspberry Pi or VPS. See what's pending and update it, back up each machine's setup, and
-get notified when something needs attention.
+machines such as a Raspberry Pi or VPS. See what's pending and update it, back up each machine's setup,
+get notified when something needs attention, and open every service's own UI from one Services view.
 
 ![The dashboard (demo data)](docs/screenshots/dashboard-light.png#gh-light-mode-only)
 ![The dashboard (demo data)](docs/screenshots/dashboard-dark.png#gh-dark-mode-only)
@@ -16,14 +16,17 @@ get notified when something needs attention.
 * Checks and updates Proxmox VE (hosts, LXCs and VMs), Incus, and plain Linux machines such as a Raspberry Pi or VPS.
 * Shows pending packages and reboots, updates on demand, and streams each job's output to the Activity panel.
 * Takes snapshots before upgrades and updates Docker Compose stacks.
+* A services catalogue that links to each app's UI through Caddy, Traefik or nginx-proxy labels, a Caddyfile, or a published port.
 * Checks on a schedule and sends notifications through ntfy, Gotify, Discord, Telegram or a JSON webhook.
 * Shows when each machine was last backed up, and can back up the settings of a host.
 
 ## Containers
 
 Each machine can have its containers managed by Fleetdeck (Compose image checks and confirmed stack updates), monitored
-only, handled by Dockhand, linked to another manager, or left off. See
-[Containers and Dockhand](docs/DETAILED-README.md#containers-and-dockhand).
+only, handled by Dockhand, linked to another manager, or left off. Native checks compare registry digests without
+pulling images, and the **Services** tab turns the same inventory into links to each service's own UI. See
+[Containers and Dockhand](docs/DETAILED-README.md#containers-and-dockhand) and
+[Services](docs/DETAILED-README.md#services).
 
 ## Quick start
 

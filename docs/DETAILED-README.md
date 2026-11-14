@@ -53,8 +53,9 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   new is pending (a new update, a new pending reboot, or a check that started failing). It never
   upgrades on its own. It also looks for newer Docker images (`schedule.check_docker`, on by default; `false` for OS checks only). The dashboard asks each image's
   registry for the tag's current digest and compares it with what the machine has: no pull, nothing runs on the machine.
+  Multi-platform tags are compared by index **and** platform-manifest digest, so a current image is not reported as an update.
   Images pinned by digest, built on the machine or from a private registry are *unknown*; for private registries and network
-  errors the machine pulls instead, as before. Images are only pulled for real when you click Update. *Test notification* in the toolbar sends a test message.
+  errors the machine pulls instead, as before. Images are only pulled for real when you click Update. The same scan feeds the **Services** tab. *Test notification* in the toolbar sends a test message.
 * **Image vulnerability scans (on by default; `security.scan_images: false` turns them off):** the dashboard scans the Docker
   images of every stack with [Trivy](https://trivy.dev) after every Docker check (the buttons, or the scheduled one when `schedule.check_docker` is on), or
   when you press *Scan images* on the Containers tab. Trivy runs inside the dashboard's container and reads each image
@@ -157,8 +158,10 @@ Raspberry Pi OS), **dnf/yum**, **apk** (Alpine) and **pacman** (Arch).
   and the job is still in Activity; roll back to anything older in Proxmox or Incus.
 * **Docker Compose stacks:** the **Docker** button on any machine (host, VM or LXC) lists the Compose
   stacks running on it, found through the labels Compose puts on its containers, so no paths to set up.
-  *Check for new images* downloads newer images for every running stack (nothing is restarted, but a later `docker compose up` you run
-  yourself on that machine will use them) and marks the stacks that are behind; **Update** on a stack pulls and runs
+  *Check for new images* asks each image's registry for the tag's current digest and compares it with what the
+  machine has: no pull and nothing runs on the machine. Only images a registry can't settle (private registry,
+  no network) are pulled on the machine. Multi-platform tags are compared by index **and** platform-manifest
+  digest, so a current image is never kept in a false "update available" state; **Update** on a stack pulls and runs
   `docker compose up -d --no-deps` for the services running now (their stopped `depends_on` services are not started).
   A service you stopped stays stopped, a stopped stack is not started, and a failed pull
   leaves the stack as it was. Tick *remove old images after an update* to also run `docker image prune`
@@ -360,7 +363,7 @@ The image is public, so `docker pull` needs no login. To pin a version instead o
 
 ## Containers and Dockhand
 
-The dashboard has **All**, **Machines** and **Containers** views. A machine has an OS row and, where it runs Docker, a
+The dashboard has **All**, **Machines**, **Containers** and **Services** views. A machine has an OS row and, where it runs Docker, a
 container row, each with its own status, counters, check time and actions. Opening details never starts a check or
 installs anything. On phones the same information appears as separate card sections.
 
@@ -370,7 +373,7 @@ Open **Docker management** in a machine's More menu. It is one setting per machi
 
 | Choice | Checks | Updates |
 | --- | --- | --- |
-| Fleetdeck | Compose image checks (pulls images, restarts nothing) | Confirmed stack updates |
+| Fleetdeck | Compose image checks by registry digest (no pull; pulls only where a registry can't answer) | Confirmed stack updates |
 | Monitor only | Same Compose checks | None |
 | Dockhand | Saved Dockhand reports; fresh registry checks if allowed | Through Dockhand, if enabled for this machine |
 | Link to another manager | None | Opens the manager you name |
@@ -405,12 +408,15 @@ not followed, and process proxy settings are ignored. Use a token with only the 
 
 ### Checks and schedules
 
-*Check all* asks whether to check OS only or OS and containers when Docker hosts are eligible. Native checks pull
-Compose images; Dockhand checks read registry metadata only. Scheduled rounds check containers only when
-`schedule.check_docker: true` (and, for Dockhand, `allow_checks: true`). Fleetdeck never edits Dockhand's own schedule.
+*Check all* asks whether to check OS only or OS and containers when Docker hosts are eligible. Native checks compare
+registry digests and do not pull; only images a registry can't settle are pulled on the machine. Dockhand checks read
+registry metadata only. Scheduled rounds include containers when `schedule.check_docker: true` (the default; and, for
+Dockhand, `allow_checks: true`). Fleetdeck never edits Dockhand's own schedule.
 
-Native checks cover Compose stacks, not standalone containers or newer version tags. Each service row shows its image
-state and the two image IDs compared (the container's and the tag's), which helps explain multi-platform images.
+Native checks and updates cover Compose stacks, not standalone containers; the **Services** view lists standalone
+containers that look like a UI, but never updates them. Each service row shows its image state and the two image IDs
+compared (the container's and the tag's), which helps explain multi-platform images. Registry comparisons use both the
+tag's index digest and the platform manifest digest, so a current multi-platform image is not reported as an update.
 Dockhand rows also show review findings (new tags, pinned digests, held updates), local images and exclusions; coverage
 exceptions never turn the host status red.
 
@@ -432,6 +438,66 @@ Proxmox names the same command. No force or skiplock option is ever sent.
 
 `FLEETDECK_DEMO=1 python -m fleetdeck` shows fake machines. `FLEETDECK_CONFIG=config.docker-demo.yaml python -m fleetdeck`
 adds a simulated Dockhand mapping that never contacts any server. Use separate demo state, never real credentials.
+
+## Services
+
+The **Services** view turns the last Docker check into a launchpad: one card per web UI, grouped by category
+(Media, Home automation, Network, Storage & backup, Monitoring, Security & identity, Development, Productivity,
+Tools, Virtualization, Other). A card carries the service name, machine and stack, status, the image, the preferred
+link and any secondary links. Search filters by name, machine, stack, image or category.
+
+The view is read-only. It is built from cached scan results; **Reload** reads them again, and **Check container
+updates** refreshes the underlying scan. Standalone containers are included for the catalogue, but never enter the
+update/pull path.
+
+### Where the links come from
+
+In order:
+
+1. A `fleetdeck.url=https://app.example` label on the service.
+2. A proxy route: Caddy Docker Proxy (`caddy=app.example`), Traefik (`traefik.http.routers.<name>.rule=Host(...)`)
+   or nginx-proxy (`VIRTUAL_HOST=app.example`).
+3. Routes read from a **Caddyfile** in a Caddy container (`/etc/caddy/Caddyfile` or `/config/Caddyfile`). Only site
+   lines, braces and `reverse_proxy` directives are read; snippets, imports, wildcards and placeholders are skipped.
+4. A published host port, using the machine's own address (`services.addresses`, the provider's address, or the
+   address the scan discovers from the default route).
+5. A host-network or macvlan/ipvlan address. Bridge and overlay container IPs are **never** used as browser links.
+
+A service is considered to have a UI when it has one of those links, is a known app, or publishes a web port.
+Infrastructure images (databases, queues, exporters, Tailscale/Gerbil and proxy containers) are hidden by default.
+**Show support containers** reveals them; **Show hidden** reveals services you hid yourself. Hiding is stored on the
+server and survives restarts.
+
+Labels you can use:
+
+- `fleetdeck.url=https://...` — explicit link, highest priority.
+- `fleetdeck.ui=true|false` — force a service into or out of the normal list.
+- `fleetdeck.category=Media` — override its category.
+
+### Configuration
+
+```yaml
+services:
+  enabled: true             # false hides the tab and the API catalogue
+  show_stopped: false       # true also lists stopped containers, dimmed
+  addresses:                # browser-reachable hostname/IP per target id or machine name
+    pi4: pi4.lan
+    "proxmox:pve:docker-vm": 192.168.1.20
+  links:                    # things Docker discovery cannot see
+    - name: Proxmox
+      url: https://pve.lan:8006
+      category: Virtualization
+    - name: NAS
+      url: https://nas.lan
+      category: Storage & backup
+```
+
+`services.addresses` is the reliable way to give a machine a browser-reachable name. The scan also reports the
+machine's default-route address; a provider's SSH/API address is used when set. There is deliberately no fallback to
+the machine's display name, because that often only resolves inside Docker or on the Docker host.
+
+Links are validated as `http(s)` URLs with a concrete host; embedded credentials and `javascript:`/`data:` values are
+rejected. The dashboard never fetches a service URL, favicon or icon.
 
 ## Settings
 
