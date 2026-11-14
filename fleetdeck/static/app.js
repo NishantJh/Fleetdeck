@@ -709,17 +709,10 @@ async function load(refresh = false) {
     state.scanning = !!data.scanning;
     state.backupPlaces = data.backup_places || {};
     state.backupFolder = data.backup_folder || null;
-    if (data.settings?.services) {
-      try {
-        state.services = await api("/api/services");
-      } catch (error) {
-        state.services = { enabled: false, services: [], error: error.message };
-      }
-    } else {
-      state.services = { enabled: false, services: [] };
-    }
-    state.jobs = await api("/api/jobs");
-    state.schedule = await api("/api/schedule");
+    const servicesCall = data.settings?.services
+      ? api("/api/services").catch((error) => ({ enabled: false, services: [], error: error.message }))
+      : Promise.resolve({ enabled: false, services: [] });
+    [state.services, state.jobs, state.schedule] = await Promise.all([servicesCall, api("/api/jobs"), api("/api/schedule")]);
     loaded = true;
     // Drop selections for targets that disappeared or can no longer be upgraded.
     const ok = new Set(state.targets.filter((v) => selectable(v) && matchesKpi(v, state.filter)).map((v) => v.target.id));
