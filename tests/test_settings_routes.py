@@ -25,7 +25,7 @@ def app_client(tmp_path):
 
     os.environ.update(monkey_env)
     app = create_app(load_config(str(path)), config_file=str(path))
-    with TestClient(app) as c:
+    with TestClient(app, client=("192.168.1.5", 50000)) as c:
         c.auth = ("me", "pw")
         yield c, path
     os.environ.pop("OLD_TOKEN", None)
@@ -351,3 +351,96 @@ def test_notify_removed_and_renamed_targets_delete_their_secrets(notify_client):
     ren = {"type": "webhook", "name": "C", "url": "https://h.example/c", "previous_index": 0}
     assert c.put("/api/settings/notify", json={"revision": rev, "targets": [ren]}).status_code == 200
     assert store.get("notify.B.url") is None and store.get("notify.C.url")
+
+
+def _guarded(c, section, **kw):
+    cur = c.get(f"/api/settings/{section}").json()
+    return {**cur, "password": "pw", **kw}
+
+
+def test_console_requires_password_and_saves(app_client):
+    c, path = app_client
+    cur = _guarded(c, "console", enabled=True, password="nope")
+    assert c.put("/api/settings/console", json=cur).status_code == 403
+    assert "console" not in yaml.safe_load(path.read_text())
+    r = c.put(
+        "/api/settings/console", json={**cur, "password": "pw", "unlock_minutes": 5, "exclude": ["a", "b, c", "a"]}
+    )
+    assert r.status_code == 200 and r.json()["saved"] is True, r.text
+    assert r.json()["restart_needed"] == ["Console"]
+    saved = yaml.safe_load(path.read_text())["console"]
+    assert saved["enabled"] is True and saved["unlock_minutes"] == 5 and saved["exclude"] == ["a", "b", "c"]
+    assert yaml.safe_load(path.read_text())["max_parallel"] == 2
+    assert c.get("/api/settings/console").json()["restart_pending"] is True
+
+
+def test_console_lockout_needs_confirm(app_client):
+    c, path = app_client
+    cur = _guarded(c, "console", enabled=True, allow_from=["203.0.113.0/24"])
+    r = c.put("/api/settings/console", json=cur)
+    assert r.status_code == 200 and r.json()["saved"] is False and r.json()["warnings"]
+    assert "console" not in yaml.safe_load(path.read_text())
+    r = c.put("/api/settings/console", json={**cur, "confirm": True})
+    assert r.json()["saved"] is True
+    assert yaml.safe_load(path.read_text())["console"]["allow_from"] == ["203.0.113.0/24"]
+
+
+def test_console_rejects_bad_network_and_stale_revision(app_client):
+    c, path = app_client
+    cur = _guarded(c, "console", allow_from=["not-a-network"])
+    assert c.put("/api/settings/console", json=cur).status_code == 400
+    cur = _guarded(c, "console")
+    assert c.put("/api/settings/console", json={**cur, "keep_days": 30}).status_code == 200
+    assert c.put("/api/settings/console", json={**cur, "keep_days": 31}).status_code == 409
+
+
+def test_network_validates_and_saves(app_client):
+    c, path = app_client
+    cur = _guarded(c, "network")
+    for bad in (
+        {"public_url": "ftp://x"},
+        {"allowed_hosts": ["http://x.lan"]},
+        {"allowed_hosts": ["host:8080"]},
+        {"trusted_proxies": ["proxy.lan"]},
+        {"known_hosts": "a\nb"},
+    ):
+        assert c.put("/api/settings/network", json={**cur, **bad}).status_code == 400, bad
+    r = c.put(
+        "/api/settings/network",
+        json={
+            **cur,
+            "public_url": "http://192.168.1.50:8080/",
+            "allowed_hosts": ["testserver", "*.lan"],
+            "trusted_proxies": ["172.18.0.0/16"],
+        },
+    )
+    assert r.status_code == 200 and r.json()["saved"] is True, r.text
+    saved = yaml.safe_load(path.read_text())
+    assert saved["public_url"] == "http://192.168.1.50:8080"
+    assert saved["allowed_hosts"] == ["testserver", "*.lan"] and saved["trusted_proxies"] == ["172.18.0.0/16"]
+    assert set(r.json()["restart_needed"]) == {"Dashboard address", "Allowed host names", "Trusted proxies"}
+
+
+def test_network_allowed_hosts_without_current_host_needs_confirm(app_client):
+    c, path = app_client
+    cur = _guarded(c, "network", allowed_hosts=["other.lan"])
+    r = c.put("/api/settings/network", json=cur)
+    assert r.json()["saved"] is False and "testserver" in r.json()["warnings"][0]
+    assert "allowed_hosts" not in yaml.safe_load(path.read_text())
+    assert c.put("/api/settings/network", json={**cur, "confirm": True}).json()["saved"] is True
+
+
+def test_network_star_proxy_and_missing_known_hosts_warn(app_client):
+    c, _ = app_client
+    cur = _guarded(c, "network", trusted_proxies=["*"], known_hosts="/nonexistent/known_hosts")
+    w = c.put("/api/settings/network", json=cur).json()["warnings"]
+    assert len(w) == 2
+
+
+def test_network_blank_removes_keys(app_client):
+    c, path = app_client
+    cur = _guarded(c, "network", public_url="http://a.lan")
+    assert c.put("/api/settings/network", json=cur).status_code == 200
+    cur = _guarded(c, "network", public_url="")
+    assert c.put("/api/settings/network", json=cur).status_code == 200
+    assert "public_url" not in yaml.safe_load(path.read_text())

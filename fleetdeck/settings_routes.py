@@ -15,18 +15,23 @@ import logging
 import re
 from collections.abc import Callable
 from copy import deepcopy
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 import asyncssh
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field, ValidationError
 
 from . import onboarding as ob
 from .config import AppConfig, NotifyConfig, ScheduleConfig, ServiceSource
+from .console import _trusted, client_ip, is_secure, network_problem
 from .notify import Notifier
 from .secrets_migrate import find_plaintext, migrate
 from .secrets_store import SecretError, SecretStore, secret_name
+from .security import password_ok
 from .service_sources import scan_source
 
 log = logging.getLogger(__name__)
@@ -113,6 +118,33 @@ class NotifyIn(BaseModel):
     targets: list[TargetIn] = Field(default_factory=list, max_length=20)
 
 
+class GuardedIn(BaseModel):
+    """A section that changes who can reach the dashboard or run commands: the password is asked again, and
+    anything that could lock the person out is reported first and saved only with ``confirm``."""
+
+    revision: str
+    password: str = Field("", max_length=1024, repr=False)
+    confirm: bool = False
+
+
+class ConsoleIn(GuardedIn):
+    enabled: bool = False
+    terminal: bool = True
+    allow_from: list[str] = Field(default_factory=list, max_length=64)
+    allow_plain_http: bool = True
+    unlock_minutes: int = Field(15, ge=1, le=60)
+    keep_days: int = Field(90, ge=1, le=3650)
+    notify: bool = True
+    exclude: list[str] = Field(default_factory=list, max_length=200)
+
+
+class NetworkIn(GuardedIn):
+    public_url: str = Field("", max_length=2048)
+    allowed_hosts: list[str] = Field(default_factory=list, max_length=64)
+    trusted_proxies: list[str] = Field(default_factory=list, max_length=64)
+    known_hosts: str = Field("", max_length=4096)
+
+
 SECRET_REF = re.compile(r"\$\{SECRET:([^}]+)\}")
 # Types whose url is itself the credential.
 URL_SECRET = {"discord", "webhook"}
@@ -162,6 +194,89 @@ def apply_updates(raw: dict, req: UpdatesIn) -> dict:
         community_scripts_update=req.community_scripts_update,
     )
     return data
+
+
+def _clean_list(items: list[str], what: str) -> list[str]:
+    """Trimmed, no blanks, no repeats, one line each."""
+    out: list[str] = []
+    for item in items:
+        for part in item.replace(",", "\n").splitlines():
+            part = part.strip()
+            if part and part not in out:
+                if len(part) > 253:
+                    raise FormError(f"{what}: an entry is too long")
+                out.append(part)
+    return out
+
+
+def apply_console(raw: dict, req: ConsoleIn) -> dict:
+    data = deepcopy(raw)
+    con = data.get("console") or {}
+    con.update(
+        enabled=req.enabled,
+        terminal=req.terminal,
+        allow_from=_clean_list(req.allow_from, "Allowed networks"),
+        allow_plain_http=req.allow_plain_http,
+        unlock_minutes=req.unlock_minutes,
+        keep_days=req.keep_days,
+        notify=req.notify,
+        exclude=_clean_list(req.exclude, "Excluded machines"),
+    )
+    data["console"] = con
+    return data
+
+
+HOST_NAME = re.compile(r"^(\*|\*?\.?[A-Za-z0-9_-]+(\.[A-Za-z0-9_-]+)*)$")
+
+
+def apply_network(raw: dict, req: NetworkIn) -> dict:
+    import ipaddress
+
+    data = deepcopy(raw)
+    url = req.public_url.strip().rstrip("/")
+    if url:
+        parts = urlsplit(url)
+        if parts.scheme not in ("http", "https") or not parts.netloc or any(c.isspace() for c in url):
+            raise FormError(
+                "Dashboard address must look like http://192.168.1.50:8080 or https://fleetdeck.example.com"
+            )
+        data["public_url"] = url
+    else:
+        data.pop("public_url", None)
+    hosts = _clean_list(req.allowed_hosts, "Allowed host names")
+    for h in hosts:
+        if not HOST_NAME.match(h):
+            raise FormError(f"Allowed host names: {h!r} must be a bare name or address without http:// or a port")
+    proxies = _clean_list(req.trusted_proxies, "Trusted proxies")
+    for p in proxies:
+        if p == "*":
+            continue
+        try:
+            ipaddress.ip_network(p, strict=False)
+        except ValueError:
+            raise FormError(f"Trusted proxies: {p!r} is not an address or range such as 172.18.0.0/16") from None
+    kh = req.known_hosts.strip()
+    if "\n" in kh or "\r" in kh:
+        raise FormError("known_hosts is a single file path")
+    for key, value in (("allowed_hosts", hosts), ("trusted_proxies", proxies)):
+        if value:
+            data[key] = value
+        else:
+            data.pop(key, None)
+    if kh:
+        data["known_hosts"] = kh
+    else:
+        data.pop("known_hosts", None)
+    return data
+
+
+def host_allowed(host_header: str, allowed: list[str]) -> bool:
+    """Whether Starlette's TrustedHostMiddleware would let a request with this Host header through."""
+    if not allowed:
+        return True
+    host = host_header.split(":")[0].lower()
+    pats = [a.lower() for a in allowed]
+    return "*" in pats or any(host == p or (p.startswith("*") and host.endswith(p[1:])) for p in pats)
 
 
 def target_view(t: NotifyConfig) -> dict:
@@ -606,6 +721,167 @@ def add_settings_routes(
         if notifier is not None:
             notifier.targets = validated.notify
         return {"saved": True}
+
+    def _audit(row: dict) -> None:
+        store = getattr(app.state, "store", None)
+        at = datetime.now(UTC).isoformat(timespec="seconds")
+        try:
+            if store is not None:
+                store.add_console_log(at, json.dumps({**row, "at": at}))
+        except Exception:  # noqa: BLE001 - the save itself must not fail on the log
+            log.exception("could not write the audit log")
+
+    async def _reauth(request: Request, password: str, kind: str) -> str:
+        """The dashboard password again before a change to who can reach it or run commands. Returns the user."""
+        ip = client_ip(request)
+        throttle = getattr(app.state, "throttle", None)
+        if throttle is not None and (left := throttle.blocked_for(ip)) > 0:
+            raise HTTPException(429, f"too many failed attempts, try again in {int(left) + 1} s")
+        user = cfg.auth.username if cfg.auth else "demo"
+        if not await asyncio.to_thread(password_ok, cfg.auth, password):
+            if throttle is not None:
+                throttle.failed(ip)
+            _audit({"kind": f"{kind}-failed", "user": user, "ip": ip})
+            raise HTTPException(403, "wrong password")
+        if throttle is not None:
+            throttle.succeeded(ip)
+        return user
+
+    async def _save_guarded(request: Request, req: GuardedIn, kind: str, apply, warn, changed):
+        """Revision check, password, validate, report lock-out risks, write. ``warn(validated)`` lists what could cut
+        the person off; they are saved only on a second request with ``confirm``. ``changed(new, old)`` names the
+        settings that differ from the running ones (all of these need a restart)."""
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        editable()
+        user = await _reauth(request, req.password, kind)
+        async with lock:
+            if req.revision != _revision():
+                raise HTTPException(409, "The configuration changed; reload the page before saving")
+            try:
+                data = apply(ob.read_raw(paths), req)
+                validated = ob.validate_raw(data, str(paths.config))
+                warnings = warn(validated, request)
+                if warnings and not req.confirm:
+                    return {"saved": False, "warnings": warnings}
+                await asyncio.to_thread(ob.write_raw, paths, data)
+            except (ValueError, ValidationError) as e:
+                raise HTTPException(400, _form_message(e)) from None
+        _audit({"kind": kind, "user": user, "ip": client_ip(request), "warnings": warnings})
+        return {"saved": True, "warnings": [], "restart_needed": changed(validated, cfg)}
+
+    def _console_changed(new: AppConfig, old: AppConfig) -> list[str]:
+        return ["Console"] if new.console != old.console else []
+
+    def _network_changed(new: AppConfig, old: AppConfig) -> list[str]:
+        names = {
+            "public_url": "Dashboard address",
+            "allowed_hosts": "Allowed host names",
+            "trusted_proxies": "Trusted proxies",
+            "known_hosts": "SSH known_hosts",
+        }
+        return [label for key, label in names.items() if getattr(new, key) != getattr(old, key)]
+
+    def _console_warnings(new: AppConfig, request: Request) -> list[str]:
+        out: list[str] = []
+        con = new.console
+        if con.enabled and cfg.auth is None:
+            raise FormError("The console needs a dashboard login (auth:); it stays off without one")
+        if con.enabled:
+            if (why := network_problem(request, con.allow_from, new.trusted_proxies)) is not None:
+                out.append(f"You would be locked out of the console from here: {why}.")
+            if not con.allow_plain_http and not is_secure(request):
+                out.append("This page is on plain http://, so you could not use the console from here.")
+            if not con.allow_from:
+                out.append("No network is allowed, so nobody could use the console.")
+        return out
+
+    def _network_warnings(new: AppConfig, request: Request) -> list[str]:
+        out: list[str] = []
+        host = request.headers.get("host", "")
+        if not host_allowed(host, new.allowed_hosts):
+            out.append(
+                f"You are reaching the dashboard as {host!r}, which is not in the allowed host names. "
+                "Once restarted, this address would be refused; only editing config.yaml by hand would get you back."
+            )
+        forwarded = request.headers.get("x-forwarded-for")
+        trusted = new.trusted_proxies or ["127.0.0.1"]
+        if "*" in new.trusted_proxies:
+            out.append("'*' believes X-Forwarded-For from anyone, so a visitor can pretend to be any address.")
+        elif forwarded:
+            import ipaddress
+
+            try:
+                peer = ipaddress.ip_address(client_ip(request))
+            except ValueError:
+                peer = None
+            if not _trusted(peer, trusted):
+                out.append(
+                    f"This request came through a proxy at {client_ip(request)}, which would not be trusted. "
+                    "Everyone behind it would share one address, so the login lockout would lock them all out "
+                    "together, and the console would refuse them."
+                )
+        if (
+            why := network_problem(request, new.console.allow_from, new.trusted_proxies)
+        ) is not None and new.console.enabled:
+            out.append(f"With these settings you could not use the console from here: {why}.")
+        if new.known_hosts and not Path(new.known_hosts).is_file():
+            out.append(f"{new.known_hosts} is not a file the dashboard can see. SSH connections would be refused.")
+        return out
+
+    def _view_extra(request: Request) -> dict:
+        return {
+            "your_address": client_ip(request),
+            "your_host": request.headers.get("host", ""),
+            "plain_http": not is_secure(request),
+        }
+
+    @app.get("/api/settings/console")
+    async def get_console(request: Request):
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        c = await asyncio.to_thread(on_disk)
+        con = c.console
+        return {
+            "revision": _revision(),
+            "writable": paths.writable(),
+            "has_auth": cfg.auth is not None,
+            "restart_pending": bool(_console_changed(c, cfg)),
+            **_view_extra(request),
+            "enabled": con.enabled,
+            "terminal": con.terminal,
+            "allow_from": con.allow_from,
+            "allow_plain_http": con.allow_plain_http,
+            "unlock_minutes": con.unlock_minutes,
+            "keep_days": con.keep_days,
+            "notify": con.notify,
+            "exclude": con.exclude,
+        }
+
+    @app.put("/api/settings/console")
+    async def put_console(req: ConsoleIn, request: Request):
+        return await _save_guarded(request, req, "settings-console", apply_console, _console_warnings, _console_changed)
+
+    @app.get("/api/settings/network")
+    async def get_network(request: Request):
+        if first_run:
+            raise HTTPException(409, "create the admin login first")
+        c = await asyncio.to_thread(on_disk)
+        return {
+            "revision": _revision(),
+            "writable": paths.writable(),
+            "restart_pending": _network_changed(c, cfg),
+            **_view_extra(request),
+            "public_url": c.public_url or "",
+            "allowed_hosts": c.allowed_hosts,
+            "trusted_proxies": c.trusted_proxies,
+            "known_hosts": c.known_hosts or "",
+            "default_known_hosts": str(paths.known_hosts),
+        }
+
+    @app.put("/api/settings/network")
+    async def put_network(req: NetworkIn, request: Request):
+        return await _save_guarded(request, req, "settings-network", apply_network, _network_warnings, _network_changed)
 
     @app.post("/api/settings/notify/test")
     async def test_notify(req: TargetIn):
