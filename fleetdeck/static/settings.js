@@ -166,6 +166,7 @@ window.FleetdeckSettings = (() => {
       h("h2", {}, r.plaintext.length ? "Secrets in plain text" : "Encrypted secrets"),
       ...(r.plaintext.length ? [h("p", { class: "muted" }, `${r.plaintext.length} secret(s) are stored as plain text in config.yaml: ${r.plaintext.join(", ")}. Moving them encrypts them in the state database and leaves a reference in config.yaml. Checked first: the dashboard must read back exactly the same values, or nothing changes.`)] : []),
       ...(r.available ? [] : [h("p", { class: "muted" }, "Needs FLEETDECK_STATE (the image sets it).")]),
+      ...(r.writable ? [] : [h("p", { class: "muted" }, "config.yaml is read-only here, so secrets cannot be moved.")]),
       h("div", { class: "row" }, ...(r.plaintext.length ? [button] : []), status),
     );
   }
