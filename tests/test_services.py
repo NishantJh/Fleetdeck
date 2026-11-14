@@ -278,6 +278,8 @@ def test_services_tab_has_homepage_style_cards_and_collapsible_groups():
     assert "svc-state" in js and "serviceState(" in js  # STOPPED / UPDATE tag only
     assert "service.description" in js and "linkHost(" not in js  # no machine:port or link host subtitle
     assert "svc-badge" not in js  # no "listed only" / duplicate update badges on the card
+    assert "svc-go" not in js and "ARROW" not in js  # no dead arrow
+    assert "data-toggle-service-edit" in js and "is-editing" in js  # group picker/hide only in edit mode
     assert "data-toggle-svc-group" in js and "collapsedServiceGroups" in js
     assert ".svc-group.is-collapsed .svc-grid" in css and ".svc-collapse" in css
 
