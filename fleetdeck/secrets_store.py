@@ -75,11 +75,14 @@ class SecretStore:
     def get(self, name: str) -> str | None:
         if not self.db_path.exists():
             return None
-        with contextlib.closing(sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True, timeout=10)) as db:
-            try:
-                row = db.execute("SELECT data FROM secrets WHERE name = ?", (name,)).fetchone()
-            except sqlite3.OperationalError:  # no table yet
-                return None
+        try:
+            with contextlib.closing(sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True, timeout=10)) as db:
+                try:
+                    row = db.execute("SELECT data FROM secrets WHERE name = ?", (name,)).fetchone()
+                except sqlite3.OperationalError:  # no table yet
+                    return None
+        except sqlite3.Error as e:
+            raise SecretError(f"can't read the secret store: {e}") from None
         if row is None:
             return None
         key = load_key(self.keys_dir)
@@ -98,10 +101,16 @@ class SecretStore:
         assert key is not None
         nonce = os.urandom(12)
         blob = nonce + AESGCM(key).encrypt(nonce, value.encode(), name.encode())
-        with contextlib.closing(self._connect()) as db:
-            db.execute("INSERT OR REPLACE INTO secrets (name, data) VALUES (?, ?)", (name, blob))
+        try:
+            with contextlib.closing(self._connect()) as db:
+                db.execute("INSERT OR REPLACE INTO secrets (name, data) VALUES (?, ?)", (name, blob))
+        except (sqlite3.Error, OSError) as e:
+            raise SecretError(f"can't write the secret store: {e}") from None
 
     def delete(self, name: str) -> None:
         if self.db_path.exists():
-            with contextlib.closing(self._connect()) as db:
-                db.execute("DELETE FROM secrets WHERE name = ?", (name,))
+            try:
+                with contextlib.closing(self._connect()) as db:
+                    db.execute("DELETE FROM secrets WHERE name = ?", (name,))
+            except (sqlite3.Error, OSError) as e:
+                raise SecretError(f"can't write the secret store: {e}") from None

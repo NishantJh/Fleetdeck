@@ -184,7 +184,7 @@ class FakeRegistry:
     def __init__(self, verdicts):
         self.verdicts, self.asked = verdicts, []
 
-    async def check(self, image, digests, image_id="", platform=""):
+    async def check(self, image, digests, image_id="", platform="", container_id=""):
         self.asked.append(image)
         return self.verdicts[image]
 
@@ -315,6 +315,19 @@ def _index_handler(config_for_amd):
         )
 
     return handler
+
+
+async def test_the_running_container_is_compared_when_its_id_is_known():
+    # The tag is current (D1) but the container was made from the old image: still an update.
+    c = _client(_index_handler(CFG))
+    v = await c.check("caddy:2", [f"caddy@{D2}"], AMD, "linux/amd64", container_id=OLD_CFG)
+    assert v.status == "update"
+    # The container is the current platform image, even when the tag's ID is recorded elsewhere.
+    v = await c.check("caddy:2", [f"caddy@{D2}"], OLD_CFG, "linux/amd64", container_id=AMD)
+    assert v.status == "current"
+    # Classic store: the container's config digest is enough.
+    v = await c.check("caddy:2", [f"caddy@{D2}"], OLD_CFG, "linux/amd64", container_id=CFG)
+    assert v.status == "current"
 
 
 async def test_image_id_equal_to_the_platform_config_digest_is_current():

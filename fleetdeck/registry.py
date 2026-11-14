@@ -97,18 +97,32 @@ class RegistryClient:
     async def aclose(self) -> None:
         await self.client.aclose()
 
-    async def check(self, image: str, repo_digests: list[str], image_id: str = "", platform: str = "") -> Verdict:
-        """Is the tag of ``image`` still what the machine has (``repo_digests``: its RepoDigests)?
+    async def check(
+        self,
+        image: str,
+        repo_digests: list[str],
+        image_id: str = "",
+        platform: str = "",
+        container_id: str = "",
+    ) -> Verdict:
+        """Is what the machine runs current (``repo_digests``: the tag's RepoDigests)?
 
         ``image_id`` and ``platform`` (``os/arch[/variant]``) are the tag's local image ID and platform. They let a
         digest mismatch be settled the way Watchtower and What's Up Docker do: by comparing the image itself (its
-        config digest) with the registry's manifest for this platform, which no image store can disagree about."""
+        config digest) with the registry's manifest for this platform, which no image store can disagree about.
+
+        ``container_id`` is the image ID the **running container** was made from. When given, the answer is about
+        that image, not merely about the tag: a pulled-but-not-recreated container stays an update, while an image
+        store that records the index or platform digest in a different place still counts as current."""
         host, repo, tag, pinned = parse_ref(image)
         if pinned:
             return Verdict("unknown", "pinned", "pinned by digest: the tag is not followed")
-        local = {d.partition("@")[2] for d in repo_digests if "@" in d}
-        if not local:
+        tag_ids = {d.partition("@")[2] for d in repo_digests if "@" in d}
+        if not tag_ids:
             return Verdict("unknown", "local", "built on the machine or not from a registry: no digest to compare")
+        # The tag's RepoDigests describe the tag; the container can be older than it. Prefer the container's
+        # own ID when the caller has it, so we answer the question the badge asks.
+        local = {container_id} if container_id else tag_ids
         try:
             remote = await self.remote_digest(host, repo, tag)
         except RegistryError as e:
@@ -119,12 +133,13 @@ class RegistryClient:
         # manifest digest in RepoDigests, which made every current multi-platform image look behind.
         if local & await self.platform_digests(host, repo, tag):
             return Verdict("current")
-        if not image_id:
+        compare = container_id or image_id
+        if not compare:
             return Verdict("update")
         # Still different: compare the image content. Anything unclear is "unknown", which pulls on the machine
         # (authoritative) instead of raising a false "update available" that no update can clear.
         try:
-            same = await self._same_image(host, repo, tag, image_id, platform)
+            same = await self._same_image(host, repo, tag, compare, platform)
         except RegistryError as e:
             return Verdict("unknown", e.reason, e.note)
         if same is None:

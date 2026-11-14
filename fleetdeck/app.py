@@ -109,7 +109,13 @@ class HideServicesRequest(BaseModel):
     hidden: bool = True
 
 
+class MoveServicesRequest(BaseModel):
+    service_ids: list[str] = Field(min_length=1, max_length=500)
+    category: str = Field("", max_length=40)  # blank: back to the automatic group
+
+
 SERVICE_ID = re.compile(r"^[A-Za-z0-9:._/@|\-]{1,512}$")
+SERVICE_CATEGORY = re.compile(r"^[A-Za-z0-9 &_-]{1,40}$")
 
 
 class DockerSettingsRequest(DockerSettings):
@@ -618,6 +624,7 @@ def create_app(
             added=added,
             checks=jobs.checks,
             sources=sources.status_models(),
+            categories=jobs.service_categories,
         )
 
     @app.get("/api/services")
@@ -688,6 +695,23 @@ def create_app(
                 raise HTTPException(404, f"unknown service: {', '.join(unknown[:5])}")
         jobs.set_hidden_services(ids, req.hidden)
         return {"hidden": sorted(jobs.hidden_services)}
+
+    @app.post("/api/services/category")
+    async def move_services(req: MoveServicesRequest):
+        """Move cards to another group on the Services tab. Stored here; labels and config.yaml are untouched."""
+        ids = list(dict.fromkeys(req.service_ids))
+        if any(not SERVICE_ID.fullmatch(sid) for sid in ids):
+            raise HTTPException(400, "invalid service id")
+        category = req.category.strip()
+        if category and not SERVICE_CATEGORY.fullmatch(category):
+            raise HTTPException(400, "that is not a usable group name")
+        if category:
+            known = {entry.id for entry in services_view().services}
+            unknown = [sid for sid in ids if sid not in known]
+            if unknown:
+                raise HTTPException(404, f"unknown service: {', '.join(unknown[:5])}")
+        jobs.set_service_categories(ids, category)
+        return services_view()
 
     @app.post("/api/hidden")
     async def set_hidden(req: HideRequest):
@@ -810,7 +834,9 @@ def create_app(
 
     @app.get("/")
     async def index():
-        return FileResponse(STATIC / "index.html")
+        # Revalidate the shell too: it names the versioned scripts and styles. A cached copy after an
+        # update can otherwise keep an old page pointing at an old settings.js or services.js.
+        return FileResponse(STATIC / "index.html", headers={"Cache-Control": "no-cache"})
 
     app.mount("/static", _RevalidatedStatic(directory=STATIC), name="static")
     return app

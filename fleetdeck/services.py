@@ -428,8 +428,12 @@ def build_services(
     added: dict[str, StaticServiceLink] | None = None,
     checks: dict[str, CheckResult] | None = None,
     sources: list[SourceStatus] | None = None,
+    categories: dict[str, str] | None = None,
 ) -> ServicesView:
-    """The catalogue from cached scan results plus configured manual links."""
+    """The catalogue from cached scan results plus configured manual links.
+
+    ``categories`` moves individual cards to a group the user chose on the Services tab. It is kept in the
+    dashboard's database, so it survives rescans and restarts without editing labels or config.yaml."""
     now = now or datetime.now(UTC)
     if not cfg.enabled:
         return ServicesView(generated_at=now, enabled=False)
@@ -489,6 +493,10 @@ def build_services(
                 icon=icon_slug(name=link.name),
             )
         )
+    if categories:
+        for entry in entries:
+            if chosen := categories.get(entry.id):
+                entry.category = chosen
     order = {name: index for index, name in enumerate(CATEGORY_ORDER)}
     entries.sort(key=lambda e: (order.get(e.category, len(order)), e.name.lower(), e.machine.lower()))
     return ServicesView(

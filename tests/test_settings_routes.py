@@ -1,3 +1,5 @@
+import os
+
 import pytest
 import yaml
 from fastapi.testclient import TestClient
@@ -73,7 +75,8 @@ def test_add_sources_live(app_client):
     assert saved[0]["ssh"]["host"] == "192.168.1.30" and saved[0]["ssh"]["key_file"].endswith("id_ed25519")
     assert saved[1]["token"] == "${SECRET:services.Portainer.token}"
     assert b"secret-token-1" not in (path.parent / "state.db").read_bytes()
-    assert (path.parent / "keys" / "secrets.key").stat().st_mode & 0o077 == 0
+    if os.name != "nt":  # Windows has no POSIX mode bits
+        assert (path.parent / "keys" / "secrets.key").stat().st_mode & 0o077 == 0
     assert [s["name"] for s in c.get("/api/services").json()["sources"]] == ["NAS", "Portainer"]
     assert "secret-token-1" not in c.get("/api/settings/services").text
 
@@ -137,7 +140,8 @@ def test_migrate_plaintext_secrets(tmp_path):
         with TestClient(app) as c:
             c.auth = ("me", "pw")
             assert c.get("/api/settings/secrets").json()["plaintext"] == ["proxmox.pve.token_secret"]
-            assert c.post("/api/settings/secrets/migrate").json() == {"moved": ["proxmox.pve.token_secret"]}
+            migrated = c.post("/api/settings/secrets/migrate").json()
+            assert migrated["moved"] == ["proxmox.pve.token_secret"] and migrated["revision"]
             saved = yaml.safe_load(path.read_text())
             assert saved["proxmox"][0]["token_secret"] == "${SECRET:proxmox.pve.token_secret}"
             assert saved["notify"][0]["token"] == "${KEEP_ME}"
@@ -646,3 +650,56 @@ def test_machine_unknown_kind_mismatch_and_stale_revision(machine_client):
     assert put_machine(c, rev, {**m, "name": "nope"}).status_code == 400
     assert put_machine(c, rev, {**m, "kind": "incus"}).status_code == 400
     assert put_machine(c, "stale", m).status_code == 409
+
+
+def test_a_save_returns_the_revision_the_next_settings_form_needs(app_client):
+    """The page keeps every form open; a save in one changes the config revision for all of them."""
+    c, _ = app_client
+    services = c.get("/api/settings/services").json()
+    schedule = c.get("/api/settings/schedule").json()
+    assert services["revision"] == schedule["revision"]
+    saved = c.put("/api/settings/schedule", json={**schedule, "check_every": "6h"})
+    assert saved.status_code == 200
+    fresh = saved.json()["revision"]
+    assert fresh and fresh != schedule["revision"]
+    # The Services form still holds the revision it loaded with; the page replaces it with the returned one.
+    r = c.put("/api/settings/services", json=body(schedule["revision"], []))
+    assert r.status_code == 409
+    r = c.put("/api/settings/services", json=body(fresh, []))
+    assert r.status_code == 200, r.text
+    assert r.json()["revision"] == c.get("/api/settings/services").json()["revision"]
+
+
+def test_migrate_survives_name_collisions_and_literal_dollar_braces(tmp_path):
+    from fleetdeck.secrets_store import SecretStore
+
+    path = tmp_path / "config.yaml"
+    path.write_text(
+        "state_file: state.db\nauth:\n  username: me\n  password_hash: " + hash_password("pw") + "\n"
+        "notify:\n"
+        "  - type: gotify\n    name: alerts\n    url: https://g.lan\n    token: first-password\n"
+        "  - type: gotify\n    name: alerts\n    url: https://g2.lan\n    token: second-password\n"
+        '  - type: gotify\n    name: edge\n    url: https://g3.lan\n    token: "literal${notareference"\n'
+    )
+    app = create_app(load_config(str(path)), config_file=str(path))
+    with TestClient(app) as c:
+        c.auth = ("me", "pw")
+        state = c.get("/api/settings/secrets").json()
+        assert set(state["plaintext"]) == {"notify.alerts.token", "notify.edge.token"}
+        moved = c.post("/api/settings/secrets/migrate")
+        assert moved.status_code == 200, moved.text
+        assert moved.json()["moved"] == ["notify.alerts.token", "notify.alerts.token", "notify.edge.token"]
+        assert moved.json()["revision"]
+        saved = yaml.safe_load(path.read_text())
+        assert [n["token"] for n in saved["notify"]] == [
+            "${SECRET:notify.alerts.token}",
+            "${SECRET:notify.alerts.token_2}",
+            "${SECRET:notify.edge.token}",
+        ]
+        store = SecretStore(path.parent / "state.db", path.parent / "keys")
+        assert store.get("notify.alerts.token") == "first-password"
+        assert store.get("notify.alerts.token_2") == "second-password"
+        assert store.get("notify.edge.token") == "literal${notareference"
+        loaded = load_config(str(path)).notify
+        assert [n.token for n in loaded] == ["first-password", "second-password", "literal${notareference"]
+        assert c.get("/api/settings/secrets").json()["plaintext"] == []

@@ -273,6 +273,36 @@ def test_route_read_on_another_machines_caddy_links_this_machines_service():
     assert services[0].links[0].url == "https://app.lan/"
 
 
+def test_category_override_moves_a_card_and_can_be_reset():
+    app = service(name="pihole", image="pihole/pihole:latest")
+    result = stacks(app)
+    target_id = target().id
+    auto = build_services({"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set()).services[0]
+    assert auto.category == "Network"
+
+    moved = build_services(
+        {"ssh:pi": target()},
+        {"ssh:pi": result},
+        ServicesConfig(),
+        set(),
+        categories={auto.id: "Tools"},
+    ).services[0]
+    assert moved.category == "Tools"
+    assert moved.id == f"{target_id}|stack|pihole"
+    restored = build_services(
+        {"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set(), categories={}
+    ).services[0]
+    assert restored.category == "Network"
+
+
+def test_category_override_also_moves_manual_links():
+    links = ServicesConfig(links=[StaticServiceLink(name="Proxmox", url="https://pve.lan:8006")])
+    auto = build_services({}, {}, links, set()).services[0]
+    assert auto.category == "Other"
+    moved = build_services({}, {}, links, set(), categories={auto.id: "Virtualization"}).services[0]
+    assert moved.category == "Virtualization"
+
+
 def test_entries_carry_icon_and_update_flag():
     plex = service(name="plex", image="plexinc/pms-docker:latest", outdated=True)
     result = build_services({"ssh:pi": target()}, {"ssh:pi": stacks(plex)}, ServicesConfig(), set())

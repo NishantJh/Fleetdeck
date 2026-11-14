@@ -16,7 +16,7 @@ get notified when something needs attention, and open every service's own UI fro
 * Checks and updates Proxmox VE (hosts, LXCs and VMs), Incus, and plain Linux machines such as a Raspberry Pi or VPS.
 * Shows pending packages and reboots, updates on demand, and streams each job's output to the Activity panel.
 * Takes snapshots before upgrades and updates Docker Compose stacks.
-* A services catalogue that links to each app's UI through Caddy, Traefik or nginx-proxy labels, a Caddyfile, or a published port.
+* A services catalogue that links to each app's UI through Caddy, Traefik or nginx-proxy labels, a Caddyfile, or a published port, grouped by category you can change per card.
 * Checks on a schedule and sends notifications through ntfy, Gotify, Discord, Telegram or a JSON webhook.
 * Shows when each machine was last backed up, and can back up the settings of a host.
 

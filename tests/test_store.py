@@ -34,6 +34,16 @@ def test_checks_round_trip(tmp_path):
     assert loaded["t1"].packages[0].phased is True
 
 
+def test_service_categories_round_trip_and_reset(tmp_path):
+    s = Store(tmp_path / "state.db")
+    s.set_service_categories(["a|s|app", "b|s|app"], "Media")
+    assert s.load_service_categories() == {"a|s|app": "Media", "b|s|app": "Media"}
+    s.set_service_categories(["a|s|app"], "Tools")
+    assert s.load_service_categories()["a|s|app"] == "Tools"
+    s.set_service_categories(["b|s|app"], "")
+    assert s.load_service_categories() == {"a|s|app": "Tools"}
+
+
 def test_jobs_keep_order_trim_and_mark_interrupted(tmp_path):
     s = Store(tmp_path / "sub" / "state.db")  # parent folder is created
     s.save_job(_job("a"))

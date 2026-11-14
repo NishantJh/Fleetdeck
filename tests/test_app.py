@@ -205,10 +205,14 @@ def test_error_report_lists_errors_without_secrets():
         assert "tok-abc123" not in r.text
 
 
-def test_static_files_are_revalidated_so_a_stale_app_js_is_not_kept():
+def test_static_files_and_pages_are_revalidated_so_stale_assets_are_not_kept():
     with TestClient(create_app(AppConfig(demo=True))) as client:
-        res = client.get("/static/app.js")
-    assert res.status_code == 200 and res.headers["cache-control"] == "no-cache"
+        asset = client.get("/static/app.js")
+        page = client.get("/")
+        settings = client.get("/settings")
+    assert asset.status_code == 200 and asset.headers["cache-control"] == "no-cache"
+    assert page.status_code == 200 and page.headers["cache-control"] == "no-cache"
+    assert settings.status_code == 200 and settings.headers["cache-control"] == "no-cache"
 
 
 def test_monitor_only_from_the_dashboard_blocks_updates_but_not_reboots(monkeypatch):
@@ -341,3 +345,14 @@ def test_services_catalogue_and_hide_round_trip(tmp_path):
 
         client.post("/api/services/hidden", json={"service_ids": [pihole["id"]], "hidden": False})
         assert client.get("/api/services").json()["hidden"] == 0
+
+        moved = client.post("/api/services/category", json={"service_ids": [pihole["id"]], "category": "Tools"})
+        assert moved.status_code == 200
+        assert next(s for s in moved.json()["services"] if s["id"] == pihole["id"])["category"] == "Tools"
+        # Reset: back to the automatic group from the image/name.
+        reset = client.post("/api/services/category", json={"service_ids": [pihole["id"]], "category": ""})
+        assert next(s for s in reset.json()["services"] if s["id"] == pihole["id"])["category"] == "Network"
+        unknown = client.post("/api/services/category", json={"service_ids": ["nope"], "category": "Tools"})
+        assert unknown.status_code == 404
+        bad = client.post("/api/services/category", json={"service_ids": [pihole["id"]], "category": "bad/group"})
+        assert bad.status_code == 400

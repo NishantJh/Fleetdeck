@@ -52,5 +52,6 @@ Goal: a single self-hosted dashboard for managing a homelab. OS updates come fir
 - [x] Read-only discovery of Compose services and standalone containers: ports, networks, host ports and a filtered set of proxy/UI labels
 - [x] Services tab: links from explicit URLs, proxy labels (Caddy Docker Proxy, Traefik, nginx-proxy), published ports and macvlan/ipvlan; grouped by category with search, hide/unhide and manual `services.links`
 - [x] Read Caddyfile routes for Caddyfile-based proxies
-- [x] Compare multi-platform images by index **and** platform-manifest digest, so current images are never reported as updates
+- [x] Compare multi-platform images by index **and** platform-manifest digest, using the running container's image as well as the tag, so current images are never reported as updates
+- [x] Move a service to another group from its card (stored in the dashboard database; *Automatic* restores the label/image group)
 
