@@ -92,6 +92,18 @@ community_scripts_update: true
 #     - name: NAS
 #       url: https://nas.lan
 #       category: Storage & backup
+#   # Machines listed here ONLY (a NAS): never updated, checked, snapshotted or backed up. Read-only listing of
+#   # their containers; scanned when you open the tab or press "Scan other machines". Links need `address`.
+#   sources:
+#     - name: unraid
+#       type: ssh                 # one fixed read-only docker listing over SSH (Unraid, Synology, any Docker host)
+#       address: unraid.lan       # browser-reachable host for the links
+#       ssh: {host: 192.168.1.20, user: root, key_file: /data/keys/nas, known_hosts: /data/known_hosts}
+#     - name: qnap
+#       type: docker-api          # Docker Engine API (token optional), or Portainer with portainer_endpoint
+#       url: http://qnap.lan:2375
+#       token: ${NAS_TOKEN}
+#       # portainer_endpoint: 1   # set this when url is a Portainer server; token is its API key
 # Check every machine on a timer (e.g. 30m, 6h, 1d; at least 5m). Nothing is upgraded
 # automatically unless you turn on auto_security_updates below; you get a notification when something new is pending.
 schedule:
