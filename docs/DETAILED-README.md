@@ -475,8 +475,11 @@ In order:
    `/etc/caddy/Caddyfile` or `/config/Caddyfile` is read as a fallback. Nginx and Nginx Proxy Manager files and
    Traefik's file provider or API are read the same way: a route belongs to a service when its upstream is that
    container's IP or name, or one of the machine's own names/addresses with a port the service publishes (or
-   listens on, with host networking). When several proxy URLs fit, a local one (a private address or a
-   `.lan`/`.local`/`.home.arpa` name) is the card's main link and the public one is a chip.
+   listens on, with host networking). Services-only machines (a NAS) are matched too: their scan reports the
+   machine's own names/addresses (a configured hostname is also resolved), host ports, the Unraid webui port and
+   any macvlan/ipvlan IP, so a proxy on another machine still attaches its route. When several proxy URLs fit, a
+   local one (a private address or a `.lan`/`.local`/`.home.arpa` name) is the card's main link and the public one
+   is a chip.
 4. A published host port, using the machine's own address (`services.addresses`, the provider's address, or the
    address the scan discovers from the default route).
 5. A host-network or macvlan/ipvlan address. Bridge and overlay container IPs are **never** used as browser links.

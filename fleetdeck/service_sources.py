@@ -8,6 +8,7 @@ or ``GET`` on the Docker Engine / Portainer API) and the result is only kept in 
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import logging
 import re
@@ -18,7 +19,7 @@ import httpx
 from .config import ServiceSource
 from .executors import SSHExecutor
 from .models import NetworkAddress, PortMapping, SourceStatus, StackService, StacksResult, Target
-from .stacks import _parse_exposed, _parse_labels, _parse_ports
+from .stacks import _parse_exposed, _parse_labels, _parse_ports, _scan_host
 from .urls import safe_host, safe_url
 
 log = logging.getLogger("fleetdeck.sources")
@@ -26,12 +27,17 @@ log = logging.getLogger("fleetdeck.sources")
 MAX_CONTAINERS = 500
 MIN_INTERVAL = 20.0  # seconds between scans of the same source: the button can't hammer a NAS
 
-# Fixed, read-only. Prints the networks' drivers, then the inspect JSON of every container.
+# Fixed, read-only. Prints the networks' drivers, the machine's own names/addresses, then the inspect
+# JSON of every container.
 SSH_SCRIPT = r"""
 command -v docker >/dev/null 2>&1 || { echo "__DOCKER__=none"; exit 0; }
 ids=$(docker ps -aq 2>/dev/null) || { echo "__DOCKER__=down"; exit 0; }
 echo "__DOCKER__=yes"
 docker network ls --format '__ND__ {{.Name}} {{.Driver}}' 2>/dev/null
+host_fqdn=$(hostname -f 2>/dev/null | head -n 1 | cut -c1-253)
+host_ips=$(hostname -I 2>/dev/null)
+[ -n "$host_ips" ] || host_ips=$(ip -o -4 addr show 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | tr '\n' ' ')
+printf '__HOST__ %s %s\n' "$(hostname 2>/dev/null | head -n 1 | cut -c1-253)" "$host_fqdn $host_ips"
 echo "__INSPECT__"
 if [ -n "$ids" ]; then docker inspect $ids; else echo "[]"; fi
 """
@@ -72,6 +78,8 @@ def _finish(item: dict, labels: dict[str, str], ports: list[PortMapping], addres
 def parse_inspect(stdout: str, address: str) -> StacksResult:
     """``SSH_SCRIPT`` output to a scan result. Anything unexpected is skipped, never raised."""
     docker, drivers, body = "yes", {}, ""
+    host_name, host_address = "", ""
+    host_addresses: list[str] = []
     head, sep, body = stdout.partition("__INSPECT__")
     for line in head.splitlines():
         if line.startswith("__DOCKER__="):
@@ -80,6 +88,15 @@ def parse_inspect(stdout: str, address: str) -> StacksResult:
             parts = line.split(None, 2)
             if len(parts) == 3:
                 drivers[parts[1]] = parts[2].strip()[:32]
+        elif line.startswith("__HOST__"):
+            # The machine's own name, FQDN and addresses: a proxy on another machine forwards to these.
+            tokens = line.split()[1:]
+            if tokens:
+                host_name = (safe_host(tokens[0]) or "")[:253]
+            for token in tokens:
+                if (host := _scan_host(token)) and host not in host_addresses:
+                    host_addresses.append(host)
+            host_address = host_addresses[0] if host_addresses else ""
     error = None
     if docker == "none":
         error = "Docker is not installed on this machine"
@@ -121,7 +138,14 @@ def parse_inspect(stdout: str, address: str) -> StacksResult:
                 name=name, image=str(cfg_.get("Image") or "")[:512], status=str(state.get("Status") or ""), **extra
             )
         )
-    return StacksResult(standalone=services, checked_at=datetime.now(UTC), error=error)
+    return StacksResult(
+        standalone=services,
+        checked_at=datetime.now(UTC),
+        host_name=host_name,
+        host_address=host_address,
+        host_addresses=host_addresses[:20],
+        error=error,
+    )
 
 
 def parse_api(containers: list, networks: list, address: str) -> StacksResult:
@@ -225,6 +249,31 @@ async def scan_source(source: ServiceSource) -> StacksResult:
     return await _scan_api(source, address)
 
 
+async def _with_resolved_addresses(source: ServiceSource, result: StacksResult) -> StacksResult:
+    """Add the source's own IPs from DNS when it is configured by a name.
+
+    A proxy on another machine often forwards to the machine's IP, so the name alone is not enough to match."""
+    host = source_address(source)
+    if not host:
+        return result
+    try:
+        ipaddress.ip_address(host)
+        return result  # already an address
+    except ValueError:
+        pass
+    try:
+        infos = await asyncio.wait_for(asyncio.get_running_loop().getaddrinfo(host, None), 5)
+    except (OSError, TimeoutError):
+        return result
+    found: list[str] = []
+    for info in infos[:20]:
+        if (value := _scan_host(str(info[4][0]))) and value not in result.host_addresses and value not in found:
+            found.append(value)
+    if not found:
+        return result
+    return result.model_copy(update={"host_addresses": [*result.host_addresses, *found][:20]})
+
+
 class SourceCache:
     """The last scan of each services-only source, in memory. Scans only happen when asked."""
 
@@ -278,7 +327,8 @@ class SourceCache:
                     return
                 self._last[name] = loop.time()
                 try:
-                    self.results[name] = await scan_source(source)
+                    found = await scan_source(source)
+                    self.results[name] = await _with_resolved_addresses(source, found)
                 except Exception as exc:  # a NAS being off must not break the tab
                     log.warning("services source %s: %s", name, exc)
                     old = self.results.get(name)

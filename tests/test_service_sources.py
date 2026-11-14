@@ -47,6 +47,13 @@ def test_inspect_parses_unraid_webui_label_with_mapped_port():
     assert svc.ports[0].host_port == 18096
 
 
+def test_inspect_reads_the_machines_own_names_and_addresses():
+    out = "__DOCKER__=yes\n__HOST__ tower tower.lan 192.168.1.50 10.0.0.4 127.0.0.1\n__INSPECT__\n[]\n"
+    result = parse_inspect(out, "tower")
+    assert (result.host_name, result.host_address) == ("tower", "tower")
+    assert result.host_addresses == ["tower", "tower.lan", "192.168.1.50", "10.0.0.4"]
+
+
 def test_inspect_survives_garbage_and_missing_docker():
     assert parse_inspect("__DOCKER__=none\n", "nas").error
     assert parse_inspect("__DOCKER__=yes\n__INSPECT__\nnot json", "nas").error

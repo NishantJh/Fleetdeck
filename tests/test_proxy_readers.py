@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from urllib.parse import urlsplit
 
 from fleetdeck.config import ServicesConfig
-from fleetdeck.models import PortMapping, ProxyRoute, Stack, StackService, StacksResult, Target
+from fleetdeck.models import NetworkAddress, PortMapping, ProxyRoute, Stack, StackService, StacksResult, Target
 from fleetdeck.proxy_readers import (
     PROXY_SCAN_SH,
     parse_caddy_config,
@@ -391,3 +391,60 @@ def test_routes_match_services_across_machines_by_address_and_port():
     ).services
     hosts = sorted({urlsplit(link.url).hostname for entry in view for link in entry.links})
     assert [h for h in hosts if h != "192.168.1.20"] == ["app.example.com"]
+
+
+def _source(name="nas", address="tower"):
+    return Target(id=f"src:{name}", name=name, platform="ssh", source=name, kind="host", address=address)
+
+
+def test_a_services_only_machine_matches_another_machines_proxy_by_its_address():
+    # A services-only source now reports its own FQDN and IPs, so a proxy on a target can be matched to it.
+    jelly = service(name="jellyfin", ports=[PortMapping(host_port=8096, container_port=8096)])
+    nas = StacksResult(standalone=[jelly], checked_at=NOW, host_addresses=["tower.lan", "192.168.1.50"])
+    proxy = StacksResult(
+        routes=[ProxyRoute(kind="caddy", host="jelly.internal.lan", tls=True, upstream="192.168.1.50:8096")],
+        checked_at=NOW,
+    )
+    view = build_services(
+        {"ssh:proxy": target("proxy", "192.168.1.5"), "src:nas": _source()},
+        {"ssh:proxy": proxy, "src:nas": nas},
+        ServicesConfig(),
+        set(),
+    ).services
+    assert view[0].links[0].url == "https://jelly.internal.lan/"
+
+
+def test_a_host_network_source_service_matches_the_proxy_port_from_its_webui_label():
+    jelly = service(name="jellyfin", network_mode="host", webui_url="http://tower.lan:8096/web")
+    nas = StacksResult(standalone=[jelly], checked_at=NOW, host_addresses=["tower.lan", "192.168.1.50"])
+    proxy = StacksResult(
+        routes=[ProxyRoute(kind="caddy", host="jelly.internal.lan", tls=True, upstream="tower.lan:8096")],
+        checked_at=NOW,
+    )
+    view = build_services(
+        {"ssh:proxy": target("proxy", "192.168.1.5"), "src:nas": _source()},
+        {"ssh:proxy": proxy, "src:nas": nas},
+        ServicesConfig(),
+        set(),
+    ).services
+    assert view[0].links[0].url == "https://jelly.internal.lan/"
+
+
+def test_a_macvlan_source_container_matches_a_remote_proxy_by_its_ip():
+    ha = service(
+        name="homeassistant",
+        networks=[NetworkAddress(name="br0", ip="192.168.1.60", driver="macvlan")],
+        exposed_ports=[8123],
+    )
+    nas = StacksResult(standalone=[ha], checked_at=NOW)
+    proxy = StacksResult(
+        routes=[ProxyRoute(kind="caddy", host="ha.internal.lan", tls=True, upstream="192.168.1.60:8123")],
+        checked_at=NOW,
+    )
+    view = build_services(
+        {"ssh:proxy": target("proxy", "192.168.1.5"), "src:nas": _source()},
+        {"ssh:proxy": proxy, "src:nas": nas},
+        ServicesConfig(),
+        set(),
+    ).services
+    assert view[0].links[0].url == "https://ha.internal.lan/"
