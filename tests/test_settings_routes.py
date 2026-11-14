@@ -329,3 +329,25 @@ def test_notify_test_sends_without_saving(notify_client, monkeypatch):
     monkeypatch.setattr(Notifier, "_send_one", boom)
     r = c.post("/api/settings/notify/test", json={"type": "telegram", "token": "123:abc", "chat_id": "1"}).json()
     assert r["ok"] is False and "123:abc" not in r["error"]
+
+
+def test_notify_removed_and_renamed_targets_delete_their_secrets(notify_client):
+    from fleetdeck.secrets_store import SecretStore
+
+    c, path, _ = notify_client
+    store = SecretStore(path.parent / "state.db", path.parent / "keys")
+    rev = c.get("/api/settings/notify").json()["revision"]
+    a = {"type": "webhook", "name": "A", "url": "https://h.example/a"}
+    b = {"type": "webhook", "name": "B", "url": "https://h.example/b"}
+    assert c.put("/api/settings/notify", json={"revision": rev, "targets": [a, b]}).status_code == 200
+    assert store.get("notify.A.url") and store.get("notify.B.url")
+    rev = c.get("/api/settings/notify").json()["revision"]
+    # remove A, keep B (blank url keeps its reference)
+    keep = {"type": "webhook", "name": "B", "url": "", "previous_index": 1}
+    assert c.put("/api/settings/notify", json={"revision": rev, "targets": [keep]}).status_code == 200
+    assert store.get("notify.A.url") is None and store.get("notify.B.url")
+    # rename B with a new address: the old secret goes, the new one stays
+    rev = c.get("/api/settings/notify").json()["revision"]
+    ren = {"type": "webhook", "name": "C", "url": "https://h.example/c", "previous_index": 0}
+    assert c.put("/api/settings/notify", json={"revision": rev, "targets": [ren]}).status_code == 200
+    assert store.get("notify.B.url") is None and store.get("notify.C.url")

@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
+import re
 from collections.abc import Callable
 from copy import deepcopy
 from typing import Literal
@@ -111,6 +113,7 @@ class NotifyIn(BaseModel):
     targets: list[TargetIn] = Field(default_factory=list, max_length=20)
 
 
+SECRET_REF = re.compile(r"\$\{SECRET:([^}]+)\}")
 # Types whose url is itself the credential.
 URL_SECRET = {"discord", "webhook"}
 
@@ -583,11 +586,20 @@ def add_settings_routes(
                 return f"${{SECRET:{name}}}"
 
             try:
-                data = apply_notify(ob.read_raw(paths), req, put)
+                old_raw = ob.read_raw(paths)
+                data = apply_notify(old_raw, req, put)
                 validated = await asyncio.to_thread(ob.write_raw, paths, data)
             except (ValueError, ValidationError) as e:
                 _rollback(written)
                 raise HTTPException(400, _form_message(e)) from None
+            # Secrets of removed or renamed targets: delete those nothing in the config refers to any more.
+            still = set(SECRET_REF.findall(text()))
+            for name in set(SECRET_REF.findall(json.dumps(old_raw.get("notify") or []))) - still:
+                if name.startswith("notify."):
+                    try:
+                        secrets().delete(name)
+                    except (SecretError, HTTPException):
+                        log.warning("could not delete the unused secret %s", name)
         # The notifier reads its targets on every send: apply without a restart.
         cfg.notify = validated.notify
         notifier = getattr(app.state, "notifier", None)
