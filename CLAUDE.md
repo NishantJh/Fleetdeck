@@ -59,7 +59,7 @@ Setup and security
 - `fleetdeck/security.py`: auth with brute-force throttling, CSRF, security headers.
 - `fleetdeck/config.py`: YAML config (`FLEETDECK_CONFIG`, default `config.yaml`), `${VAR}` expansion, the models
   for each machine type and tunnel. `config.example.yaml` documents the options.
-- `fleetdeck/settings_routes.py`: the Settings page API: edits one section of `config.yaml` at a time (Services sources + Test button, schedule, security, updates, notifications, console, network; console and network re-ask the password and confirm lock-out risks). `secrets_store.py`: secrets AES-GCM encrypted in `state.db`, referenced as `${SECRET:name}`; `secrets_migrate.py`: the "Move to encrypted store" button. `static/settings.js`: its forms.
+- `fleetdeck/settings_routes.py`: the Settings page API: edits one section of `config.yaml` at a time (Services sources + Test button, schedule, security, updates, notifications, console, network, per-machine options (hide, protect, monitor only, update commands, backups, tunnel); console and network re-ask the password and confirm lock-out risks). `secrets_store.py`: secrets AES-GCM encrypted in `state.db`, referenced as `${SECRET:name}`; `secrets_migrate.py`: the "Move to encrypted store" button. `static/settings.js`: its forms.
 - `fleetdeck/envvars.py`: `env(name)` reads `FLEETDECK_<name>`.
 - `fleetdeck/store.py`: SQLite for check results, job history and hidden machines.
 - `fleetdeck/console.py`, `console_routes.py`: the off-by-default Run command box (unlock, network gate, danger guard, audit log). Spec: `docs/CONSOLE.md`.
