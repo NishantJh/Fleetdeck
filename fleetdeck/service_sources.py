@@ -225,6 +225,15 @@ class SourceCache:
         self._last: dict[str, float] = {}
         self._lock = asyncio.Lock()
 
+    def reload(self, sources: list[ServiceSource]) -> None:
+        """Use a new list of sources after a settings save; a source whose connection changed loses its old result."""
+        new = {s.name: s for s in sources}
+        for name in list(self.results):
+            if name not in new or new[name] != self.sources.get(name):
+                self.results.pop(name, None)
+                self._last.pop(name, None)
+        self.sources = new
+
     @property
     def targets(self) -> dict[str, Target]:
         return {f"src:{n}": source_target(s) for n, s in self.sources.items()}

@@ -22,6 +22,7 @@ from .config import AppConfig, check_username
 from .docker_management import DockerManagementRequest, external_settings, update_dockhand_mapping
 from .models import DockerSettings
 from .security import hash_password
+from .settings_routes import add_settings_routes
 
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
@@ -93,7 +94,7 @@ def add_setup_routes(
 ) -> None:
     @app.exception_handler(RequestValidationError)
     async def safe_provider_validation(request: Request, exc: RequestValidationError):
-        if request.url.path == "/api/setup/docker-management":
+        if request.url.path == "/api/setup/docker-management" or request.url.path.startswith("/api/settings/"):
             # FastAPI normally includes rejected input in 422 responses; never echo a submitted token.
             return JSONResponse(
                 status_code=422,
@@ -134,6 +135,8 @@ def add_setup_routes(
 
     def changed() -> None:
         state["changed"] = True
+
+    add_settings_routes(app, cfg, paths, lock, editable, first_run)
 
     @app.get("/install/{key}")
     async def install_script(key: str):

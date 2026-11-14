@@ -444,6 +444,11 @@ async function render() {
     }
   }
   if (settingsPage) {
+    if (!state.first_run && state.writable) {
+      $("#settings-services").hidden = false;
+      window.FleetdeckSettings.mountSecrets($("#settings-secrets"), api).catch((e) => notice(e.message));
+      if (!$("#settings-services").childElementCount) window.FleetdeckSettings.mountServices($("#settings-services"), api).catch((e) => notice(e.message));
+    }
     if (!state.first_run && !configLoaded) await loadConfiguration();
     return;
   }

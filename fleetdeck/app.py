@@ -592,6 +592,7 @@ def create_app(
 
     # Services-only sources (a NAS): kept apart from the inventory, so no check, update or backup can reach them.
     sources = SourceCache(cfg.services.sources)
+    app.state.sources = sources
     if cfg.demo and not cfg.has_real_targets and not cfg.services.sources:
         demo_source(sources)
     added: dict[str, StaticServiceLink] = {}
