@@ -351,3 +351,14 @@ def test_notify_removed_and_renamed_targets_delete_their_secrets(notify_client):
     ren = {"type": "webhook", "name": "C", "url": "https://h.example/c", "previous_index": 0}
     assert c.put("/api/settings/notify", json={"revision": rev, "targets": [ren]}).status_code == 200
     assert store.get("notify.B.url") is None and store.get("notify.C.url")
+
+
+def test_services_off_and_icons_off_are_saved(app_client):
+    c, path = app_client
+    cur = c.get("/api/settings/services").json()
+    assert cur["icons"] is True
+    src = {**cur["sources"][0], "previous_name": "Old"}
+    r = c.put("/api/settings/services", json=body(cur["revision"], [src], enabled=False, icons=False))
+    assert r.status_code == 200, r.text
+    saved = yaml.safe_load(path.read_text())["services"]
+    assert saved["enabled"] is False and saved["icons"] is False
