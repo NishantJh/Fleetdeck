@@ -392,6 +392,11 @@ def service_links(service: StackService, address: str | None, overrides: list[st
         if (link := _link(url, "explicit", "Configured")) and all(x.url != link.url for x in out):
             out.append(link)
     out.extend(_proxy_links(service.proxy, out))
+    # Unraid's webui label is a direct address, not an explicit choice: only when no proxy link exists does it
+    # become a chip (or the main link), so a proxied service keeps its URL.
+    if service.webui_url and (link := _link(service.webui_url, "port", "web UI")):
+        if all(x.url != link.url for x in out):
+            out.append(link)
     if address:
         address = safe_host(address) or address
         for port in service.ports:

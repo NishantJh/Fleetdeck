@@ -481,8 +481,10 @@ In order:
    address the scan discovers from the default route).
 5. A host-network or macvlan/ipvlan address. Bridge and overlay container IPs are **never** used as browser links.
 
-The card shows the description (`fleetdeck.description` or `services.descriptions`) under the name, otherwise the
-address it opens. Groups collapse from their header and stay collapsed across reloads.
+The card shows the description (`fleetdeck.description` or `services.descriptions`) under the name when one is set;
+there is no machine/port or link-address line, and only `Stopped` / `Update` states get a tag (the dot carries the rest).
+Groups collapse from their header and stay collapsed across reloads. The groups run full width with a dense card grid,
+so a short group no longer leaves an empty panel beside a tall one.
 
 A service is considered to have a UI when it has one of those links, is a known app, or publishes a web port.
 Infrastructure images (databases, queues, exporters, Tailscale/Gerbil and proxy containers) are hidden by default.

@@ -78,35 +78,23 @@ function collapsedGroups() {
   return collapsedServiceGroups;
 }
 
-function linkHost(url) {
-  try {
-    return new URL(url).host;
-  } catch {
-    return "";
-  }
-}
-
 function serviceState(service, down) {
-  if (service.link_only && !service.manual) return ["Listed only", "muted"];
+  // Only states worth showing: a running service is the normal case and the dot already says so.
   if (down) return ["Stopped", "bad"];
   if (service.update) return ["Update", "acc"];
-  return ["Running", "ok"];
+  return null;
 }
 
 function serviceCard(service) {
   const links = service.links || [];
   const primary = links[0];
   const letter = (service.name || "?").slice(0, 1).toUpperCase();
-  const port = primary ? (primary.url.match(/:(\d+)(?:\/|$)/) || [])[1] : "";
-  const where = [service.machine, port ? `:${port}` : ""].filter(Boolean).join(" ");
   const down = isDown(service);
   const status = service.link_only ? "" : `<span class="svc-status ${down ? "down" : "up"}" title="${esc(service.state || "")}"></span>`;
-  const [stateText, stateClass] = serviceState(service, down);
-  const state = `<span class="svc-state ${stateClass}" title="${esc(service.state || "")}">${stateText}</span>`;
-  const badges = [
-    service.update ? `<span class="svc-badge update" title="A newer image is available"><span>Update</span></span>` : "",
-    service.link_only && !service.manual && service.machine ? `<span class="svc-badge" title="This is a services-only machine: its containers are listed for quick links, but never updated, checked or backed up here.">listed only</span>` : "",
-  ].join("");
+  const stateInfo = serviceState(service, down);
+  const state = stateInfo
+    ? `<span class="svc-state ${stateInfo[1]}" title="${esc(service.state || "")}">${stateInfo[0]}</span>`
+    : "";
   const secondary = links.slice(1);
   const extraPorts = secondary.filter((link) => PORT_LINK_KINDS.has(link.kind));
   const chips = secondary
@@ -120,10 +108,11 @@ function serviceCard(service) {
     : "";
   const iconLoaded = !!service.icon && loadedIcons.has(service.icon);
   const icon = `<span class="svc-icon hue-${tileHue(service.name)}${iconLoaded ? " has-img" : ""}" aria-hidden="true">${service.icon ? `<img src="/api/icons/${encodeURIComponent(service.icon)}" alt="" loading="lazy" data-svc-icon data-icon-slug="${esc(service.icon)}">` : ""}<span class="svc-letter">${esc(letter)}</span>${status}</span>`;
-  // Under the name: a description if there is one, otherwise the address the card actually opens.
-  const subtitle = service.description || (primary ? linkHost(primary.url) : "") || where || (service.link_only ? "listed only" : "");
-  const heading = primary ? `${service.name} — ${primary.url}` : `${service.name}${where ? ` — ${where}` : ""}`;
-  const inner = `${icon}<span class="svc-text"><span class="svc-name">${esc(service.name)}</span><span class="svc-sub"><span class="svc-where">${esc(subtitle)}</span>${badges}</span></span><span class="svc-aside">${state}<span class="svc-go">${ARROW}</span></span>`;
+  // A description only when one is configured (fleetdeck.description / services.descriptions); no machine or port.
+  const sub = service.description ? `<span class="svc-sub"><span class="svc-where">${esc(service.description)}</span></span>` : "";
+  const listed = service.link_only && !service.manual ? " · listed only (never updated, checked or backed up here)" : "";
+  const heading = primary ? `${service.name} — ${primary.url}${listed}` : `${service.name}${listed}`;
+  const inner = `${icon}<span class="svc-text"><span class="svc-name">${esc(service.name)}</span>${sub}</span><span class="svc-aside">${state}<span class="svc-go">${ARROW}</span></span>`;
   const main = primary
     ? `<a class="svc-main" href="${esc(primary.url)}" target="_blank" rel="noopener noreferrer" title="${esc(heading)}">${inner}</a>`
     : `<div class="svc-main no-link" title="Add a fleetdeck.url label or a services.links entry">${inner}</div>`;

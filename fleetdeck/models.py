@@ -195,6 +195,8 @@ class StackService(BaseModel):
     proxy: list[ProxyRoute] = Field(default_factory=list)
     # Validated fleetdeck.url values, in the order the labels give them.
     explicit_urls: list[str] = Field(default_factory=list)
+    # Unraid's net.unraid.docker.webui URL: a direct IP link, shown after configured/proxy links, never first.
+    webui_url: str = Field("", max_length=2048)
     # fleetdeck.ui, when set: True shows the service, False hides it even if it looks like a UI.
     ui: bool | None = None
     # fleetdeck.category, when set and valid.
