@@ -221,6 +221,18 @@ def test_updates_save_and_restart_note(app_client):
     assert c.put("/api/settings/updates", json={**cur, "snapshot_keep": 0}).status_code == 422
 
 
+def test_https_behind_an_untrusted_proxy_is_reported_with_the_proxy_address(app_client):
+    c, _ = app_client
+    data = c.get("/api/settings/console", headers={"X-Forwarded-Proto": "https"}).json()
+    assert data["plain_http"] is True
+    assert data["forwarded_proto"] == "https"
+    assert data["proxy_address"] == "192.168.1.5"
+    network = c.get("/api/settings/network", headers={"Forwarded": "for=192.168.1.9;proto=https"}).json()
+    assert network["forwarded_proto"] == "https" and network["proxy_address"] == "192.168.1.5"
+    direct = c.get("/api/settings/console").json()
+    assert direct["forwarded_proto"] == "" and direct["proxy_address"] == ""
+
+
 def test_section_stale_revision_conflicts(app_client):
     c, _ = app_client
     cur = c.get("/api/settings/updates").json()

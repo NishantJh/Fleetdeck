@@ -256,9 +256,17 @@ def test_a_ui_suffix_overrides_the_support_image_denylist():
 def test_services_tab_keeps_form_and_blocks_autofill():
     from pathlib import Path
 
-    js = (Path(__file__).parent.parent / "fleetdeck" / "static" / "services.js").read_text()
+    js = (Path(__file__).parent.parent / "fleetdeck" / "static" / "services.js").read_text(encoding="utf-8")
     assert "data-form-slot" in js  # Add link form survives polling re-renders
     assert 'type="search"' in js and "readonly" in js and 'autocomplete="off"' in js
+
+
+def test_services_tab_groups_extra_ports_and_remembers_loaded_icons():
+    from pathlib import Path
+
+    js = (Path(__file__).parent.parent / "fleetdeck" / "static" / "services.js").read_text(encoding="utf-8")
+    assert "svc-ports" in js and "port${extraPorts.length === 1" in js  # one disclosure, not a chip per port
+    assert "loadedIcons" in js and "data-icon-slug" in js  # no letter -> icon flicker on every poll
 
 
 def test_route_read_on_another_machines_caddy_links_this_machines_service():
@@ -293,6 +301,69 @@ def test_category_override_moves_a_card_and_can_be_reset():
         {"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set(), categories={}
     ).services[0]
     assert restored.category == "Network"
+
+
+def test_moving_a_support_service_out_of_support_makes_it_a_normal_card():
+    # A proxy/support container with a published port is hidden with "show support containers". Moving it
+    # to a user group must also make it a UI card (and build its links), not only change its label.
+    app = service(name="caddy", image="caddy:2", ports=[PortMapping(host_port=8080, container_port=80)])
+    result = stacks(app)
+    automatic = build_services({"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set()).services[0]
+    assert automatic.ui is False and automatic.category == "Support" and automatic.links == []
+
+    moved = build_services(
+        {"ssh:pi": target()},
+        {"ssh:pi": result},
+        ServicesConfig(),
+        set(),
+        categories={automatic.id: "Media"},
+    ).services[0]
+    assert moved.ui is True and moved.category == "Media"
+    assert moved.links[0].url == "http://pi.lan:8080"
+
+    back = build_services(
+        {"ssh:pi": target()},
+        {"ssh:pi": result},
+        ServicesConfig(),
+        set(),
+        categories={automatic.id: "Support"},
+    ).services[0]
+    assert back.ui is False and back.category == "Support"
+    assert back.links[0].url == "http://pi.lan:8080"  # still openable when support is shown
+
+
+def test_a_normal_service_can_be_moved_to_support_and_obeys_the_support_toggle():
+    app = service(name="pihole", image="pihole/pihole:latest", ports=[PortMapping(host_port=8080, container_port=80)])
+    result = stacks(app)
+    automatic = build_services({"ssh:pi": target()}, {"ssh:pi": result}, ServicesConfig(), set()).services[0]
+    assert automatic.ui is True and automatic.category == "Network" and automatic.links
+    moved = build_services(
+        {"ssh:pi": target()},
+        {"ssh:pi": result},
+        ServicesConfig(),
+        set(),
+        categories={automatic.id: "Support"},
+    ).services[0]
+    assert moved.ui is False and moved.category == "Support"
+    assert moved.links[0].url == "http://pi.lan:8080"
+
+
+def test_a_helper_script_app_can_be_moved_to_support_too():
+    from fleetdeck.models import CheckResult
+
+    target = Target(id="pve:plex", name="plex", platform="proxmox", source="pve", kind="lxc", address="plex.lan")
+    check = CheckResult(target_id=target.id, checked_at=NOW, community_script="plex")
+    auto = build_services({"pve:plex": target}, {}, ServicesConfig(), set(), checks={target.id: check}).services[0]
+    assert auto.ui is True and auto.category == "Media"
+    moved = build_services(
+        {"pve:plex": target},
+        {},
+        ServicesConfig(),
+        set(),
+        checks={target.id: check},
+        categories={auto.id: "Support"},
+    ).services[0]
+    assert moved.ui is False and moved.category == "Support"
 
 
 def test_category_override_also_moves_manual_links():

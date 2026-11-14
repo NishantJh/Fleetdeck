@@ -401,7 +401,18 @@ window.FleetdeckSettings = (() => {
     };
     save.onclick = () => send(false);
     const banners = [];
-    if (data.plain_http) banners.push(h("p", { class: "warn-box" }, "This page is on plain http://. Anything typed here, including passwords and commands, can be read on the network. Use https where you can."));
+    if (data.plain_http) {
+      if (data.forwarded_proto === "https") {
+        const proxy = data.proxy_address ? ` at ${data.proxy_address}` : "";
+        banners.push(h("p", { class: "warn-box" },
+          `Your browser is on HTTPS, but the dashboard received this request over plain HTTP from the reverse proxy${proxy}. `,
+          "It does not trust that proxy yet, so it cannot tell HTTPS from HTTP and the console treats this as insecure. ",
+          "Add the proxy's address or network (for example 172.18.0.0/16) to ", h("a", { href: "#settings-network" }, "Settings → Network"),
+          " under Trusted reverse proxies, then restart Fleetdeck."));
+      } else {
+        banners.push(h("p", { class: "warn-box" }, "This page is on plain http://. Anything typed here, including passwords and commands, can be read on the network. Use https where you can."));
+      }
+    }
     if (name === "console" && !data.has_auth) banners.push(h("p", { class: "warn-box" }, "There is no dashboard login yet, so the console stays off."));
     if (data.restart_pending && (!Array.isArray(data.restart_pending) || data.restart_pending.length)) {
       banners.push(h("p", { class: "muted" }, `Saved changes wait for a restart${Array.isArray(data.restart_pending) ? `: ${data.restart_pending.join(", ")}` : ""}.`));
