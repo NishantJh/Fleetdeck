@@ -261,6 +261,15 @@ def test_services_tab_keeps_form_and_blocks_autofill():
     assert 'type="search"' in js and "readonly" in js and 'autocomplete="off"' in js
 
 
+def test_service_card_does_not_shadow_the_page_state():
+    from pathlib import Path
+
+    js = (Path(__file__).parent.parent / "fleetdeck" / "static" / "services.js").read_text(encoding="utf-8")
+    # A local `const state` made every card think edit mode was off, so it had no group picker or Hide button.
+    assert "const stateBadge = stateInfo" in js
+    assert "const state = stateInfo" not in js
+
+
 def test_services_tab_groups_extra_ports_and_remembers_loaded_icons():
     from pathlib import Path
 
