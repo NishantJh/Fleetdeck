@@ -93,7 +93,8 @@ function serviceCard(service) {
     ? `<span class="svc-status ${down ? "down" : "up"}" title="${esc(service.state)}"></span>`
     : "";
   const stateInfo = serviceState(service, down);
-  const state = stateInfo
+  // Do not name this `state`: it would shadow the page state object used below for edit mode.
+  const stateBadge = stateInfo
     ? `<span class="svc-state ${stateInfo[1]}" title="${esc(service.state || "")}">${stateInfo[0]}</span>`
     : "";
   const secondary = links.slice(1);
@@ -109,7 +110,7 @@ function serviceCard(service) {
   const sub = service.description ? `<span class="svc-sub"><span class="svc-where">${esc(service.description)}</span></span>` : "";
   const listed = service.link_only && !service.manual ? " · listed only (never updated, checked or backed up here)" : "";
   const heading = primary ? `${service.name} — ${primary.url}${listed}` : `${service.name}${listed}`;
-  const inner = `${icon}<span class="svc-text"><span class="svc-name">${esc(service.name)}</span>${sub}</span>${state ? `<span class="svc-aside">${state}</span>` : ""}`;
+  const inner = `${icon}<span class="svc-text"><span class="svc-name">${esc(service.name)}</span>${sub}</span>${stateBadge ? `<span class="svc-aside">${stateBadge}</span>` : ""}`;
   const main = primary
     ? `<a class="svc-main" href="${esc(primary.url)}" target="_blank" rel="noopener noreferrer" title="${esc(heading)}">${inner}</a>`
     : `<div class="svc-main no-link" title="Add a fleetdeck.url label or a services.links entry">${inner}</div>`;
