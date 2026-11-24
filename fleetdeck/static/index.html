@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Fleetdeck</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/static/style.css?v=96">
+  <link rel="stylesheet" href="/static/style.css?v=97">
   <script src="/static/theme.js?v=12"></script>
 </head>
 <body class="dashboard-page">
@@ -21,6 +21,7 @@
           <button id="refresh" class="ghost dashboard-menu-item"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 3H5a2 2 0 0 0-2 2v2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2"/><circle cx="11" cy="11" r="4"/><path d="m14 14 3 3"/></svg><span>Refresh inventory</span></button>
           <button id="check-os" class="ghost dashboard-menu-item"><span>Check OS updates</span></button>
           <button id="check-containers" class="ghost dashboard-menu-item" hidden><span>Check container updates</span></button>
+          <button id="fleetdeck-update" class="ghost dashboard-menu-item" hidden title="Pull the newest image and recreate the Fleetdeck container"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M4 21h16"/></svg><span>Update Fleetdeck</span><span id="fleetdeck-version" class="menu-count"></span></button>
           <button id="show-hidden" class="ghost dashboard-menu-item" hidden aria-pressed="false"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.1 12a10.8 10.8 0 0 1 19.8 0 10.8 10.8 0 0 1-19.8 0Z"/><circle cx="12" cy="12" r="3"/></svg><span class="menu-item-label">Show hidden machines</span><span id="hidden-count" class="menu-count">0</span><svg class="ui-icon menu-state-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg></button>
           <div class="dashboard-menu-divider" role="separator"></div>
           <button id="backup" class="ghost dashboard-menu-item"><svg class="ui-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14H5V6"/><path d="M8 3h8l1 3H7Z"/><path d="M9 11h6"/></svg><span>Back up &amp; restore</span></button>
@@ -58,8 +59,17 @@
     </form>
   </dialog>
 
+  <div id="self-update-wait" class="self-update-wait" hidden role="status" aria-live="polite">
+    <div class="self-update-card">
+      <span class="spin" aria-hidden="true"></span>
+      <h3>Updating Fleetdeck</h3>
+      <p id="self-update-text" class="muted">Pulling the newest image…</p>
+    </div>
+  </div>
+
   <main>
     <div id="errors"></div>
+    <div id="self-update-result" class="self-update-result" role="status" hidden></div>
     <div class="overview-heading"><h2>Overview</h2><span id="overview-count" class="muted"></span><span id="schedule-status" class="muted"></span></div>
     <section id="summary" class="summary"></section>
     <p id="filter-status" class="muted filter-status" role="status" aria-live="polite" hidden></p>
@@ -249,7 +259,7 @@
   <script src="/static/tools.js?v=1"></script>
   <script src="/static/containers.js?v=34"></script>
   <script src="/static/services.js?v=17"></script>
-  <script src="/static/app.js?v=72"></script>
+  <script src="/static/app.js?v=73"></script>
   <script src="/static/console.js?v=2"></script>
 </body>
 </html>
