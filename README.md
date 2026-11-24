@@ -13,6 +13,9 @@ get notified when something needs attention, and open every service's own UI fro
 ![The dashboard (demo data)](docs/screenshots/dashboard-light.png#gh-light-mode-only)
 ![The dashboard (demo data)](docs/screenshots/dashboard-dark.png#gh-dark-mode-only)
 
+![The Services view (demo data)](docs/screenshots/services-light.png#gh-light-mode-only)
+![The Services view (demo data)](docs/screenshots/services-dark.png#gh-dark-mode-only)
+
 * Checks and updates Proxmox VE (hosts, LXCs and VMs), Incus, and plain Linux machines such as a Raspberry Pi or VPS.
 * Shows pending packages and reboots, updates on demand, and streams each job's output to the Activity panel.
 * Takes snapshots before upgrades and updates Docker Compose stacks.
