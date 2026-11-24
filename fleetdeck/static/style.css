@@ -77,6 +77,25 @@ button.icon svg { width: 18px; height: 18px; }
 .ui-icon { width: 15px; height: 15px; flex: none; vertical-align: -2px; }
 .muted { color: var(--muted); }
 .error-banner { background: color-mix(in srgb, var(--bad) 8%, var(--panel)); border: 1px solid color-mix(in srgb, var(--bad) 35%, var(--border)); border-left: 3px solid var(--bad); padding: 10px 14px; border-radius: var(--radius-sm); margin-bottom: 12px; color: var(--text); }
+.self-update-result { display: flex; align-items: center; gap: 8px; padding: 9px 12px; margin-bottom: 12px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong); background: var(--panel-2); color: var(--text); font-size: 13px; }
+.self-update-result[hidden] { display: none; }
+.self-update-result svg { width: 16px; height: 16px; flex: none; }
+.self-update-result span { flex: 1; min-width: 0; }
+.self-update-result .small { flex: none; }
+.self-update-result.done { border-color: color-mix(in srgb, var(--ok) 35%, var(--border)); background: color-mix(in srgb, var(--ok) 7%, var(--panel)); }
+.self-update-result.done svg { color: var(--ok); }
+.self-update-result.failed { border-color: color-mix(in srgb, var(--bad) 35%, var(--border)); background: color-mix(in srgb, var(--bad) 7%, var(--panel)); }
+.self-update-result.failed svg { color: var(--bad); }
+.self-update-wait { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 24px;
+  background: color-mix(in srgb, var(--bg) 78%, transparent); backdrop-filter: blur(8px) saturate(1.2); }
+.self-update-wait[hidden] { display: none; }
+.self-update-card { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center;
+  max-width: 440px; padding: 26px 24px; border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--panel); box-shadow: var(--shadow); }
+.self-update-card h3 { margin: 0; font-size: 16px; }
+.self-update-card p { margin: 0; font-size: 13px; line-height: 1.5; }
+.self-update-card .spin { width: 26px; height: 26px; }
 button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 button.ghost { background: transparent; border-color: transparent; color: var(--muted); box-shadow: none; }
 button.ghost:hover:not(:disabled) { background: var(--chip); border-color: transparent; color: var(--text); }

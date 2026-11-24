@@ -1,6 +1,6 @@
 "use strict";
 
-const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), containerExpanded: new Set(), logJob: null, logLines: [], showHidden: false, view: "machines", filter: null, services: { enabled: false, services: [] }, showHiddenServices: false, showSupportServices: false, serviceQuery: "" };
+const state = { targets: [], errors: {}, settings: {}, backupPlaces: {}, jobs: [], schedule: null, selected: new Set(), expanded: new Set(), containerExpanded: new Set(), logJob: null, logLines: [], showHidden: false, view: "machines", filter: null, services: { enabled: false, services: [] }, showHiddenServices: false, showSupportServices: false, serviceQuery: "", selfUpdate: null, selfUpdating: false };
 const mobileDashboard = matchMedia("(max-width: 1119px)");
 const $ = (sel) => document.querySelector(sel);
 const renderedHTML = new WeakMap();
@@ -382,6 +382,39 @@ function render() {
   $("#check-all").title = state.settings.dockhand_checks_allowed || nativeContainerHosts().length ? "Check OS and container updates using their configured providers; native image pulls require confirmation" : "Check OS updates";
   $("#refresh").title = "Rediscover machines and read saved container reports; no fresh update checks";
   $("#test-notify").hidden = !state.schedule?.notify_targets;
+  const selfUpdate = state.selfUpdate;
+  const selfButton = $("#fleetdeck-update");
+  if (selfButton) {
+    selfButton.hidden = !selfUpdate?.supported;
+    selfButton.disabled = !selfUpdate?.supported || state.selfUpdating;
+    $("#fleetdeck-version").textContent = selfUpdate?.version ? `v${selfUpdate.version}` : "";
+    selfButton.title = !selfUpdate
+      ? "Update Fleetdeck"
+      : selfUpdate.available
+        ? `Fleetdeck v${selfUpdate.version}: a newer image is available. Pulls it and recreates the container.`
+        : `Fleetdeck v${selfUpdate.version}: pull the newest image and recreate the container.`;
+  }
+  const lastUpdate = selfUpdate?.last;
+  const resultBox = $("#self-update-result");
+  if (resultBox) {
+    const finished = lastUpdate?.finished_at ? Date.parse(lastUpdate.finished_at) : 0;
+    const seen = remember.get("selfUpdateResultSeen");
+    const show =
+      finished > 0 &&
+      Date.now() - finished < 6 * 3600 * 1000 &&
+      ["done", "failed"].includes(lastUpdate?.state) &&
+      seen !== lastUpdate.finished_at;
+    resultBox.hidden = !show;
+    if (show) {
+      resultBox.className = `self-update-result ${lastUpdate.state}`;
+      resultBox.innerHTML =
+        lastUpdate.state === "done"
+          ? `${icon("download")}<span>Fleetdeck updated to v${esc(lastUpdate.to_version || selfUpdate.version)}.</span><button class="small" data-dismiss-self-update>Dismiss</button>`
+          : `${icon("alert")}<span>${esc(lastUpdate.detail || "The last Fleetdeck update failed.")}${
+              lastUpdate.log ? ` <span class="muted">(log: ${esc(lastUpdate.log)})</span>` : ""
+            }</span><button class="small" data-dismiss-self-update>Dismiss</button>`;
+    }
+  }
 
   const hiddenCount = state.targets.length - active().length;
   const toggle = $("#show-hidden");
@@ -709,6 +742,7 @@ async function load(refresh = false) {
     state.errors = data.errors;
     state.settings = data.settings || {};
     state.scanning = !!data.scanning;
+    state.selfUpdate = data.self_update || null;
     state.backupPlaces = data.backup_places || {};
     state.backupFolder = data.backup_folder || null;
     const servicesCall = data.settings?.services
@@ -1241,8 +1275,105 @@ $("#rollback").onclick = async (e) => {
 };
 window.FleetdeckTools.bindBackup($("#backup"), $("#backup-dialog"));
 
+function selfUpdateWaitText(text) {
+  $("#self-update-wait").hidden = false;
+  $("#self-update-text").textContent = text;
+}
+
+async function updateFleetdeck() {
+  const info = state.selfUpdate;
+  if (!info?.supported || state.selfUpdating) return;
+  const where = info.target ? ` on ${info.target}` : "";
+  const ok = window.confirm(
+    `Update Fleetdeck to the newest image${where}?\n\n` +
+      "This pulls the image, then recreates the Fleetdeck container. The dashboard disconnects for a few seconds " +
+      "and may ask you to sign in again. Your data volume is not touched.\n\n" +
+      "If the new image cannot start, the dashboard stays down; recover on the host with docker compose up -d."
+  );
+  if (!ok) return;
+  state.selfUpdating = true;
+  render();
+  selfUpdateWaitText("Pulling the newest image. Keep this tab open…");
+  let ambiguous = false;
+  try {
+    const response = await fetch("/api/self-update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "same-origin",
+    });
+    if (!response.ok) {
+      let detail = "";
+      try {
+        detail = (await response.json()).detail || "";
+      } catch {
+        // Not our JSON: a proxy may have dropped the connection while the host updated.
+      }
+      if (response.status < 500 || detail) throw new Error(detail || `HTTP ${response.status}`);
+      ambiguous = true;
+    }
+  } catch (e) {
+    if (e instanceof TypeError) {
+      ambiguous = true; // network error: the container may already be restarting
+    } else {
+      state.selfUpdating = false;
+      $("#self-update-wait").hidden = true;
+      render();
+      alert(`Could not update Fleetdeck: ${e.message}`);
+      return;
+    }
+  }
+  const before = info.instance;
+  const started = Date.now();
+  selfUpdateWaitText(
+    ambiguous ? "The connection dropped. Waiting for Fleetdeck to come back…" : "Recreating the container. The page reloads when it is back…"
+  );
+  while (Date.now() - started < 180000) {
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    try {
+      const status = await api("/api/self-update");
+      const last = status.last || {};
+      if (last.state === "failed") {
+        state.selfUpdating = false;
+        $("#self-update-wait").hidden = true;
+        render();
+        alert(
+          `Fleetdeck could not update: ${last.detail || "see the log on the machine"}` +
+            (last.log ? `\n\nLog: ${last.log}` : "")
+        );
+        return;
+      }
+      if (status.instance && before && status.instance !== before) {
+        location.reload();
+        return;
+      }
+      if (last.state === "recreating") {
+        selfUpdateWaitText("Recreating the container. The page reloads when it is back…");
+      }
+    } catch {
+      // The server is restarting (or the session was dropped): wait for the login page to answer.
+      try {
+        const response = await fetch("/login", { cache: "no-store", credentials: "same-origin" });
+        if (response.ok) {
+          location.reload();
+          return;
+        }
+      } catch {
+        // Still down: keep waiting.
+      }
+    }
+  }
+  $("#self-update-text").textContent = "Fleetdeck did not answer within 3 minutes. Check the container and the log on the host.";
+}
+
 $("#check-os").onclick = checkOsUpdates;
 $("#check-containers").onclick = requestContainerChecks;
+$("#fleetdeck-update").onclick = updateFleetdeck;
+document.addEventListener("click", (event) => {
+  if (!event.target.closest("[data-dismiss-self-update]")) return;
+  remember.set("selfUpdateResultSeen", state.selfUpdate?.last?.finished_at || "");
+  const box = $("#self-update-result");
+  if (box) box.hidden = true;
+});
 $("#check-all").onclick = async () => {
   const button = $("#check-all");
   if (button.disabled) return;

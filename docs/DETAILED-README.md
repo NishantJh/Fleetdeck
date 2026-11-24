@@ -429,6 +429,26 @@ reports and lists what will be updated and what is excluded (anything not a conf
 and the dashboard's own stack). Uncertain requests are never retried; check Dockhand first. After a confirmed update,
 Fleetdeck verifies the replacement container and shows it as up to date with an *Updated* time.
 
+### Updating Fleetdeck itself
+
+When the machine that runs Fleetdeck is also a target with Docker discovery, the dashboard menu's **Update Fleetdeck**
+pulls the image named in the Compose file and recreates only the `fleetdeck` service:
+
+- The pull runs while the page is open, so a failure is reported before anything restarts.
+- The recreate runs on the host, detached, after a two-second delay, so it survives the dashboard stopping. The page
+  shows progress, waits for the container to come back, reloads, and shows the result (sign in again if the restart
+  cleared the session).
+- The last attempt is kept in `/data/self-update.json`; the recreate log is `/tmp/fleetdeck-self-update.log` on the
+  machine. If the dashboard is still serving 90 seconds after a recreate was requested, the attempt is marked failed;
+  if a new process answers, it is marked done with the new version.
+- If the new image cannot start, the dashboard stays down. Recover on the host with `docker compose up -d` (pin the
+  previous tag if needed).
+- Without a Compose stack or a target, the button is hidden; update from a terminal:
+  `docker compose pull && docker compose up -d`.
+
+The image tag decides what "update" means: `:1` follows 1.x, `:1.2` patch releases, and `:1.2.3` is fixed. The normal
+container check still shows whether a newer image exists; this button is the only one that recreates the dashboard.
+
 ### Booting stopped Proxmox guests
 
 Stopped VMs and LXCs get a confirmed **Boot up** button. It needs `VM.PowerMgmt`, which setups made with this version

@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
+from . import __version__
 from .backup import add_backup_routes
 from .backup_runs import check_destination
 from .config import MAX_UPDATE_COMMAND, AppConfig, StaticServiceLink, check_update_command, config_path, load_config
@@ -36,9 +37,17 @@ from .registry import RegistryClient
 from .report import build_report
 from .scheduler import Scheduler
 from .security import LoginThrottle, Sessions, add_login_routes, make_guard, password_ok, session_secret
+from .selfupdate import SELF_UPDATE_LOG, find_dashboard, finish_startup, mark_stale
+from .selfupdate import begin as self_update_begin
+from .selfupdate import info as self_update_info
+from .selfupdate import mark_failed as self_update_failed
+from .selfupdate import pull_script as self_update_pull
+from .selfupdate import read_result as self_update_result
+from .selfupdate import recreate_script as self_update_recreate
 from .service_sources import SourceCache, demo_source
 from .services import build_services
 from .setup_routes import add_setup_routes
+from .stacks import _own_id
 from .store import Store
 from .tunnels import TunnelManager
 from .tunnels import manager as tunnel_manager
@@ -298,6 +307,19 @@ def create_app(
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=cfg.allowed_hosts)
 
     hostname = socket.gethostname().split(".")[0].lower()
+    own_id = _own_id()
+    data_dir = Path(cfg.state_file).parent if cfg.state_file else paths.config.parent
+    app_started = datetime.now(UTC)
+    instance = secrets.token_hex(8)
+    finish_startup(data_dir, app_started, __version__)
+    self_update_lock = asyncio.Lock()
+
+    def self_update_state() -> dict:
+        mark_stale(data_dir, app_started)
+        return {
+            **self_update_info(jobs.stacks, own_id, __version__, inventory.targets, self_update_result(data_dir)),
+            "instance": instance,
+        }
 
     @app.get("/api/targets")
     async def list_targets(refresh: bool = False):
@@ -340,6 +362,7 @@ def create_app(
             "backup_places": jobs.backup_places,
             "backup_folder": str(backup_folder) if backup_folder else None,
             "scanning": bool(vulns and vulns.running),
+            "self_update": self_update_state(),
             "settings": {
                 "scan_images": vulns is not None,
                 "min_severity": sec.min_severity,
@@ -353,6 +376,63 @@ def create_app(
                 "services": cfg.services.enabled,
             },
         }
+
+    @app.get("/api/self-update")
+    async def get_self_update():
+        """This dashboard's version, whether it can update itself, and the last attempt."""
+        return self_update_state()
+
+    @app.post("/api/self-update")
+    async def update_self():
+        """Pull the newest image and recreate this dashboard's own container, detached.
+
+        The pull is awaited, so a failure changes nothing. The recreate runs on the host after a
+        short delay and survives this process stopping. Only the dashboard's own service is named."""
+        state = self_update_state()
+        if not state["supported"]:
+            raise HTTPException(400, state["reason"] or "Fleetdeck cannot update itself here")
+        if state.get("last", {}).get("state") == "recreating":
+            raise HTTPException(409, "An update is already running")
+        found = find_dashboard(jobs.stacks, own_id)
+        if found is None:
+            raise HTTPException(400, "Fleetdeck cannot see its own Compose stack")
+        target_id, stack, service = found
+        await inventory.refresh()
+        entry = inventory.targets.get(target_id)
+        if entry is None:
+            raise HTTPException(400, "The machine that runs Fleetdeck is not in the inventory")
+        target, executor = entry
+        if self_update_lock.locked():
+            raise HTTPException(409, "Fleetdeck is already updating")
+        async with self_update_lock:
+            try:
+                pulled = await executor.run(self_update_pull(stack, service.name), timeout=300)
+            except Exception as exc:  # a transport problem, not a Compose error
+                log.info("self-update pull failed: %s", type(exc).__name__)
+                raise HTTPException(502, f"Could not reach the machine that runs Fleetdeck: {exc}") from None
+            if pulled.rc != 0:
+                lines = (pulled.stderr or pulled.stdout).strip().splitlines()[-4:]
+                detail = " ".join(lines)[:400] or "docker compose pull failed"
+                raise HTTPException(502, f"Could not pull the new image: {detail}")
+            # From here the container will be replaced: record it first, so the new process knows.
+            self_update_begin(
+                data_dir,
+                version=__version__,
+                image=service.image,
+                target=getattr(target, "name", ""),
+                service=service.name,
+                stack=stack.name,
+            )
+            try:
+                started = await executor.run(self_update_recreate(stack, service.name), timeout=30)
+            except Exception as exc:
+                self_update_failed(data_dir, f"The recreate could not be started: {exc}")
+                raise HTTPException(502, "Could not start the container recreate on the host") from None
+        if started.rc != 0:
+            self_update_failed(data_dir, "The recreate could not be started on the host")
+            raise HTTPException(502, "Could not start the container recreate on the host")
+        log.info("self-update: pulled %s; recreating %s", service.image, stack.name)
+        return {"started": True, "log": SELF_UPDATE_LOG}
 
     @app.post("/api/dockhand/check", status_code=202)
     async def check_dockhand(req: DockhandCheckRequest):
